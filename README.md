@@ -32,9 +32,9 @@ flowchart LR
   Push --> Client
 ```
 
-The server keeps long-lived IMAP connections because mobile operating systems
-cannot reliably keep them alive in the background. The client receives push
-notifications and refreshes its local view through the API.
+모바일 운영체제에서는 백그라운드 상태의 장기 IMAP 연결을 안정적으로 유지하기
+어렵기 때문에 서버가 IMAP 연결을 담당합니다. 클라이언트는 푸시 알림을 받은 뒤
+API를 통해 로컬 메일 목록을 갱신합니다.
 
 ## 저장소 구조
 
