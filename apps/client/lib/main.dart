@@ -18,13 +18,13 @@ Future<void> main() async {
       overrides: [
         pushServiceProvider.overrideWithValue(pushService),
       ],
-      child: const UniversalMailApp(),
+      child: const DailyPostBoxApp(),
     ),
   );
 }
 
-class UniversalMailApp extends ConsumerWidget {
-  const UniversalMailApp({super.key});
+class DailyPostBoxApp extends ConsumerWidget {
+  const DailyPostBoxApp({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {

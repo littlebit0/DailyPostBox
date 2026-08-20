@@ -1,4 +1,4 @@
-name: universal_mail_client
+name: daily_postbox
 description: Native Flutter mail client for Android, iOS, macOS, and Windows.
 publish_to: "none"
 version: 0.1.0+1

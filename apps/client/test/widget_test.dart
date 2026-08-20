@@ -1,8 +1,8 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:universal_mail_client/features/accounts/accounts_page.dart';
-import 'package:universal_mail_client/main.dart';
+import 'package:daily_postbox/features/accounts/accounts_page.dart';
+import 'package:daily_postbox/main.dart';
 
 void main() {
   testWidgets('renders mail app shell', (WidgetTester tester) async {
@@ -12,7 +12,7 @@ void main() {
           accountsProvider.overrideWith((ref) async => const []),
           providersProvider.overrideWith((ref) async => const []),
         ],
-        child: const UniversalMailApp(),
+        child: const DailyPostBoxApp(),
       ),
     );
 

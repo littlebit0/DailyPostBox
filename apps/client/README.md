@@ -1,4 +1,4 @@
-# DailyPostBox
+# DailyPostBox Client
 
 Android, iOS, macOS, Windows용 Flutter 네이티브 메일 클라이언트 골격입니다.
 
@@ -12,7 +12,7 @@ IMAP 실시간성은 서버가 책임지는 구조가 맞습니다. 모바일 �
 ## Flutter SDK가 있는 환경에서 플랫폼 폴더 생성
 
 ```bash
-cd outputs/flutter-mail-client
+cd apps/client
 flutter create --platforms=android,ios,macos,windows .
 flutter pub get
 flutter run --dart-define=MAIL_API_BASE_URL=https://api.dailypostbox.com
