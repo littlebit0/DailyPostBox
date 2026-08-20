@@ -18,23 +18,23 @@ DailyPostBox는 실시간 메일 동기화 서버를 기반으로 동작하는 F
 - 한국어 및 영어 앱 인터페이스
 - Android, iOS, macOS, Windows용 Flutter 클라이언트
 
-## 아키텍처
+## Architecture
 
 ```mermaid
 flowchart LR
-  Client["Flutter 클라이언트"] --> API["메일 API"]
-  API --> Store["계정 및 메일 저장소"]
-  API --> SMTP["SMTP 발송 서비스"]
-  Worker["동기화 워커"] --> IMAP["IMAP IDLE"]
-  Worker --> POP3["POP3 주기 동기화"]
+  Client["Flutter client"] --> API["Mail API"]
+  API --> Store["Account and message store"]
+  API --> SMTP["SMTP sender"]
+  Worker["Sync worker"] --> IMAP["IMAP IDLE"]
+  Worker --> POP3["POP3 polling"]
   Worker --> Store
-  Worker --> Push["푸시 게이트웨이"]
+  Worker --> Push["Push gateway"]
   Push --> Client
 ```
 
-모바일 운영체제에서는 백그라운드 상태의 장기 IMAP 연결을 안정적으로 유지하기
-어렵기 때문에 서버가 IMAP 연결을 담당합니다. 클라이언트는 푸시 알림을 받은 뒤
-API를 통해 로컬 메일 목록을 갱신합니다.
+The server keeps long-lived IMAP connections because mobile operating systems
+cannot reliably keep them alive in the background. The client receives push
+notifications and refreshes its local view through the API.
 
 ## 저장소 구조
 
