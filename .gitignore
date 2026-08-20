@@ -1,0 +1,12 @@
+.DS_Store
+.home/
+work/
+**/.env
+**/node_modules/
+**/dist/
+**/build/
+**/.dart_tool/
+**/.flutter-home/
+**/.pnpm-store/
+**/Flutter/ephemeral/
+**/*.iml
