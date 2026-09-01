@@ -29,6 +29,7 @@ class AccountsPage extends ConsumerWidget {
     final accounts = ref.watch(accountsProvider);
     final providers = ref.watch(providersProvider);
     final strings = ref.watch(appStringsProvider);
+    final providerItems = providers.asData?.value;
 
     return AppShell(
       selectedIndex: 0,
@@ -47,7 +48,9 @@ class AccountsPage extends ConsumerWidget {
                 icon: const Icon(Icons.refresh),
               ),
               FilledButton.icon(
-                onPressed: () => _showAddAccountDialog(context, ref),
+                onPressed: providerItems == null || providerItems.isEmpty
+                    ? null
+                    : () => _showAddAccountDialog(context, providerItems),
                 icon: const Icon(Icons.add),
                 label: Text(strings.addAccountButton),
               ),
@@ -60,16 +63,86 @@ class AccountsPage extends ConsumerWidget {
                 data: (accountItems) => _AccountsContent(
                   providers: providerItems,
                   accounts: accountItems,
-                  onAddAccount: () => _showAddAccountDialog(context, ref),
+                  onAddAccount: () =>
+                      _showAddAccountDialog(context, providerItems),
                 ),
                 loading: () => const Center(child: CircularProgressIndicator()),
-                error: (error, stackTrace) => Center(child: Text('$error')),
+                error: (error, stackTrace) => _AccountsLoadFailure(
+                  error: error,
+                  onRetry: () {
+                    ref.invalidate(accountsProvider);
+                    ref.invalidate(providersProvider);
+                  },
+                ),
               ),
               loading: () => const Center(child: CircularProgressIndicator()),
-              error: (error, stackTrace) => Center(child: Text('$error')),
+              error: (error, stackTrace) => _AccountsLoadFailure(
+                error: error,
+                onRetry: () {
+                  ref.invalidate(accountsProvider);
+                  ref.invalidate(providersProvider);
+                },
+              ),
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _AccountsLoadFailure extends ConsumerWidget {
+  const _AccountsLoadFailure({
+    required this.error,
+    required this.onRetry,
+  });
+
+  final Object error;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final strings = ref.watch(appStringsProvider);
+    final connectionError = isMailApiConnectionError(error);
+    final scheme = Theme.of(context).colorScheme;
+
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 420),
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.cloud_off_outlined,
+                size: 56,
+                color: scheme.error,
+              ),
+              const SizedBox(height: 18),
+              Text(
+                connectionError
+                    ? strings.serverUnavailableTitle
+                    : strings.accountLoadFailedTitle,
+                style: Theme.of(context).textTheme.titleLarge,
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 8),
+              Text(
+                connectionError
+                    ? strings.serverUnavailableDescription
+                    : friendlyError(error, strings),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 20),
+              FilledButton.icon(
+                onPressed: onRetry,
+                icon: const Icon(Icons.refresh),
+                label: Text(strings.tryAgain),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -1008,9 +1081,11 @@ List<_SyncChoice> _syncOptions(AppStrings strings) {
   ];
 }
 
-Future<void> _showAddAccountDialog(BuildContext context, WidgetRef ref) async {
-  final providers = await ref.read(providersProvider.future);
-  if (!context.mounted || providers.isEmpty) return;
+Future<void> _showAddAccountDialog(
+  BuildContext context,
+  List<MailProviderSummary> providers,
+) async {
+  if (providers.isEmpty) return;
 
   final provider = await showDialog<MailProviderSummary>(
     context: context,
@@ -1123,6 +1198,9 @@ String _preferredAuthMode(MailProviderSummary provider) {
 
 String friendlyError(Object error, AppStrings strings) {
   if (error is DioException) {
+    if (isMailApiConnectionError(error)) {
+      return strings.serverUnavailableDescription;
+    }
     final data = error.response?.data;
     if (data is Map && data['error'] is String) {
       return data['error'] as String;

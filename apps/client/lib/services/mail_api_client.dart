@@ -1,14 +1,34 @@
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 final mailApiClientProvider = Provider<MailApiClient>((ref) {
   return MailApiClient(
-    baseUrl: const String.fromEnvironment(
-      'MAIL_API_BASE_URL',
-      defaultValue: 'https://api.dailypostbox.com',
-    ),
+    baseUrl: resolveMailApiBaseUrl(),
   );
 });
+
+String resolveMailApiBaseUrl({
+  String configured = const String.fromEnvironment('MAIL_API_BASE_URL'),
+  bool isRelease = kReleaseMode,
+}) {
+  if (configured.trim().isNotEmpty) return configured.trim();
+  return isRelease ? 'https://api.dailypostbox.com' : 'http://127.0.0.1:4000';
+}
+
+bool isMailApiConnectionError(Object error) {
+  if (error is! DioException) return false;
+  return switch (error.type) {
+    DioExceptionType.connectionError ||
+    DioExceptionType.connectionTimeout ||
+    DioExceptionType.sendTimeout ||
+    DioExceptionType.receiveTimeout ||
+    DioExceptionType.badCertificate =>
+      true,
+    DioExceptionType.unknown => error.response == null,
+    _ => false,
+  };
+}
 
 class MailApiClient {
   MailApiClient({required String baseUrl})

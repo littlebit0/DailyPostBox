@@ -121,6 +121,14 @@ class AppStrings {
       _ko ? '공식 로그인 페이지를 여는 중...' : 'Opening the official sign-in page...';
   String get accountAdded => _ko ? '계정이 추가되었습니다' : 'Account added';
   String get connectionFailed => _ko ? '연결 확인 실패' : 'Connection check failed';
+  String get serverUnavailableTitle =>
+      _ko ? '메일 서버에 연결할 수 없습니다' : 'Cannot connect to the mail server';
+  String get serverUnavailableDescription => _ko
+      ? '서버 연결을 확인한 뒤 다시 시도해 주세요.'
+      : 'Check the server connection and try again.';
+  String get accountLoadFailedTitle =>
+      _ko ? '계정 정보를 불러오지 못했습니다' : 'Could not load accounts';
+  String get tryAgain => _ko ? '다시 시도' : 'Try again';
   String get emailAndSecretRequired =>
       _ko ? '이메일과 비밀번호를 입력하세요.' : 'Enter email and password.';
   String get emailRequired =>
