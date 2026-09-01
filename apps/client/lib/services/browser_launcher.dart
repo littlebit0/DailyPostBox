@@ -7,7 +7,7 @@ Future<bool> openExternalBrowser(String url) async {
   }
 
   try {
-    return launchUrl(uri, mode: LaunchMode.externalApplication);
+    return await launchUrl(uri, mode: LaunchMode.externalApplication);
   } catch (_) {
     return false;
   }
