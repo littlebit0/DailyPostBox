@@ -19,7 +19,7 @@ class InboxPage extends ConsumerWidget {
     final strings = ref.watch(appStringsProvider);
 
     return AppShell(
-      selectedIndex: 0,
+      selectedDestinationId: AppShell.managementDestinationId,
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () => context.go('/compose'),
         icon: const Icon(Icons.edit_outlined),
@@ -93,7 +93,10 @@ class InboxPage extends ConsumerWidget {
                         overflow: TextOverflow.ellipsis,
                       ),
                       trailing: Text(message.receivedAtLabel),
-                      onTap: () => context.go('/messages/${message.id}'),
+                      onTap: () => context.go(
+                        '/messages/${message.id}',
+                        extra: const {'disableTransition': true},
+                      ),
                     );
                   },
                 );

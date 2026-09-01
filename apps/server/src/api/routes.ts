@@ -4,6 +4,8 @@ import { z } from "zod";
 import type { MailSender } from "../mail/MailSender.js";
 import type {
   AuthMode,
+  IncomingMessageContent,
+  IncomingMessageSummary,
   MailAccount,
   MailProtocol,
   OutgoingMessageDraft,
@@ -54,6 +56,15 @@ const accountSchema = z.object({
       secure: z.boolean()
     }).optional()
   }).optional()
+}).superRefine((account, context) => {
+  const provider = providerRegistry[account.providerId];
+  if (!provider.authModes.includes(account.authMode)) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["authMode"],
+      message: `${provider.displayName} does not support ${account.authMode} authentication.`
+    });
+  }
 });
 
 const demoUserId = "demo-user";
@@ -64,6 +75,10 @@ export async function registerRoutes(
     sender: MailSender;
     accounts: AccountRepository;
     validateAccount: (account: MailAccount) => Promise<void>;
+    fetchMessageContent: (
+      account: MailAccount,
+      message: IncomingMessageSummary
+    ) => Promise<IncomingMessageContent>;
     startAccountSync: (account: MailAccount) => Promise<void>;
     stopAccountSync: (accountId: string) => Promise<void>;
   }
@@ -211,6 +226,38 @@ export async function registerRoutes(
       }));
   });
 
+  app.get("/accounts/:accountId/messages/:messageId", async (request, reply) => {
+    const params = z.object({
+      accountId: z.string(),
+      messageId: z.string()
+    }).parse(request.params);
+    const account = await deps.accounts.getAccount(params.accountId);
+
+    if (!account || account.userId !== demoUserId) {
+      return reply.code(404).send({ error: "Account not found" });
+    }
+
+    const messages = await deps.accounts.listInbox(demoUserId);
+    const message = messages.find(
+      (item) => item.accountId === params.accountId &&
+        item.providerMessageId === params.messageId
+    );
+    if (!message) {
+      return reply.code(404).send({ error: "Message not found" });
+    }
+
+    const content = await deps.fetchMessageContent(account, message);
+
+    return {
+      ...message,
+      id: message.providerMessageId,
+      receivedAt: message.receivedAt.toISOString(),
+      body: content.text,
+      bodyTruncated: content.truncated,
+      bodyLinks: content.links
+    };
+  });
+
   app.get("/mail/inbox", async () => {
     const messages = await deps.accounts.listInbox(demoUserId);
     return messages.map((message) => ({
@@ -227,12 +274,19 @@ export async function registerRoutes(
     if (!message) {
       return reply.code(404).send({ error: "Message not found" });
     }
+    const account = await deps.accounts.getAccount(message.accountId);
+    if (!account || account.userId !== demoUserId) {
+      return reply.code(404).send({ error: "Account not found" });
+    }
+    const content = await deps.fetchMessageContent(account, message);
 
     return {
       ...message,
       id: message.providerMessageId,
       receivedAt: message.receivedAt.toISOString(),
-      body: message.snippet ?? ""
+      body: content.text,
+      bodyTruncated: content.truncated,
+      bodyLinks: content.links
     };
   });
 

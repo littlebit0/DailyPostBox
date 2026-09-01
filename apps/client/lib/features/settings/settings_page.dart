@@ -15,7 +15,7 @@ class SettingsPage extends ConsumerWidget {
     final strings = ref.watch(appStringsProvider);
 
     return AppShell(
-      selectedIndex: 1,
+      selectedDestinationId: AppShell.settingsDestinationId,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [

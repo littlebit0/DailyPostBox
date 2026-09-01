@@ -1,12 +1,16 @@
 import nodemailer from "nodemailer";
 import type { TransportOptions } from "nodemailer";
+import type { OAuthTokenManager } from "../auth/OAuthTokenManager.js";
 import type { MailAccount, OutgoingMessageDraft } from "../domain/types.js";
 import { resolveOutgoingSettings } from "../providers/resolveConnectionSettings.js";
 import type { SecretResolver } from "../security/SecretResolver.js";
 import type { MailSender, SendResult } from "./MailSender.js";
 
 export class SmtpSender implements MailSender {
-  constructor(private readonly secrets: SecretResolver) {}
+  constructor(
+    private readonly secrets: SecretResolver,
+    private readonly oauthTokens: OAuthTokenManager
+  ) {}
 
   async testConnection(account: MailAccount): Promise<void> {
     const transporter = await this.createTransporter(account);
@@ -35,17 +39,20 @@ export class SmtpSender implements MailSender {
   private async createTransporter(account: MailAccount) {
     const outgoing = resolveOutgoingSettings(account);
     const secret = await this.secrets.resolve(account.encryptedSecretRef);
-    const oauth = parseOAuthSecret(secret);
+    const accessToken = account.authMode === "oauth2"
+      ? await this.oauthTokens.accessTokenFor(account, account.encryptedSecretRef)
+      : null;
 
     const options: TransportOptions = {
       host: outgoing.host,
       port: outgoing.port,
       secure: outgoing.secure,
-      auth: (oauth && account.authMode === "oauth2"
+      requireTLS: !outgoing.secure,
+      auth: (accessToken
         ? {
             type: "OAuth2",
             user: account.emailAddress,
-            accessToken: oauth.accessToken
+            accessToken
           }
         : {
             user: account.emailAddress,
@@ -55,16 +62,4 @@ export class SmtpSender implements MailSender {
 
     return nodemailer.createTransport(options);
   }
-}
-
-function parseOAuthSecret(secret: string): { accessToken: string } | null {
-  try {
-    const payload = JSON.parse(secret) as { type?: string; accessToken?: string };
-    if (payload.type === "oauth2" && payload.accessToken) {
-      return { accessToken: payload.accessToken };
-    }
-  } catch {
-    return null;
-  }
-  return null;
 }

@@ -1,4 +1,8 @@
-import type { IncomingMessageSummary, MailAccount } from "../domain/types.js";
+import type {
+  IncomingMessageContent,
+  IncomingMessageSummary,
+  MailAccount
+} from "../domain/types.js";
 import type { MailReceiver } from "./MailReceiver.js";
 
 export class Pop3Receiver implements MailReceiver {
@@ -24,5 +28,13 @@ export class Pop3Receiver implements MailReceiver {
         hasAttachments: false
       }
     ].filter((message) => message.subject);
+  }
+
+  async fetchMessageContent(
+    _account: MailAccount,
+    _mailbox: string,
+    _providerMessageId: string
+  ): Promise<IncomingMessageContent> {
+    return { text: "", truncated: false, links: [] };
   }
 }

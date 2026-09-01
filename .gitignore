@@ -2,6 +2,7 @@
 .home/
 work/
 **/.env
+**/.data/
 **/node_modules/
 **/dist/
 **/build/

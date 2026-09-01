@@ -3,128 +3,196 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../core/i18n/language_controller.dart';
+import '../features/accounts/account_providers.dart';
 
 class AppShell extends ConsumerWidget {
   const AppShell({
     super.key,
-    required this.selectedIndex,
+    required this.selectedDestinationId,
     required this.child,
     this.floatingActionButton,
   });
 
-  final int selectedIndex;
+  static const managementDestinationId = 'account-management';
+  static const settingsDestinationId = 'settings';
+
+  static String accountDestinationId(String accountId) =>
+      'mail-account:$accountId';
+
+  final String selectedDestinationId;
   final Widget child;
   final Widget? floatingActionButton;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final strings = ref.watch(appStringsProvider);
+    final accounts = ref.watch(accountsProvider).asData?.value ?? const [];
     final destinations = [
       _Destination(
-          strings.accountManagement, Icons.alternate_email, '/accounts'),
-      _Destination(strings.settings, Icons.settings_outlined, '/settings'),
+        id: managementDestinationId,
+        label: strings.accountManagement,
+        icon: Icons.alternate_email,
+        path: '/accounts',
+      ),
+      for (final account in accounts)
+        _Destination(
+          id: accountDestinationId(account.id),
+          label: account.emailAddress,
+          subtitle:
+              '${account.providerId.toUpperCase()} · ${account.incomingProtocol.toUpperCase()}',
+          icon: Icons.mail_outline,
+          path: '/accounts/${account.id}/mail',
+        ),
+      _Destination(
+        id: settingsDestinationId,
+        label: strings.settings,
+        icon: Icons.settings_outlined,
+        path: '/settings',
+      ),
     ];
+    final selectedIndex = destinations.indexWhere(
+      (destination) => destination.id == selectedDestinationId,
+    );
+    final compact = MediaQuery.sizeOf(context).width < 720;
+
+    void selectDestination(int index) {
+      if (index < 0 || index >= destinations.length) return;
+      final destination = destinations[index];
+      if (destination.id == selectedDestinationId) {
+        if (compact && Navigator.of(context).canPop()) {
+          Navigator.of(context).pop();
+        }
+        return;
+      }
+
+      if (compact && Navigator.of(context).canPop()) {
+        Navigator.of(context).pop();
+      }
+      context.go(
+        destination.path,
+        extra: const {'disableTransition': true},
+      );
+    }
+
+    final navigation = _SideNavigation(
+      selectedIndex: selectedIndex,
+      destinations: destinations,
+      onDestinationSelected: selectDestination,
+    );
 
     return Scaffold(
-      body: Row(
-        children: [
-          _AnimatedSideNavigation(
-            selectedIndex: selectedIndex,
-            destinations: destinations,
-            onDestinationSelected: (index) {
-              if (index == selectedIndex) return;
-
-              context.go(
-                destinations[index].path,
-                extra: {
-                  'verticalDirection': index > selectedIndex ? 1 : -1,
-                },
-              );
-            },
-          ),
-          const VerticalDivider(width: 1),
-          Expanded(child: child),
-        ],
-      ),
+      drawer: compact
+          ? Drawer(
+              width: 292,
+              child: navigation,
+            )
+          : null,
+      body: compact
+          ? child
+          : Row(
+              children: [
+                SizedBox(width: 284, child: navigation),
+                const VerticalDivider(width: 1),
+                Expanded(child: child),
+              ],
+            ),
       floatingActionButton: floatingActionButton,
     );
   }
 }
 
 class _Destination {
-  const _Destination(this.label, this.icon, this.path);
+  const _Destination({
+    required this.id,
+    required this.label,
+    required this.icon,
+    required this.path,
+    this.subtitle,
+  });
 
+  final String id;
   final String label;
+  final String? subtitle;
   final IconData icon;
   final String path;
 }
 
-class _AnimatedSideNavigation extends StatelessWidget {
-  const _AnimatedSideNavigation({
+class _SideNavigation extends ConsumerWidget {
+  const _SideNavigation({
     required this.selectedIndex,
     required this.destinations,
     required this.onDestinationSelected,
   });
-
-  static const double _railWidth = 80;
-  static const double _topPadding = 44;
-  static const double _itemHeight = 64;
 
   final int selectedIndex;
   final List<_Destination> destinations;
   final ValueChanged<int> onDestinationSelected;
 
   @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
+  Widget build(BuildContext context, WidgetRef ref) {
+    final strings = ref.watch(appStringsProvider);
+    final accountDestinations = destinations.length > 2
+        ? destinations.sublist(1, destinations.length - 1)
+        : const <_Destination>[];
 
-    return SizedBox(
-      width: _railWidth,
-      child: Stack(
+    return SafeArea(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          AnimatedPositioned(
-            duration: const Duration(milliseconds: 280),
-            curve: Curves.easeOutCubic,
-            top: _topPadding + selectedIndex * _itemHeight + 8,
-            left: 12,
-            right: 12,
-            height: 40,
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                color: scheme.secondaryContainer,
-                borderRadius: BorderRadius.circular(20),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(18, 18, 18, 14),
+            child: Text(
+              strings.appTitle,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+            ),
+          ),
+          _SideNavigationItem(
+            destination: destinations.first,
+            selected: selectedIndex == 0,
+            onTap: () => onDestinationSelected(0),
+          ),
+          if (accountDestinations.isNotEmpty) ...[
+            const Divider(height: 22, indent: 14, endIndent: 14),
+            Expanded(
+              child: ListView.builder(
+                padding: EdgeInsets.zero,
+                itemCount: accountDestinations.length,
+                itemBuilder: (context, index) {
+                  final destinationIndex = index + 1;
+                  return _SideNavigationItem(
+                    destination: accountDestinations[index],
+                    selected: selectedIndex == destinationIndex,
+                    onTap: () => onDestinationSelected(destinationIndex),
+                  );
+                },
               ),
             ),
+          ] else
+            const Spacer(),
+          const Divider(height: 22, indent: 14, endIndent: 14),
+          _SideNavigationItem(
+            destination: destinations.last,
+            selected: selectedIndex == destinations.length - 1,
+            onTap: () => onDestinationSelected(destinations.length - 1),
           ),
-          Padding(
-            padding: const EdgeInsets.only(top: _topPadding),
-            child: Column(
-              children: [
-                for (var index = 0; index < destinations.length; index++)
-                  _RailDestinationButton(
-                    height: _itemHeight,
-                    destination: destinations[index],
-                    selected: index == selectedIndex,
-                    onTap: () => onDestinationSelected(index),
-                  ),
-              ],
-            ),
-          ),
+          const SizedBox(height: 10),
         ],
       ),
     );
   }
 }
 
-class _RailDestinationButton extends StatelessWidget {
-  const _RailDestinationButton({
-    required this.height,
+class _SideNavigationItem extends StatelessWidget {
+  const _SideNavigationItem({
     required this.destination,
     required this.selected,
     required this.onTap,
   });
 
-  final double height;
   final _Destination destination;
   final bool selected;
   final VoidCallback onTap;
@@ -135,30 +203,43 @@ class _RailDestinationButton extends StatelessWidget {
     final foreground =
         selected ? scheme.onSecondaryContainer : scheme.onSurface;
 
-    return Tooltip(
-      message: destination.label,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(20),
-        child: SizedBox(
-          height: height,
-          width: double.infinity,
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(destination.icon, color: foreground),
-              const SizedBox(height: 6),
-              Text(
-                destination.label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                      color: foreground,
-                      fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-                    ),
-              ),
-            ],
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+      decoration: BoxDecoration(
+        color: selected ? scheme.secondaryContainer : Colors.transparent,
+        borderRadius: BorderRadius.circular(7),
+      ),
+      child: Material(
+        type: MaterialType.transparency,
+        borderRadius: BorderRadius.circular(7),
+        child: ListTile(
+          minTileHeight: destination.subtitle == null ? 52 : 60,
+          minLeadingWidth: 24,
+          horizontalTitleGap: 10,
+          contentPadding: const EdgeInsets.symmetric(horizontal: 12),
+          leading: Icon(destination.icon, color: foreground),
+          title: Text(
+            destination.label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                  color: foreground,
+                  fontSize: destination.subtitle == null ? null : 13,
+                  fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                ),
           ),
+          subtitle: destination.subtitle == null
+              ? null
+              : Text(
+                  destination.subtitle!,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                        color: foreground.withValues(alpha: 0.72),
+                      ),
+                ),
+          selected: selected,
+          onTap: onTap,
         ),
       ),
     );

@@ -1,76 +1,89 @@
 # DailyPostBox Server
 
-IMAP, POP3, SMTP 기반의 범용 메일 앱을 위한 백엔드 스타터입니다.
+DailyPostBox 네이티브 클라이언트를 위한 Fastify 및 TypeScript 기반 메일 API와
+동기화 워커입니다. 모바일 운영체제가 백그라운드 IMAP 연결을 안정적으로 유지하기
+어렵기 때문에 서버가 IMAP IDLE 연결과 OAuth 토큰 갱신을 담당합니다.
 
-## 목표
+## 현재 구현
 
-- Gmail, Outlook, Naver, Daum 같은 주요 제공자를 우선 지원
-- 기타 회사/개인 도메인은 계정별 수동 IMAP/POP3/SMTP 설정으로 지원
-- 수신은 IMAP IDLE 우선, POP3는 폴링 방식으로 처리
-- 발신은 SMTP를 공통 인터페이스로 처리
-- Android, iOS, macOS, Windows 네이티브 앱에는 푸시 알림과 동기화 API만 노출
-
-## 권장 아키텍처
-
-```mermaid
-flowchart LR
-  App["Native Flutter App"] --> API["API Server"]
-  API --> DB["Accounts, Messages, Devices"]
-  API --> Send["SMTP Send Service"]
-  Worker["Mail Sync Workers"] --> IMAP["IMAP IDLE"]
-  Worker --> POP3["POP3 Polling"]
-  Worker --> DB
-  Worker --> Push["Push Gateway"]
-  Push --> App
-```
+- Gmail, Outlook, 네이버, 다음, 사용자 지정 메일 제공자 레지스트리
+- Gmail/Outlook OAuth 2.0 Authorization Code + PKCE 흐름
+- OAuth 액세스 토큰 만료 전 갱신 및 개발 저장소 반영
+- 계정 추가 전 IMAP 수신과 SMTP 발신 연결 검증
+- IMAP 최신 메일 조회, IDLE 감시, 지수 백오프 재연결
+- IMAP 본문 지연 조회, HTML 텍스트 변환 및 링크 제목 추출
+- SMTP 연결 검증과 메일 발송
+- 계정별 초기 동기화 범위와 수동 동기화
+- 개발용 로컬 JSON 계정/메시지 저장소
+- 네이버 일반 비밀번호 차단 및 애플리케이션 비밀번호 강제
 
 ## 실행
 
 ```bash
-npm install
-npm run dev
+cp .env.example .env
+corepack enable
+pnpm install
+pnpm dev
 ```
 
-Gmail 브라우저 로그인을 배포 환경에 설정하는 방법입니다.
-
-1. [Google Cloud Console](https://console.cloud.google.com/)에서 프로젝트를 만듭니다.
-2. **Google Auth Platform**에서 앱을 등록합니다. 개인 테스트 용도라면 사용자 유형을 **External**로 선택하고, 테스트 사용자에 본인 Google 계정을 추가합니다.
-3. **Clients**에서 **Create client**를 누르고 애플리케이션 유형은 **Web application**을 선택합니다.
-   승인된 redirect URL에는 `https://api.dailypostbox.com/auth/gmail/callback`을 등록합니다.
-4. 생성된 Client ID를 프로젝트 루트의 `.env` 파일에 넣습니다. `.env.example`을 복사해 시작하면 됩니다.
-5. Client ID와 Secret은 배포 플랫폼의 비밀 환경변수에만 저장하고 서버를 배포합니다.
+기본 주소는 `http://127.0.0.1:4000`입니다.
 
 ```bash
-OAUTH_REDIRECT_BASE_URL=https://api.dailypostbox.com
+curl http://127.0.0.1:4000/health
+```
+
+개발 환경에서는 별도 `DATA_FILE_PATH`가 없으면 `.data/local-state.json`에 계정과
+메일 메타데이터를 저장합니다. 이 파일에는 개발용 인증 정보가 포함될 수 있으며
+Git에서 제외됩니다.
+
+## 환경변수
+
+| 변수 | 설명 |
+| --- | --- |
+| `PORT` | API 포트, 기본값 `4000` |
+| `HOST` | 바인딩 주소, 기본값 `0.0.0.0` |
+| `DATA_FILE_PATH` | 개발용 로컬 상태 파일 경로 |
+| `OAUTH_REDIRECT_BASE_URL` | OAuth 콜백을 제공하는 공개 API 기준 URL |
+| `GOOGLE_OAUTH_CLIENT_ID` | Google OAuth 클라이언트 ID |
+| `GOOGLE_OAUTH_CLIENT_SECRET` | Google OAuth 클라이언트 보안 비밀 |
+| `OUTLOOK_OAUTH_CLIENT_ID` | Microsoft OAuth 클라이언트 ID |
+| `OUTLOOK_OAUTH_CLIENT_SECRET` | Microsoft OAuth 클라이언트 보안 비밀 |
+| `DATABASE_URL` | 운영 데이터베이스 연결용 예약 변수 |
+| `ENCRYPTION_MASTER_KEY` | 운영 암호화 저장소 연결용 예약 변수 |
+| `PUSH_PROVIDER` | 푸시 제공자 선택, 현재 기본값 `noop` |
+
+`.env`의 실제 값은 절대 커밋하지 마세요.
+
+## Gmail OAuth 설정
+
+Google Cloud Console에서 Web application 유형의 OAuth 클라이언트를 생성하고 아래
+리디렉션 URI를 승인 목록에 등록합니다.
+
+```text
+https://<API 도메인>/auth/gmail/callback
+```
+
+```bash
+OAUTH_REDIRECT_BASE_URL=https://<API 도메인>
 GOOGLE_OAUTH_CLIENT_ID=...
 GOOGLE_OAUTH_CLIENT_SECRET=...
 ```
 
-개발 중에는 Google의 테스트 사용자만 로그인할 수 있습니다. Gmail 전체 접근 권한은 민감한 권한이므로, 다른 사용자에게 배포할 때는 Google OAuth 검증 절차가 필요합니다.
+OAuth 동의 화면이 테스트 상태라면 등록된 테스트 사용자만 로그인할 수 있습니다.
+Gmail 전체 메일 접근 권한으로 공개 배포하려면 Google의 OAuth 앱 검증을 통과해야
+합니다.
 
-현재 코드는 앱의 틀입니다. 실제 운영 전에는 데이터베이스 저장소, 암호화 키 관리, 토큰 갱신 저장소, 푸시 제공자 연동을 붙여야 합니다.
+## 네이버 연결
 
-## Cloud Run 배포 준비
+네이버 메일은 2단계 인증과 애플리케이션 비밀번호가 필요합니다. 사용자는 네이버
+메일 환경설정에서 IMAP/SMTP를 활성화한 뒤 일반 로그인 비밀번호 대신 발급한
+애플리케이션 비밀번호를 입력해야 합니다.
 
-`Dockerfile`과 `cloudbuild.yaml`은 Google Cloud Run 배포용입니다. 배포 환경에는 `.env` 파일을 올리지 말고 아래 환경변수를 Secret Manager로 주입합니다.
+- IMAP: `imap.naver.com:993`, SSL
+- SMTP: `smtp.naver.com:587`, STARTTLS
 
-```bash
-OAUTH_REDIRECT_BASE_URL=https://api.dailypostbox.com
-GOOGLE_OAUTH_CLIENT_ID=...
-GOOGLE_OAUTH_CLIENT_SECRET=...
-```
-
-Cloud Run 서비스가 준비되면 `api.dailypostbox.com` DNS를 서비스 도메인에 연결하고, Google OAuth Client의 승인된 redirect URL도 `https://api.dailypostbox.com/auth/gmail/callback`으로 유지합니다.
-
-## 포함된 코드
-
-- `providerRegistry`: Gmail, Outlook, Naver, Daum, Custom 제공자 설정
-- `ImapReceiver`: IMAP 연결, 최신 메일 조회, IDLE 감시 골격
-- `Pop3Receiver`: POP3 폴링 구현 위치
-- `SmtpSender`: SMTP 발신 골격
-- `MailSyncWorker`: 계정별 실시간 감시/폴링과 푸시 알림 연결
-- `PushNotifier`: FCM/APNs/Web Push로 교체 가능한 알림 인터페이스
-- `routes`: 제공자 조회, 계정 추가, 받은편지함, 메시지 상세, 메일 발신, 푸시 토큰 등록 API
+서버는 네이버 계정에 `password` 인증 방식이 전달되면 메일 서버에 연결하기 전에
+`400 Bad Request`로 거절합니다.
 
 ## 현재 API
 
@@ -83,29 +96,35 @@ Cloud Run 서비스가 준비되면 `api.dailypostbox.com` DNS를 서비스 도�
 - `POST /accounts/:id/validate`
 - `POST /accounts/:id/sync`
 - `GET /accounts/:id/messages`
+- `GET /accounts/:accountId/messages/:messageId`
 - `POST /auth/:providerId/start`
 - `GET /auth/:providerId/callback`
 - `GET /auth/sessions/:state`
+- `POST /auth/sessions/:state/complete`
 - `GET /mail/inbox`
 - `GET /mail/messages/:id`
 - `POST /mail/send`
 - `POST /devices/push-token`
 
-`POST /accounts`가 호출되면 서버는 계정을 저장하고 즉시 `MailSyncWorker`에 넘겨 IMAP IDLE 또는 POP3 폴링을 시작합니다.
+## 검증 및 빌드
 
-## 다음 구현 순서
+```bash
+pnpm typecheck
+pnpm build
+pnpm start
+```
 
-1. 계정/메시지/디바이스 테이블 설계
-2. OAuth 로그인: Gmail, Outlook 우선
-3. 앱 비밀번호 또는 수동 비밀번호 계정: Naver, Daum, 기타 IMAP/SMTP
-4. IMAP IDLE 워커와 POP3 폴링 워커 분리
-5. FCM/APNs 푸시 토큰 등록
-6. 첨부파일 저장소와 바이러스 스캔
-7. 검색 인덱스
+## 배포 전 필수 작업
 
-## 보안 원칙
+- `demo-user` 대신 실제 사용자 인증과 계정 소유권 검사 도입
+- 영구 데이터베이스 기반 `AccountRepository` 구현
+- Vault/KMS와 envelope encryption 기반 비밀정보 저장
+- OAuth 세션의 공유 저장소와 만료 정리
+- POP3 UIDL 기반 실제 수신 구현
+- FCM, APNs 및 Windows 푸시 제공자 구현
+- 첨부파일 저장, 크기 제한 및 악성 파일 검사
+- API CORS 제한, rate limit, 감사 로그 및 운영 모니터링
 
-- 메일 계정 비밀번호와 refresh token은 반드시 envelope encryption으로 저장
-- SMTP/IMAP 연결 정보는 로그에 남기지 않기
-- OAuth provider별 scope는 최소화
-- 푸시 알림 본문에는 민감정보를 최소화하고 앱 내부에서 상세 조회
+현재 `DevelopmentSecretResolver`, 로컬 파일 저장소, 인메모리 OAuth 세션 및
+`NoopPushNotifier`는 개발 전용입니다. `Dockerfile`과 `cloudbuild.yaml`은 Cloud
+Run 배포 골격이지만 위 항목을 완료하기 전에는 운영 서비스로 배포하면 안 됩니다.

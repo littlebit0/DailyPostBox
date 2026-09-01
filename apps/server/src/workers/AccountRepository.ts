@@ -12,7 +12,7 @@ export interface AccountRepository {
   savePushTarget(target: PushTarget): Promise<void>;
   listInbox(userId: string): Promise<IncomingMessageSummary[]>;
   getMessage(userId: string, messageId: string): Promise<IncomingMessageSummary | undefined>;
-  saveIncomingMessage(message: IncomingMessageSummary): Promise<void>;
+  saveIncomingMessage(message: IncomingMessageSummary): Promise<boolean>;
 }
 
 export class InMemoryAccountRepository implements AccountRepository {
@@ -29,18 +29,14 @@ export class InMemoryAccountRepository implements AccountRepository {
   }
 
   async addAccount(account: MailAccount): Promise<void> {
-    this.accounts.push(account);
+    const duplicate = this.accounts.some(
+      (item) => item.userId === account.userId &&
+        item.providerId === account.providerId &&
+        item.emailAddress.toLowerCase() === account.emailAddress.toLowerCase()
+    );
+    if (duplicate) throw new Error("이미 연결된 이메일 계정입니다.");
 
-    await this.saveIncomingMessage({
-      accountId: account.id,
-      providerMessageId: `welcome-${account.id}`,
-      mailbox: "INBOX",
-      from: "system@dailypostbox.com",
-      subject: `${account.emailAddress} 연결 준비 완료`,
-      snippet: "IMAP 계정은 서버 IDLE 워커로 실시간 수신을 감시합니다.",
-      receivedAt: new Date(),
-      hasAttachments: false
-    });
+    this.accounts.push(account);
   }
 
   async updateAccount(account: MailAccount): Promise<void> {
@@ -92,7 +88,10 @@ export class InMemoryAccountRepository implements AccountRepository {
     return inbox.find((message) => message.providerMessageId === messageId);
   }
 
-  async saveIncomingMessage(message: IncomingMessageSummary): Promise<void> {
-    this.messages.set(`${message.accountId}:${message.providerMessageId}`, message);
+  async saveIncomingMessage(message: IncomingMessageSummary): Promise<boolean> {
+    const key = `${message.accountId}:${message.providerMessageId}`;
+    const isNew = !this.messages.has(key);
+    this.messages.set(key, message);
+    return isNew;
   }
 }

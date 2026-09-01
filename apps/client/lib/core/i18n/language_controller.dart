@@ -65,6 +65,30 @@ class AppStrings {
   String get emailAddress => _ko ? '이메일 주소' : 'Email address';
   String get secretLabel =>
       _ko ? '비밀번호, 앱 비밀번호 또는 토큰' : 'Password, app password, or token';
+  String get applicationPassword =>
+      _ko ? '애플리케이션 비밀번호' : 'Application password';
+  String get naverSetupTitle => _ko ? '네이버 메일 연결 준비' : 'Prepare Naver Mail';
+  String get naverSetupDescription => _ko
+      ? '네이버 메일은 외부 앱 연결에 일반 로그인 비밀번호를 사용할 수 없습니다.'
+      : 'Naver Mail does not allow your regular sign-in password in external apps.';
+  String get naverTwoFactorStep => _ko
+      ? '네이버 계정에서 2단계 인증을 켭니다.'
+      : 'Turn on two-step verification for your Naver account.';
+  String get naverAppPasswordStep => _ko
+      ? 'DailyPostBox용 애플리케이션 비밀번호를 발급합니다.'
+      : 'Create an application password for DailyPostBox.';
+  String get naverImapStep => _ko
+      ? '네이버 메일 환경설정에서 IMAP/SMTP 사용을 켭니다.'
+      : 'Enable IMAP/SMTP in Naver Mail settings.';
+  String get naverAppPasswordGuide => _ko ? '앱 비밀번호 안내' : 'App password guide';
+  String get naverImapGuide =>
+      _ko ? 'IMAP/SMTP 설정 안내' : 'IMAP/SMTP setup guide';
+  String get naverGuideCouldNotOpen => _ko
+      ? '네이버 공식 도움말 페이지를 열 수 없습니다.'
+      : 'Could not open the official Naver help page.';
+  String get naverAppPasswordHelper => _ko
+      ? '네이버 로그인 비밀번호가 아닌, 외부 앱용으로 발급한 비밀번호를 입력하세요.'
+      : 'Enter the password issued for an external app, not your Naver sign-in password.';
   String get browserLogin => _ko ? '브라우저로 로그인' : 'Sign in with browser';
   String get browserLoginDescription => _ko
       ? 'Gmail과 Outlook은 비밀번호 대신 공식 로그인 페이지에서 권한을 승인합니다.'
@@ -81,6 +105,7 @@ class AppStrings {
   String get startConnection => _ko ? '연동 시작' : 'Start connecting';
   String get waitingBrowserLogin =>
       _ko ? '브라우저에서 로그인을 완료하는 중...' : 'Waiting for browser sign-in...';
+  String get checkBrowserLogin => _ko ? '로그인 다시 확인' : 'Check sign-in again';
   String get browserCouldNotOpen => _ko
       ? '브라우저를 열 수 없습니다. 아래 로그인 주소를 직접 열어주세요.'
       : 'Could not open the browser. Open the login URL manually.';
@@ -102,6 +127,8 @@ class AppStrings {
   String get noAccountSelected => _ko ? '계정을 선택하세요' : 'Select an account';
   String get noMessagesForAccount =>
       _ko ? '이 계정에 표시할 메일이 없습니다' : 'No mail for this account yet';
+  String get mailLoadFailedTitle =>
+      _ko ? '메일 목록을 불러오지 못했습니다' : 'Could not load mail';
   String get importPreviousMail => _ko ? '이전 이메일 가져오기' : 'Import previous mail';
   String get import100 =>
       _ko ? '최근 100개 가져오기 (추천)' : 'Latest 100 messages (Recommended)';
@@ -114,7 +141,7 @@ class AppStrings {
       ? '계정 크기에 따라 오래 걸릴 수 있습니다.'
       : 'This may take a long time for large mailboxes.';
   String get checkingCredentials =>
-      _ko ? '아이디와 비밀번호를 확인하는 중...' : 'Checking credentials...';
+      _ko ? '계정 인증 정보를 확인하는 중...' : 'Checking account credentials...';
   String get checkingSync =>
       _ko ? '동기화 상태를 확인하는 중...' : 'Checking sync status...';
   String get startingBrowserLogin =>
@@ -131,6 +158,9 @@ class AppStrings {
   String get tryAgain => _ko ? '다시 시도' : 'Try again';
   String get emailAndSecretRequired =>
       _ko ? '이메일과 비밀번호를 입력하세요.' : 'Enter email and password.';
+  String get naverCredentialsRequired => _ko
+      ? '네이버 이메일 주소와 애플리케이션 비밀번호를 입력하세요.'
+      : 'Enter your Naver email address and application password.';
   String get emailRequired =>
       _ko ? '이메일 주소를 입력하세요.' : 'Enter the email address.';
   String get confirmDeleteAccount =>
@@ -147,6 +177,12 @@ class AppStrings {
   String get neverSynced => _ko ? '아직 없음' : 'Never';
   String get protocol => _ko ? '수신 방식' : 'Protocol';
   String get authMode => _ko ? '인증 방식' : 'Auth mode';
+  String authModeLabel(String mode) => switch (mode) {
+        'oauth2' => _ko ? '브라우저 로그인' : 'Browser sign-in',
+        'app-password' => _ko ? '앱 비밀번호' : 'App password',
+        'password' => _ko ? '비밀번호' : 'Password',
+        _ => mode,
+      };
   String get pushNotifications => _ko ? '푸시 알림' : 'Push notifications';
   String get pushNotificationsDescription => _ko
       ? '새 IMAP 메일은 서버 푸시를 통해 즉시 전달됩니다.'

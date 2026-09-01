@@ -7,18 +7,17 @@ import '../../core/i18n/language_controller.dart';
 import '../../services/browser_launcher.dart';
 import '../../services/mail_api_client.dart';
 import '../../widgets/app_shell.dart';
+import 'account_providers.dart';
 
-final accountsProvider = FutureProvider<List<MailAccountSummary>>((ref) {
-  return ref.watch(mailApiClientProvider).fetchAccounts();
-});
+export 'account_providers.dart' show accountsProvider, accountMessagesProvider;
+
+const _naverAppPasswordGuideUrl =
+    'https://help.naver.com/service/30029/bookmark/24347?lang=ko&osType=COMMONOS';
+const _naverImapGuideUrl =
+    'https://help.naver.com/service/30029/contents/21344?osType=COMMONOS';
 
 final providersProvider = FutureProvider<List<MailProviderSummary>>((ref) {
   return ref.watch(mailApiClientProvider).fetchProviders();
-});
-
-final accountMessagesProvider =
-    FutureProvider.family<List<MailSummary>, String>((ref, accountId) {
-  return ref.watch(mailApiClientProvider).fetchAccountMessages(accountId);
 });
 
 class AccountsPage extends ConsumerWidget {
@@ -32,7 +31,7 @@ class AccountsPage extends ConsumerWidget {
     final providerItems = providers.asData?.value;
 
     return AppShell(
-      selectedIndex: 0,
+      selectedDestinationId: AppShell.managementDestinationId,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -168,8 +167,6 @@ class _AccountsContentState extends ConsumerState<_AccountsContent> {
 
   @override
   Widget build(BuildContext context) {
-    final strings = ref.watch(appStringsProvider);
-
     if (widget.accounts.isEmpty) {
       return _EmptyAccountsState(onAddAccount: widget.onAddAccount);
     }
@@ -180,51 +177,88 @@ class _AccountsContentState extends ConsumerState<_AccountsContent> {
     );
     _selectedAccountId = selectedAccount.id;
 
-    return Row(
-      children: [
-        SizedBox(
-          width: 330,
-          child: ListView(
-            padding: const EdgeInsets.fromLTRB(24, 16, 16, 24),
+    final accountList = _AccountListPane(
+      accounts: widget.accounts,
+      selectedAccountId: selectedAccount.id,
+      onAddAccount: widget.onAddAccount,
+      onSelected: (accountId) {
+        setState(() => _selectedAccountId = accountId);
+      },
+    );
+    final accountDetail = _AccountDetail(
+      account: selectedAccount,
+      providerName: _providerName(widget.providers, selectedAccount.providerId),
+      onDeleted: () {
+        setState(() => _selectedAccountId = null);
+      },
+    );
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (constraints.maxWidth < 680) {
+          return Column(
             children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      strings.accountList,
-                      style: Theme.of(context).textTheme.titleLarge,
-                    ),
-                  ),
-                  IconButton.filledTonal(
-                    tooltip: strings.addAccountButton,
-                    onPressed: widget.onAddAccount,
-                    icon: const Icon(Icons.add),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              for (final account in widget.accounts)
-                _AccountTile(
-                  account: account,
-                  selected: account.id == selectedAccount.id,
-                  onTap: () => setState(() => _selectedAccountId = account.id),
-                ),
+              Flexible(flex: 5, child: accountList),
+              const Divider(height: 1),
+              Expanded(flex: 6, child: accountDetail),
             ],
-          ),
+          );
+        }
+
+        return Row(
+          children: [
+            SizedBox(width: 330, child: accountList),
+            const VerticalDivider(width: 1),
+            Expanded(child: accountDetail),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _AccountListPane extends ConsumerWidget {
+  const _AccountListPane({
+    required this.accounts,
+    required this.selectedAccountId,
+    required this.onAddAccount,
+    required this.onSelected,
+  });
+
+  final List<MailAccountSummary> accounts;
+  final String selectedAccountId;
+  final VoidCallback onAddAccount;
+  final ValueChanged<String> onSelected;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final strings = ref.watch(appStringsProvider);
+
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(24, 16, 16, 24),
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                strings.accountList,
+                style: Theme.of(context).textTheme.titleLarge,
+              ),
+            ),
+            IconButton.filledTonal(
+              tooltip: strings.addAccountButton,
+              onPressed: onAddAccount,
+              icon: const Icon(Icons.add),
+            ),
+          ],
         ),
-        const VerticalDivider(width: 1),
-        Expanded(
-          child: _AccountDetail(
-            account: selectedAccount,
-            providerName:
-                _providerName(widget.providers, selectedAccount.providerId),
-            onDeleted: () {
-              setState(() {
-                _selectedAccountId = null;
-              });
-            },
+        const SizedBox(height: 12),
+        for (final account in accounts)
+          _AccountTile(
+            account: account,
+            selected: account.id == selectedAccountId,
+            onTap: () => onSelected(account.id),
           ),
-        ),
       ],
     );
   }
@@ -323,7 +357,6 @@ class _AccountDetail extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final strings = ref.watch(appStringsProvider);
-    final messages = ref.watch(accountMessagesProvider(account.id));
 
     return ListView(
       padding: const EdgeInsets.all(24),
@@ -357,6 +390,15 @@ class _AccountDetail extends ConsumerWidget {
                 ],
               ),
             ),
+            IconButton.filledTonal(
+              tooltip: strings.accountMessages,
+              onPressed: () => context.go(
+                '/accounts/${account.id}/mail',
+                extra: const {'verticalDirection': 1},
+              ),
+              icon: const Icon(Icons.inbox_outlined),
+            ),
+            const SizedBox(width: 8),
             IconButton.filledTonal(
               tooltip: strings.validateConnection,
               onPressed: () => _validateStoredAccount(context, ref, account.id),
@@ -413,46 +455,6 @@ class _AccountDetail extends ConsumerWidget {
             style: TextStyle(color: Theme.of(context).colorScheme.error),
           ),
         ],
-        const Divider(height: 40),
-        Text(strings.accountMessages,
-            style: Theme.of(context).textTheme.titleLarge),
-        const SizedBox(height: 12),
-        messages.when(
-          data: (items) {
-            if (items.isEmpty) {
-              return ListTile(
-                leading: const Icon(Icons.inbox_outlined),
-                title: Text(strings.noMessagesForAccount),
-              );
-            }
-
-            return Column(
-              children: [
-                for (final message in items)
-                  Card(
-                    margin: const EdgeInsets.only(bottom: 8),
-                    child: ListTile(
-                      leading: Icon(
-                        message.unread
-                            ? Icons.mark_email_unread_outlined
-                            : Icons.mail_outline,
-                      ),
-                      title: Text(message.subject),
-                      subtitle: Text(
-                        '${message.sender}\n${message.snippet}',
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      trailing: Text(message.receivedAtLabel),
-                      onTap: () => context.go('/messages/${message.id}'),
-                    ),
-                  ),
-              ],
-            );
-          },
-          loading: () => const Center(child: CircularProgressIndicator()),
-          error: (error, stackTrace) => Text('$error'),
-        ),
       ],
     );
   }
@@ -578,9 +580,12 @@ class _BrowserLoginDialog extends ConsumerStatefulWidget {
 }
 
 class _BrowserLoginDialogState extends ConsumerState<_BrowserLoginDialog> {
+  static const _maxPollAttempts = 300;
+
   bool _busy = true;
   String? _error;
   String? _loginUrl;
+  String? _sessionState;
 
   @override
   void initState() {
@@ -596,33 +601,63 @@ class _BrowserLoginDialogState extends ConsumerState<_BrowserLoginDialog> {
       final opened = await openExternalBrowser(login.authorizationUrl);
       if (!mounted) return;
       setState(() {
+        _sessionState = login.state;
         _busy = true;
         _loginUrl = opened ? null : login.authorizationUrl;
         _error = opened ? null : strings.browserCouldNotOpen;
       });
 
-      for (var attempt = 0; attempt < 90 && mounted; attempt++) {
-        await Future<void>.delayed(const Duration(seconds: 2));
-        final session = await api.fetchOAuthSession(login.state);
-        if (session.status == 'authenticated' && session.emailAddress != null) {
-          if (!mounted) return;
-          Navigator.of(context).pop();
-          await widget.onAuthenticated(login.state, session.emailAddress!);
-          return;
-        }
-        if (session.status == 'error') {
-          throw Exception(session.error ?? strings.connectionFailed);
-        }
-      }
-      throw Exception(strings.waitingBrowserLogin);
+      await _pollSession(login.state);
     } catch (error) {
-      if (!mounted) return;
-      setState(() {
-        _busy = false;
-        _error =
-            '${strings.connectionFailed}: ${friendlyError(error, strings)}';
-      });
+      _showError(error);
     }
+  }
+
+  Future<void> _pollSession(String state) async {
+    final api = ref.read(mailApiClientProvider);
+    final strings = ref.read(appStringsProvider);
+
+    for (var attempt = 0; attempt < _maxPollAttempts && mounted; attempt++) {
+      final session = await api.fetchOAuthSession(state);
+      if (session.status == 'authenticated' && session.emailAddress != null) {
+        if (!mounted) return;
+        Navigator.of(context).pop();
+        await widget.onAuthenticated(state, session.emailAddress!);
+        return;
+      }
+      if (session.status == 'error') {
+        throw Exception(session.error ?? strings.connectionFailed);
+      }
+
+      await Future<void>.delayed(const Duration(seconds: 2));
+    }
+
+    throw Exception(strings.waitingBrowserLogin);
+  }
+
+  Future<void> _retryPolling() async {
+    final state = _sessionState;
+    if (state == null || _busy) return;
+
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+
+    try {
+      await _pollSession(state);
+    } catch (error) {
+      _showError(error);
+    }
+  }
+
+  void _showError(Object error) {
+    if (!mounted) return;
+    final strings = ref.read(appStringsProvider);
+    setState(() {
+      _busy = false;
+      _error = '${strings.connectionFailed}: ${friendlyError(error, strings)}';
+    });
   }
 
   @override
@@ -663,8 +698,14 @@ class _BrowserLoginDialogState extends ConsumerState<_BrowserLoginDialog> {
         ),
       ),
       actions: [
+        if (!_busy && _sessionState != null)
+          TextButton.icon(
+            onPressed: _retryPolling,
+            icon: const Icon(Icons.refresh),
+            label: Text(strings.checkBrowserLogin),
+          ),
         TextButton(
-          onPressed: _busy ? null : () => Navigator.of(context).pop(),
+          onPressed: () => Navigator.of(context).pop(),
           child: Text(strings.cancel),
         ),
       ],
@@ -805,6 +846,97 @@ class _OAuthSetupDialogState extends ConsumerState<_OAuthSetupDialog> {
   }
 }
 
+class _NaverConnectionGuide extends StatelessWidget {
+  const _NaverConnectionGuide({
+    required this.strings,
+    required this.enabled,
+    required this.onOpenAppPasswordGuide,
+    required this.onOpenImapGuide,
+  });
+
+  final AppStrings strings;
+  final bool enabled;
+  final VoidCallback onOpenAppPasswordGuide;
+  final VoidCallback onOpenImapGuide;
+
+  @override
+  Widget build(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            const Icon(Icons.verified_user_outlined),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                strings.naverSetupTitle,
+                style: textTheme.titleMedium,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Text(strings.naverSetupDescription),
+        const SizedBox(height: 12),
+        _NaverSetupStep(
+          icon: Icons.security_outlined,
+          label: strings.naverTwoFactorStep,
+        ),
+        _NaverSetupStep(
+          icon: Icons.key_outlined,
+          label: strings.naverAppPasswordStep,
+        ),
+        _NaverSetupStep(
+          icon: Icons.sync_alt_outlined,
+          label: strings.naverImapStep,
+        ),
+        const SizedBox(height: 4),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            OutlinedButton.icon(
+              onPressed: enabled ? onOpenAppPasswordGuide : null,
+              icon: const Icon(Icons.open_in_new, size: 18),
+              label: Text(strings.naverAppPasswordGuide),
+            ),
+            OutlinedButton.icon(
+              onPressed: enabled ? onOpenImapGuide : null,
+              icon: const Icon(Icons.open_in_new, size: 18),
+              label: Text(strings.naverImapGuide),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class _NaverSetupStep extends StatelessWidget {
+  const _NaverSetupStep({required this.icon, required this.label});
+
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 20),
+          const SizedBox(width: 10),
+          Expanded(child: Text(label)),
+        ],
+      ),
+    );
+  }
+}
+
 class _AddAccountDialog extends ConsumerStatefulWidget {
   const _AddAccountDialog({required this.provider});
 
@@ -824,6 +956,8 @@ class _AddAccountDialogState extends ConsumerState<_AddAccountDialog> {
   bool _busy = false;
   String? _status;
   String? _error;
+
+  bool get _isNaver => _providerId == 'naver';
 
   @override
   void initState() {
@@ -860,17 +994,42 @@ class _AddAccountDialogState extends ConsumerState<_AddAccountDialog> {
                 style: Theme.of(context).textTheme.titleMedium,
               ),
               const SizedBox(height: 12),
-              SegmentedButton<String>(
-                segments: [
-                  for (final mode in selectedProvider.authModes)
-                    ButtonSegment(value: mode, label: Text(mode)),
-                ],
-                selected: {_authMode},
-                onSelectionChanged: _busy
-                    ? null
-                    : (value) => setState(() => _authMode = value.first),
+              if (_isNaver) ...[
+                _NaverConnectionGuide(
+                  strings: strings,
+                  enabled: !_busy,
+                  onOpenAppPasswordGuide: () =>
+                      _openNaverGuide(_naverAppPasswordGuideUrl),
+                  onOpenImapGuide: () => _openNaverGuide(_naverImapGuideUrl),
+                ),
+                const SizedBox(height: 16),
+              ],
+              if (selectedProvider.authModes.length > 1) ...[
+                Text(
+                  strings.authMode,
+                  style: Theme.of(context).textTheme.labelLarge,
+                ),
+                const SizedBox(height: 8),
+                SegmentedButton<String>(
+                  segments: [
+                    for (final mode in selectedProvider.authModes)
+                      ButtonSegment(
+                        value: mode,
+                        label: Text(strings.authModeLabel(mode)),
+                      ),
+                  ],
+                  selected: {_authMode},
+                  onSelectionChanged: _busy
+                      ? null
+                      : (value) => setState(() => _authMode = value.first),
+                ),
+                const SizedBox(height: 12),
+              ],
+              Text(
+                strings.protocol,
+                style: Theme.of(context).textTheme.labelLarge,
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 8),
               SegmentedButton<String>(
                 segments: const [
                   ButtonSegment(value: 'imap', label: Text('IMAP')),
@@ -893,7 +1052,12 @@ class _AddAccountDialogState extends ConsumerState<_AddAccountDialog> {
                 controller: _secretController,
                 enabled: !_busy,
                 obscureText: true,
-                decoration: InputDecoration(labelText: strings.secretLabel),
+                decoration: InputDecoration(
+                  labelText: _isNaver
+                      ? strings.applicationPassword
+                      : strings.secretLabel,
+                  helperText: _isNaver ? strings.naverAppPasswordHelper : null,
+                ),
               ),
               const SizedBox(height: 20),
               Text(
@@ -968,7 +1132,11 @@ class _AddAccountDialogState extends ConsumerState<_AddAccountDialog> {
     final secret = _secretController.text;
 
     if (email.isEmpty || secret.isEmpty) {
-      setState(() => _error = strings.emailAndSecretRequired);
+      setState(() {
+        _error = _isNaver
+            ? strings.naverCredentialsRequired
+            : strings.emailAndSecretRequired;
+      });
       return;
     }
 
@@ -1010,6 +1178,13 @@ class _AddAccountDialogState extends ConsumerState<_AddAccountDialog> {
             '${strings.connectionFailed}: ${friendlyError(error, strings)}';
       });
     }
+  }
+
+  Future<void> _openNaverGuide(String url) async {
+    final opened = await openExternalBrowser(url);
+    if (!mounted || opened) return;
+    setState(
+        () => _error = ref.read(appStringsProvider).naverGuideCouldNotOpen);
   }
 }
 

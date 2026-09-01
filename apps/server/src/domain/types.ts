@@ -76,6 +76,17 @@ export interface IncomingMessageSummary {
   hasAttachments: boolean;
 }
 
+export interface IncomingMessageContent {
+  text: string;
+  truncated: boolean;
+  links: IncomingMessageLink[];
+}
+
+export interface IncomingMessageLink {
+  url: string;
+  label: string;
+}
+
 export interface OutgoingMessageDraft {
   accountId: string;
   to: string[];

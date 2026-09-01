@@ -60,7 +60,7 @@ export const providerRegistry: Record<ProviderId, MailProviderConfig> = {
   naver: {
     id: "naver",
     displayName: "Naver Mail",
-    authModes: ["password", "app-password"],
+    authModes: ["app-password"],
     incoming: {
       protocol: "imap",
       host: "imap.naver.com",
@@ -70,8 +70,8 @@ export const providerRegistry: Record<ProviderId, MailProviderConfig> = {
     },
     outgoing: {
       host: "smtp.naver.com",
-      port: 465,
-      secure: true
+      port: 587,
+      secure: false
     }
   },
   daum: {

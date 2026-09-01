@@ -1,56 +1,74 @@
 # DailyPostBox Client
 
-Android, iOS, macOS, Windows용 Flutter 네이티브 메일 클라이언트 골격입니다.
+Android, iOS, macOS, Windows를 대상으로 하는 Flutter 네이티브 메일
+클라이언트입니다. 앱은 메일 서버에 직접 장기 연결하지 않고 DailyPostBox API를
+통해 계정, 메일 목록, 본문 및 발신 기능을 사용합니다.
 
-## 역할 분리
+## 현재 구현
 
-- Flutter 앱: 계정 연결 UI, 받은편지함, 메일 읽기/쓰기, 푸시 수신, 로컬 캐시
-- 서버: IMAP IDLE 실시간 감시, POP3 폴링, SMTP 발신, OAuth/비밀번호 보관, 푸시 발송
+- 계정관리와 연결된 계정별 사이드바
+- 계정별 메일 목록, 본문 조회 및 메일 작성
+- Gmail 및 Outlook OAuth 브라우저 로그인 흐름
+- 네이버 애플리케이션 비밀번호 설정 안내
+- 계정 연결 검증, 동기화, 삭제 및 초기 가져오기 범위 선택
+- 메일 본문의 링크 제목 표시와 외부 브라우저 열기
+- 한국어와 영어 설정
+- 좁은 화면용 Drawer 및 데스크톱 사이드바
+- 서버 연결 실패를 사용자가 이해할 수 있는 상태로 표시
 
-IMAP 실시간성은 서버가 책임지는 구조가 맞습니다. 모바일 앱이 직접 IMAP IDLE 연결을 오래 유지하면 OS 백그라운드 제한 때문에 iOS/Android에서 안정성이 크게 떨어집니다. 서버가 IMAP IDLE을 붙잡고, 앱은 FCM/APNs/데스크톱 알림으로 즉시 알림을 받는 쪽이 운영에 적합합니다.
+## 실행
 
-## Flutter SDK가 있는 환경에서 플랫폼 폴더 생성
+먼저 `apps/server`에서 API를 실행한 뒤 클라이언트를 시작합니다.
 
 ```bash
-cd apps/client
-flutter create --platforms=android,ios,macos,windows .
 flutter pub get
-flutter run --dart-define=MAIL_API_BASE_URL=https://api.dailypostbox.com
+flutter run -d macos \
+  --dart-define=MAIL_API_BASE_URL=http://127.0.0.1:4000
 ```
 
-배포 앱은 `https://api.dailypostbox.com`의 HTTPS API만 사용합니다.
+개발 빌드에서 `MAIL_API_BASE_URL`을 생략하면 `http://127.0.0.1:4000`을
+사용합니다. 릴리스 빌드의 기본값은 `https://api.dailypostbox.com`이며, 실제 배포
+환경에 맞는 HTTPS 주소를 명시하는 것을 권장합니다.
+
+## 검증
+
+```bash
+flutter analyze
+flutter test
+flutter build macos --debug
+```
 
 ## 앱 구조
 
 - `lib/main.dart`: 앱 시작점
-- `lib/core/app_router.dart`: 라우팅
-- `lib/core/app_theme.dart`: 공통 테마
+- `lib/core/app_router.dart`: 계정, 메일, 작성 및 설정 라우팅
+- `lib/core/i18n`: 한국어/영어 문자열과 언어 상태
 - `lib/services/mail_api_client.dart`: 서버 API 클라이언트
-- `lib/services/push_service.dart`: 푸시 토큰 등록/수신
-- `lib/features/inbox`: 통합 받은편지함
-- `lib/features/accounts`: 계정 추가/관리
-- `lib/features/message`: 메일 읽기/쓰기
+- `lib/services/browser_launcher.dart`: OAuth와 메일 링크 외부 브라우저 실행
+- `lib/features/accounts`: 계정관리와 계정별 메일함
+- `lib/features/message`: 메일 본문 표시와 작성
+- `lib/features/settings`: 언어 및 알림 설정
+- `lib/widgets/app_shell.dart`: 반응형 계정 사이드바
 
-## 플랫폼 알림 전략
+## 계정 연결 흐름
 
-- Android: FCM + local notification
-- iOS: APNs 또는 FCM 경유 APNs
-- macOS: APNs/FCM 구성 또는 local notification 보조
-- Windows: 서버 실시간 상태를 앱 실행 중 WebSocket/SSE로 받고, 백그라운드는 Windows toast 연동
+1. 계정관리에서 메일 제공자를 선택합니다.
+2. Gmail과 Outlook은 시스템 브라우저에서 OAuth 로그인을 진행합니다.
+3. 네이버는 2단계 인증과 애플리케이션 비밀번호 및 IMAP/SMTP 사용 설정을
+   완료합니다.
+4. 이전 메일을 100개, 500개, 1,000개, 전체 또는 가져오지 않기로 선택합니다.
+5. IMAP 계정은 서버가 수신과 발신 연결을 모두 검증한 뒤 추가합니다.
 
-## 실시간 수신 원칙
+## 실시간 수신 구조
 
-- IMAP 계정: 서버가 IMAP IDLE을 유지하고 새 메일을 즉시 푸시
-- POP3 계정: 서버가 UIDL 기반으로 주기 폴링
-- 앱 실행 중: 푸시 수신 후 받은편지함 API 재조회
-- 앱 종료/백그라운드: OS 푸시 알림으로 사용자에게 전달
+- IMAP 계정: 서버가 IMAP IDLE 연결을 유지합니다.
+- 앱 실행 중: 계정별 메일 목록 API를 다시 조회합니다.
+- 앱 백그라운드: 향후 FCM, APNs 및 Windows 알림으로 새 메일을 전달합니다.
+- POP3 계정: UI와 API 계약은 존재하지만 실제 UIDL 폴링 수신기는 아직 구현
+  예정입니다.
 
-## 현재 구현된 앱 흐름
+## 플랫폼 상태
 
-- 계정 목록 조회
-- 제공자 목록 조회
-- 계정 추가
-- 받은편지함 조회
-- 메시지 상세 조회
-- 발신 계정 선택 후 SMTP 발신 API 호출
-- 기기 푸시 토큰 등록
+macOS 개발 빌드에서 현재 UI와 주요 메일 흐름을 검증하고 있습니다. Android, iOS,
+Windows 플랫폼 폴더는 포함되어 있지만 배포 서명, OAuth 플랫폼 설정 및 운영용
+푸시 알림 구성은 아직 필요합니다.

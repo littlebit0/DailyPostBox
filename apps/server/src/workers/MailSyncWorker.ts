@@ -53,7 +53,9 @@ export class MailSyncWorker {
       if (limit !== 0) {
         const receiver = account.incomingProtocol === "imap" ? this.imap : this.pop3;
         const messages = await receiver.fetchLatest(account, this.options.mailbox, limit);
-        await Promise.all(messages.map((message) => this.handleIncoming(account, message)));
+        await Promise.all(
+          messages.map((message) => this.handleIncoming(account, message, false))
+        );
       }
 
       account.syncStatus = "idle";
@@ -94,40 +96,55 @@ export class MailSyncWorker {
   private async startImapAccount(account: MailAccount): Promise<void> {
     let stopped = false;
     let reconnectDelay = this.options.imapReconnectBaseDelayMs;
+    let reconnectTimer: NodeJS.Timeout | undefined;
+    let activeStop: (() => Promise<void>) | undefined;
+
+    const scheduleReconnect = (error: Error): void => {
+      if (stopped || reconnectTimer) return;
+
+      const delayMs = reconnectDelay;
+      reconnectDelay = Math.min(
+        reconnectDelay * 2,
+        this.options.imapReconnectMaxDelayMs
+      );
+
+      console.warn("imap:watch-reconnect", {
+        accountId: account.id,
+        delayMs,
+        error: error.message
+      });
+
+      void activeStop?.().catch(() => undefined);
+      activeStop = undefined;
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = undefined;
+        void connect();
+      }, delayMs);
+    };
 
     const connect = async (): Promise<void> => {
-      while (!stopped) {
-        try {
-          const stop = await this.imap.watch?.(
-            account,
-            this.options.mailbox,
-            async (message) => this.handleIncoming(account, message)
-          );
+      if (stopped) return;
 
-          if (stop) {
-            this.stopHandlers.set(account.id, async () => {
-              stopped = true;
-              await stop();
-            });
-          }
-
-          reconnectDelay = this.options.imapReconnectBaseDelayMs;
-          return;
-        } catch (error) {
-          console.warn("imap:watch-reconnect", {
-            accountId: account.id,
-            delayMs: reconnectDelay,
-            error: error instanceof Error ? error.message : String(error)
-          });
-
-          await new Promise((resolve) => setTimeout(resolve, reconnectDelay));
-          reconnectDelay = Math.min(
-            reconnectDelay * 2,
-            this.options.imapReconnectMaxDelayMs
-          );
-        }
+      try {
+        activeStop = await this.imap.watch?.(
+          account,
+          this.options.mailbox,
+          async (message) => this.handleIncoming(account, message),
+          scheduleReconnect
+        );
+        reconnectDelay = this.options.imapReconnectBaseDelayMs;
+      } catch (error) {
+        scheduleReconnect(error instanceof Error ? error : new Error(String(error)));
       }
     };
+
+    this.stopHandlers.set(account.id, async () => {
+      stopped = true;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      reconnectTimer = undefined;
+      await activeStop?.().catch(() => undefined);
+      activeStop = undefined;
+    });
 
     await connect();
   }
@@ -145,14 +162,17 @@ export class MailSyncWorker {
 
   private async handleIncoming(
     account: MailAccount,
-    message: IncomingMessageSummary
+    message: IncomingMessageSummary,
+    notify = true
   ): Promise<void> {
-    await this.accounts.saveIncomingMessage(message);
+    const isNew = await this.accounts.saveIncomingMessage(message);
+    if (!notify || !isNew) return;
     const targets = await this.accounts.listPushTargets(account.userId);
     await this.push.notifyNewMessage(targets, message);
   }
 
   private initialSyncLimit(account: MailAccount): number | "all" | 0 {
+    if (account.lastSyncedAt) return 25;
     if (account.initialSync?.includePreviousMessages === false) return 0;
     return account.initialSync?.limit ?? 100;
   }

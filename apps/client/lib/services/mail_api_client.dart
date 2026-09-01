@@ -83,6 +83,16 @@ class MailApiClient {
     return MessageDetail.fromJson(response.data ?? {});
   }
 
+  Future<MessageDetail> fetchAccountMessage({
+    required String accountId,
+    required String messageId,
+  }) async {
+    final response = await _dio.get<Map<String, dynamic>>(
+      '/accounts/$accountId/messages/$messageId',
+    );
+    return MessageDetail.fromJson(response.data ?? {});
+  }
+
   Future<void> addAccount({
     required String providerId,
     required String emailAddress,
@@ -264,6 +274,7 @@ class MessageDetail {
     required this.sender,
     required this.subject,
     required this.body,
+    required this.links,
     required this.receivedAtLabel,
   });
 
@@ -271,6 +282,7 @@ class MessageDetail {
   final String sender;
   final String subject;
   final String body;
+  final List<MessageLink> links;
   final String receivedAtLabel;
 
   factory MessageDetail.fromJson(Map<String, dynamic> json) {
@@ -279,7 +291,25 @@ class MessageDetail {
       sender: json['from'] as String? ?? '',
       subject: json['subject'] as String? ?? '',
       body: json['body'] as String? ?? '',
+      links: (json['bodyLinks'] as List<dynamic>? ?? const [])
+          .whereType<Map<String, dynamic>>()
+          .map(MessageLink.fromJson)
+          .toList(growable: false),
       receivedAtLabel: _formatReceivedAt(json['receivedAt'] as String?),
+    );
+  }
+}
+
+class MessageLink {
+  const MessageLink({required this.url, required this.label});
+
+  final String url;
+  final String label;
+
+  factory MessageLink.fromJson(Map<String, dynamic> json) {
+    return MessageLink(
+      url: json['url'] as String? ?? '',
+      label: json['label'] as String? ?? '',
     );
   }
 }

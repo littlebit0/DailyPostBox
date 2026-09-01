@@ -131,6 +131,9 @@ export class OAuthAccountFlow {
       const session = this.sessions.get(params.state);
 
       if (!session) return reply.code(404).send({ error: "Login session not found" });
+      if (session.status === "completed" && session.accountId) {
+        return { accountId: session.accountId };
+      }
       if (session.status !== "authenticated" || !session.token || !session.emailAddress) {
         return reply.code(409).send({ error: "브라우저 로그인을 먼저 완료하세요." });
       }
@@ -227,6 +230,16 @@ export class OAuthAccountFlow {
   ): Promise<MailAccount> {
     const token = session.token!;
     const now = new Date();
+    const existingAccounts = await this.deps.accounts.listActiveAccounts();
+    const duplicate = existingAccounts.some(
+      (account) => account.userId === "demo-user" &&
+        account.providerId === session.providerId &&
+        account.emailAddress.toLowerCase() === session.emailAddress!.toLowerCase()
+    );
+    if (duplicate) {
+      throw new Error("이미 연결된 이메일 계정입니다.");
+    }
+
     const account: MailAccount = {
       id: randomUUID(),
       userId: "demo-user",

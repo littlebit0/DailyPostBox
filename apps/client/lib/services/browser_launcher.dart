@@ -1,23 +1,14 @@
-import 'dart:io';
+import 'package:url_launcher/url_launcher.dart';
 
 Future<bool> openExternalBrowser(String url) async {
-  try {
-    if (Platform.isMacOS) {
-      final result = await Process.run('/usr/bin/open', [url]);
-      return result.exitCode == 0;
-    }
-    if (Platform.isWindows) {
-      final result =
-          await Process.run('rundll32', ['url.dll,FileProtocolHandler', url]);
-      return result.exitCode == 0;
-    }
-    if (Platform.isLinux) {
-      final result = await Process.run('xdg-open', [url]);
-      return result.exitCode == 0;
-    }
-  } catch (_) {
+  final uri = Uri.tryParse(url);
+  if (uri == null || !const {'http', 'https'}.contains(uri.scheme)) {
     return false;
   }
 
-  return false;
+  try {
+    return launchUrl(uri, mode: LaunchMode.externalApplication);
+  } catch (_) {
+    return false;
+  }
 }
