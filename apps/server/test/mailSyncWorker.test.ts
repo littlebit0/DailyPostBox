@@ -154,3 +154,26 @@ test("a superseded sync cannot overwrite the restarted sync's status", async () 
     await syncWorker.stop();
   }
 });
+
+test("resume starts a stopped watcher once and leaves a running one alone", async () => {
+  const repository = new InMemoryAccountRepository();
+  const mailAccount = account();
+  await repository.addAccount(mailAccount);
+  let watchCalls = 0;
+  const imap = {
+    watch: async () => {
+      watchCalls += 1;
+      return async () => undefined;
+    },
+    fetchLatestBatches: async () => undefined
+  };
+  const syncWorker = worker(repository, imap);
+
+  try {
+    await syncWorker.resumeAccount(mailAccount);
+    await syncWorker.resumeAccount(mailAccount);
+    assert.equal(watchCalls, 1);
+  } finally {
+    await syncWorker.stop();
+  }
+});

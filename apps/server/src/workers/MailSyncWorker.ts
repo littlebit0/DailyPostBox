@@ -59,6 +59,14 @@ export class MailSyncWorker {
     this.startPop3Account(account);
   }
 
+  /** Starts watching or polling only when nothing is running for the account. */
+  async resumeAccount(account: MailAccount): Promise<void> {
+    const running = account.incomingProtocol === "imap"
+      ? this.stopHandlers.has(account.id)
+      : this.pollingTimers.has(account.id);
+    if (!running) await this.startAccount(account);
+  }
+
   async syncAccount(account: MailAccount): Promise<void> {
     const activeSync = this.syncPromises.get(account.id);
     if (activeSync) return activeSync;

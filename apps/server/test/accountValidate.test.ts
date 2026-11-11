@@ -30,7 +30,8 @@ async function validate(syncErrorCode: MailAccount["syncErrorCode"]) {
     fetchMessageContent: async () => {
       throw new Error("unused");
     },
-    startAccountSync: async () => {
+    startAccountSync: async () => undefined,
+    resumeAccountSync: async () => {
       starts += 1;
     },
     stopAccountSync: async () => undefined
@@ -43,10 +44,8 @@ async function validate(syncErrorCode: MailAccount["syncErrorCode"]) {
   return { status: response.statusCode, starts };
 }
 
-test("restarts the stopped watcher after a passing validation", async () => {
+test("resumes the watcher after a passing validation", async () => {
   assert.deepEqual(await validate("authentication"), { status: 200, starts: 1 });
-});
-
-test("does not restart sync for an already healthy account", async () => {
-  assert.deepEqual(await validate(undefined), { status: 200, starts: 0 });
+  // An earlier failed check may have cleared the code; still resume.
+  assert.deepEqual(await validate(undefined), { status: 200, starts: 1 });
 });

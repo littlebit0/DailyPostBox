@@ -66,6 +66,7 @@ await registerRoutes(app, {
     );
   },
   startAccountSync: async (account) => worker.startAccount(account),
+  resumeAccountSync: async (account) => worker.resumeAccount(account),
   stopAccountSync: async (accountId) => worker.stopAccount(accountId)
 });
 

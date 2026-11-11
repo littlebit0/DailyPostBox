@@ -45,6 +45,9 @@ async function setup(account: MailAccount) {
     startAccountSync: async () => {
       calls.push("start");
     },
+    resumeAccountSync: async () => {
+      calls.push("resume");
+    },
     stopAccountSync: async () => {
       calls.push("stop");
     }
