@@ -38,6 +38,12 @@ export class MailSyncWorker {
       if (!this.stopHandlers.has(account.id)) {
         await this.startImapAccount(account);
       }
+      // The watcher stopped on rejected credentials; a sync would fail the
+      // same way, or with a skipped import mark the account healthy.
+      if (!this.stopHandlers.has(account.id) &&
+        account.syncErrorCode === "authentication") {
+        return;
+      }
       await this.syncAccount(account).catch(() => undefined);
       return;
     }

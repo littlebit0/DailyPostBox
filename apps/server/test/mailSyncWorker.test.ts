@@ -92,3 +92,26 @@ test("keeps reconnecting after a network failure", async () => {
   assert.ok(watchCalls > 1);
   assert.equal(mailAccount.syncErrorCode, undefined);
 });
+
+test("keeps the authentication error when the initial import is skipped", async () => {
+  const repository = new InMemoryAccountRepository();
+  const mailAccount = account();
+  mailAccount.lastSyncedAt = undefined;
+  mailAccount.initialSync = { includePreviousMessages: false, limit: 100 };
+  await repository.addAccount(mailAccount);
+  const imap = {
+    watch: async () => {
+      throw authenticationFailure("Authentication failed.");
+    },
+    fetchLatestBatches: async () => undefined
+  };
+  const syncWorker = worker(repository, imap);
+
+  try {
+    await syncWorker.startAccount(mailAccount);
+    assert.equal(mailAccount.syncStatus, "error");
+    assert.equal(mailAccount.syncErrorCode, "authentication");
+  } finally {
+    await syncWorker.stop();
+  }
+});
