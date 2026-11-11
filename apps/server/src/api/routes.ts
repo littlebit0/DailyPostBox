@@ -173,6 +173,9 @@ export async function registerRoutes(
       return reply.code(404).send({ error: "Account not found" });
     }
 
+    // An authentication failure stopped the watcher; a passing check must
+    // start it again or the account looks healthy but receives no mail.
+    const watcherStopped = account.syncErrorCode === "authentication";
     account.syncStatus = "validating";
     account.syncError = undefined;
     account.syncErrorCode = undefined;
@@ -183,6 +186,7 @@ export async function registerRoutes(
       account.syncStatus = "idle";
       account.updatedAt = new Date();
       await deps.accounts.updateAccount(account);
+      if (watcherStopped) void deps.startAccountSync(account);
     } catch (error) {
       applySyncFailure(account, error);
       account.updatedAt = new Date();
