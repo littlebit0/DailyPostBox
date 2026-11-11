@@ -130,6 +130,18 @@ class AppStrings {
   String get loadingAccountMail => _ko ? '메일을 가져오는 중입니다' : 'Importing mail';
   String get loadingAccountMailDescription =>
       _ko ? '최신 메일부터 차례로 표시됩니다.' : 'Newest messages will appear first.';
+  String get messageLoadFailedTitle =>
+      _ko ? '메일 본문을 불러오지 못했습니다' : 'Could not open this message';
+  String syncFailure(String? code, String? error) {
+    if (code == 'authentication') {
+      return _ko
+          ? '로그인 정보가 만료됐거나 올바르지 않아 메일을 가져올 수 없습니다. 계정을 다시 연결해야 합니다.'
+          : 'Sign-in expired or is invalid, so mail cannot be fetched. Reconnect this account.';
+    }
+    final detail = error ?? '';
+    return _ko ? '메일을 가져오지 못했습니다. $detail' : 'Could not fetch mail. $detail';
+  }
+
   String get mailLoadFailedTitle =>
       _ko ? '메일 목록을 불러오지 못했습니다' : 'Could not load mail';
   String get importPreviousMail => _ko ? '이전 이메일 가져오기' : 'Import previous mail';

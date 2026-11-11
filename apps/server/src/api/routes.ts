@@ -13,6 +13,7 @@ import type {
 } from "../domain/types.js";
 import type { AccountRepository } from "../workers/AccountRepository.js";
 import { providerRegistry } from "../providers/providerRegistry.js";
+import { applySyncFailure } from "../mail/authenticationFailure.js";
 
 const sendSchema = z.object({
   accountId: z.string(),
@@ -171,6 +172,7 @@ export async function registerRoutes(
 
     account.syncStatus = "validating";
     account.syncError = undefined;
+    account.syncErrorCode = undefined;
     await deps.accounts.updateAccount(account);
 
     try {
@@ -179,8 +181,7 @@ export async function registerRoutes(
       account.updatedAt = new Date();
       await deps.accounts.updateAccount(account);
     } catch (error) {
-      account.syncStatus = "error";
-      account.syncError = error instanceof Error ? error.message : String(error);
+      applySyncFailure(account, error);
       account.updatedAt = new Date();
       await deps.accounts.updateAccount(account);
       throw error;
@@ -200,6 +201,7 @@ export async function registerRoutes(
 
     account.syncStatus = "syncing";
     account.syncError = undefined;
+    account.syncErrorCode = undefined;
     await deps.accounts.updateAccount(account);
     void deps.startAccountSync(account);
 

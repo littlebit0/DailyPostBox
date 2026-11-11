@@ -323,6 +323,7 @@ class MailAccountSummary {
     required this.authMode,
     required this.syncStatus,
     required this.syncError,
+    this.syncErrorCode,
     required this.initialSync,
     required this.lastSyncedAtLabel,
   });
@@ -334,6 +335,7 @@ class MailAccountSummary {
   final String authMode;
   final String syncStatus;
   final String? syncError;
+  final String? syncErrorCode;
   final InitialSyncOption? initialSync;
   final String lastSyncedAtLabel;
 
@@ -346,6 +348,7 @@ class MailAccountSummary {
       authMode: json['authMode'] as String? ?? '',
       syncStatus: json['syncStatus'] as String? ?? 'idle',
       syncError: json['syncError'] as String?,
+      syncErrorCode: json['syncErrorCode'] as String?,
       initialSync: json['initialSync'] is Map<String, dynamic>
           ? InitialSyncOption.fromJson(
               json['initialSync'] as Map<String, dynamic>)
