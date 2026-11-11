@@ -200,7 +200,6 @@ export async function registerRoutes(
 
     account.syncStatus = "syncing";
     account.syncError = undefined;
-    account.lastSyncedAt = new Date();
     await deps.accounts.updateAccount(account);
     void deps.startAccountSync(account);
 

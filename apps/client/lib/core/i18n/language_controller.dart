@@ -127,6 +127,9 @@ class AppStrings {
   String get noAccountSelected => _ko ? '계정을 선택하세요' : 'Select an account';
   String get noMessagesForAccount =>
       _ko ? '이 계정에 표시할 메일이 없습니다' : 'No mail for this account yet';
+  String get loadingAccountMail => _ko ? '메일을 가져오는 중입니다' : 'Importing mail';
+  String get loadingAccountMailDescription =>
+      _ko ? '최신 메일부터 차례로 표시됩니다.' : 'Newest messages will appear first.';
   String get mailLoadFailedTitle =>
       _ko ? '메일 목록을 불러오지 못했습니다' : 'Could not load mail';
   String get importPreviousMail => _ko ? '이전 이메일 가져오기' : 'Import previous mail';

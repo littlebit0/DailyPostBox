@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -45,13 +47,64 @@ class AccountMailboxPage extends ConsumerWidget {
   }
 }
 
-class _MailboxContent extends ConsumerWidget {
+class _MailboxContent extends ConsumerStatefulWidget {
   const _MailboxContent({required this.account});
 
   final MailAccountSummary account;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_MailboxContent> createState() => _MailboxContentState();
+}
+
+class _MailboxContentState extends ConsumerState<_MailboxContent> {
+  Timer? _refreshTimer;
+
+  bool get _isSyncing =>
+      const {'syncing', 'validating'}.contains(widget.account.syncStatus);
+
+  @override
+  void initState() {
+    super.initState();
+    _configureRefreshTimer();
+  }
+
+  @override
+  void didUpdateWidget(covariant _MailboxContent oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.account.id != widget.account.id ||
+        oldWidget.account.syncStatus != widget.account.syncStatus) {
+      _configureRefreshTimer();
+    }
+  }
+
+  @override
+  void dispose() {
+    _refreshTimer?.cancel();
+    super.dispose();
+  }
+
+  void _configureRefreshTimer() {
+    if (_isSyncing) {
+      _refreshTimer ??= Timer.periodic(
+        const Duration(seconds: 3),
+        (_) => _refresh(),
+      );
+      return;
+    }
+
+    _refreshTimer?.cancel();
+    _refreshTimer = null;
+  }
+
+  void _refresh() {
+    if (!mounted) return;
+    ref.invalidate(accountsProvider);
+    ref.invalidate(accountMessagesProvider(widget.account.id));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final account = widget.account;
     final messages = ref.watch(accountMessagesProvider(account.id));
     final strings = ref.watch(appStringsProvider);
 
@@ -65,10 +118,20 @@ class _MailboxContent extends ConsumerWidget {
             overflow: TextOverflow.ellipsis,
           ),
           actions: [
+            if (_isSyncing)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                child: Tooltip(
+                  message: strings.statusSyncing,
+                  child: const SizedBox.square(
+                    dimension: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                ),
+              ),
             IconButton(
               tooltip: strings.refresh,
-              onPressed: () =>
-                  ref.invalidate(accountMessagesProvider(account.id)),
+              onPressed: _refresh,
               icon: const Icon(Icons.refresh),
             ),
           ],
@@ -81,17 +144,32 @@ class _MailboxContent extends ConsumerWidget {
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(
-                        Icons.inbox_outlined,
-                        size: 56,
-                        color: Theme.of(context).colorScheme.secondary,
-                      ),
+                      if (_isSyncing)
+                        const SizedBox.square(
+                          dimension: 44,
+                          child: CircularProgressIndicator(strokeWidth: 3),
+                        )
+                      else
+                        Icon(
+                          Icons.inbox_outlined,
+                          size: 56,
+                          color: Theme.of(context).colorScheme.secondary,
+                        ),
                       const SizedBox(height: 16),
                       Text(
-                        strings.noMessagesForAccount,
+                        _isSyncing
+                            ? strings.loadingAccountMail
+                            : strings.noMessagesForAccount,
                         style: Theme.of(context).textTheme.titleLarge,
                         textAlign: TextAlign.center,
                       ),
+                      if (_isSyncing) ...[
+                        const SizedBox(height: 8),
+                        Text(
+                          strings.loadingAccountMailDescription,
+                          textAlign: TextAlign.center,
+                        ),
+                      ],
                     ],
                   ),
                 );

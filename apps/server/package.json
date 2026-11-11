@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx src/server.ts",
+    "test": "tsx --test test/imapSequenceRanges.test.ts",
     "typecheck": "tsc --noEmit",
     "start": "node dist/server.js",
     "build": "tsc"
