@@ -215,7 +215,7 @@ export async function registerRoutes(
     } catch (error) {
       if (isAuthenticationFailure(error)) {
         return reply.code(400).send({
-          error: "로그인 정보가 올바르지 않습니다. 비밀번호를 확인하세요."
+          error: credentialFailureMessage(account, error)
         });
       }
       throw error;
@@ -357,4 +357,23 @@ export async function registerRoutes(
 
     return reply.code(202).send({ ok: true });
   });
+}
+
+// The mail server's own reply (never the secret) tells IMAP from SMTP
+// rejections apart; Naver also needs IMAP enabled and an app password.
+function credentialFailureMessage(account: MailAccount, error: unknown): string {
+  const detail = error as { responseText?: unknown; response?: unknown };
+  const serverReply = typeof detail.responseText === "string"
+    ? `IMAP: ${detail.responseText}`
+    : typeof detail.response === "string"
+      ? `SMTP: ${detail.response}`
+      : undefined;
+  const parts = ["로그인 정보가 올바르지 않습니다."];
+  if (account.providerId === "naver") {
+    parts.push(
+      "네이버 메일 환경설정에서 IMAP/SMTP 사용을 켜고, 2단계 인증을 쓰면 애플리케이션 비밀번호(영문·숫자 12자리)를 입력하세요."
+    );
+  }
+  if (serverReply) parts.push(`(${serverReply})`);
+  return parts.join(" ");
 }
