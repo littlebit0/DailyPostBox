@@ -79,7 +79,8 @@ new OAuthAccountFlow({
     }
     await sender.testConnection(account);
   },
-  startAccountSync: async (account) => worker.startAccount(account)
+  startAccountSync: async (account) => worker.startAccount(account),
+  stopAccountSync: async (accountId) => worker.stopAccount(accountId)
 }).register(app);
 
 app.setErrorHandler((error, _request, reply) => {

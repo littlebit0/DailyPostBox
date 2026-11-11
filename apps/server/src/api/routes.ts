@@ -13,7 +13,10 @@ import type {
 } from "../domain/types.js";
 import type { AccountRepository } from "../workers/AccountRepository.js";
 import { providerRegistry } from "../providers/providerRegistry.js";
-import { applySyncFailure } from "../mail/authenticationFailure.js";
+import {
+  applySyncFailure,
+  isAuthenticationFailure
+} from "../mail/authenticationFailure.js";
 
 const sendSchema = z.object({
   accountId: z.string(),
@@ -186,6 +189,46 @@ export async function registerRoutes(
       await deps.accounts.updateAccount(account);
       throw error;
     }
+
+    const { encryptedSecretRef: _secret, ...publicAccount } = account;
+    return publicAccount;
+  });
+
+  // Replaces a password or app password while keeping the account's stored
+  // mail and settings. The old secret stays if the new one fails to connect.
+  app.put("/accounts/:id/credentials", async (request, reply) => {
+    const params = z.object({ id: z.string() }).parse(request.params);
+    const body = z.object({ secret: z.string().min(1) }).parse(request.body);
+    const account = await deps.accounts.getAccount(params.id);
+
+    if (!account || account.userId !== demoUserId) {
+      return reply.code(404).send({ error: "Account not found" });
+    }
+    if (account.authMode === "oauth2") {
+      return reply.code(400).send({
+        error: "브라우저 로그인 계정은 브라우저에서 다시 로그인하세요."
+      });
+    }
+
+    try {
+      await deps.validateAccount({ ...account, encryptedSecretRef: body.secret });
+    } catch (error) {
+      if (isAuthenticationFailure(error)) {
+        return reply.code(400).send({
+          error: "로그인 정보가 올바르지 않습니다. 비밀번호를 확인하세요."
+        });
+      }
+      throw error;
+    }
+
+    await deps.stopAccountSync(account.id);
+    account.encryptedSecretRef = body.secret;
+    account.syncStatus = "syncing";
+    account.syncError = undefined;
+    account.syncErrorCode = undefined;
+    account.updatedAt = new Date();
+    await deps.accounts.updateAccount(account);
+    void deps.startAccountSync(account);
 
     const { encryptedSecretRef: _secret, ...publicAccount } = account;
     return publicAccount;

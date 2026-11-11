@@ -9,8 +9,10 @@ export function isAuthenticationFailure(error: unknown): boolean {
     authenticationFailed?: boolean;
     code?: unknown;
   };
+  // EAUTH: nodemailer's SMTP login rejection.
   return candidate.authenticationFailed === true ||
-    candidate.code === "AUTHENTICATIONFAILED";
+    candidate.code === "AUTHENTICATIONFAILED" ||
+    candidate.code === "EAUTH";
 }
 
 export function authenticationFailure(message: string): Error {

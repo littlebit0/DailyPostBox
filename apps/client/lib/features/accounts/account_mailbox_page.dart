@@ -8,6 +8,7 @@ import '../../core/i18n/language_controller.dart';
 import '../../services/mail_api_client.dart';
 import '../../widgets/app_shell.dart';
 import 'account_providers.dart';
+import 'accounts_page.dart' show reconnectAccount;
 
 class AccountMailboxPage extends ConsumerWidget {
   const AccountMailboxPage({
@@ -177,6 +178,11 @@ class _MailboxContentState extends ConsumerState<_MailboxContent> {
               strings.syncFailure(account.syncErrorCode, account.syncError),
             ),
             actions: [
+              if (account.syncErrorCode == 'authentication')
+                TextButton(
+                  onPressed: () => reconnectAccount(context, ref, account),
+                  child: Text(strings.reconnectAccount),
+                ),
               TextButton(
                 onPressed: () => context.go('/accounts'),
                 child: Text(strings.accountManagement),

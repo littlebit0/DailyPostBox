@@ -288,6 +288,52 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('reconnects an app password account from the mailbox banner',
+      (WidgetTester tester) async {
+    const account = MailAccountSummary(
+      id: 'auth-failed-account',
+      providerId: 'naver',
+      emailAddress: 'expired@example.com',
+      incomingProtocol: 'imap',
+      authMode: 'app-password',
+      syncStatus: 'error',
+      syncError: 'Command failed',
+      syncErrorCode: 'authentication',
+      initialSync: InitialSyncOption.recommended,
+      lastSyncedAtLabel: '9/11',
+    );
+    final api = _CredentialRecordingApi();
+    await tester.binding.setSurfaceSize(const Size(1200, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          mailApiClientProvider.overrideWithValue(api),
+          accountsProvider.overrideWith((ref) async => const [account]),
+          providersProvider.overrideWith((ref) async => const []),
+          accountMessagesProvider
+              .overrideWith((ref, accountId) async => const []),
+        ],
+        child: const DailyPostBoxApp(),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text(account.emailAddress).first);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(TextButton, '다시 연결'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'new-app-password');
+    await tester.tap(find.widgetWithText(FilledButton, '다시 연결'));
+    await tester.pumpAndSettle();
+
+    expect(api.updates, [('auth-failed-account', 'new-app-password')]);
+    expect(find.byType(AlertDialog), findsNothing);
+    expect(find.text('다시 연결했습니다. 메일을 가져오는 중입니다.'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('keeps account management readable at the default window size',
       (WidgetTester tester) async {
     const accounts = [
@@ -453,4 +499,18 @@ void main() {
       Rect.fromLTRB(0, 24, 36, 44),
     ]);
   });
+}
+
+class _CredentialRecordingApi extends MailApiClient {
+  _CredentialRecordingApi() : super(baseUrl: 'http://127.0.0.1:1');
+
+  final updates = <(String, String)>[];
+
+  @override
+  Future<void> updateAccountCredentials({
+    required String accountId,
+    required String secret,
+  }) async {
+    updates.add((accountId, secret));
+  }
 }
