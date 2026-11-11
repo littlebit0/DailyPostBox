@@ -131,10 +131,13 @@ class MailApiClient {
 
   Future<OAuthStartResult> startOAuthLogin({
     required String providerId,
+    String? reconnectAccountId,
   }) async {
     final response = await _dio.post<Map<String, dynamic>>(
       '/auth/$providerId/start',
-      data: const {},
+      data: {
+        if (reconnectAccountId != null) 'accountId': reconnectAccountId,
+      },
     );
     return OAuthStartResult.fromJson(response.data ?? {});
   }
@@ -153,6 +156,15 @@ class MailApiClient {
     await _dio.post('/auth/sessions/$state/complete', data: {
       'incomingProtocol': incomingProtocol,
       'initialSync': initialSync.toJson(),
+    });
+  }
+
+  Future<void> updateAccountCredentials({
+    required String accountId,
+    required String secret,
+  }) async {
+    await _dio.put('/accounts/$accountId/credentials', data: {
+      'secret': secret,
     });
   }
 
