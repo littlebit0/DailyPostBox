@@ -96,6 +96,157 @@ void main() {
     expect(find.text(account.emailAddress), findsWidgets);
   });
 
+  testWidgets('shows a progressive loading state during account sync',
+      (WidgetTester tester) async {
+    const account = MailAccountSummary(
+      id: 'syncing-account',
+      providerId: 'naver',
+      emailAddress: 'syncing@example.com',
+      incomingProtocol: 'imap',
+      authMode: 'app-password',
+      syncStatus: 'syncing',
+      syncError: null,
+      initialSync: InitialSyncOption.recommended,
+      lastSyncedAtLabel: 'never',
+    );
+    await tester.binding.setSurfaceSize(const Size(1200, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          accountsProvider.overrideWith((ref) async => const [account]),
+          providersProvider.overrideWith((ref) async => const []),
+          accountMessagesProvider
+              .overrideWith((ref, accountId) async => const []),
+        ],
+        child: const DailyPostBoxApp(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text(account.emailAddress).first);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.text('메일을 가져오는 중입니다'), findsOneWidget);
+    expect(find.text('최신 메일부터 차례로 표시됩니다.'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('keeps the syncing mailbox when an account refresh fails',
+      (WidgetTester tester) async {
+    const account = MailAccountSummary(
+      id: 'syncing-account',
+      providerId: 'naver',
+      emailAddress: 'syncing@example.com',
+      incomingProtocol: 'imap',
+      authMode: 'app-password',
+      syncStatus: 'syncing',
+      syncError: null,
+      initialSync: InitialSyncOption.recommended,
+      lastSyncedAtLabel: 'never',
+    );
+    var accountLoads = 0;
+    await tester.binding.setSurfaceSize(const Size(1200, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          accountsProvider.overrideWith((ref) async {
+            accountLoads += 1;
+            if (accountLoads > 1) throw Exception('server unavailable');
+            return const [account];
+          }),
+          providersProvider.overrideWith((ref) async => const []),
+          accountMessagesProvider
+              .overrideWith((ref, accountId) async => const []),
+        ],
+        child: const DailyPostBoxApp(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text(account.emailAddress).first);
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 4));
+    await tester.pump();
+
+    expect(accountLoads, greaterThan(1));
+    expect(find.text('메일을 가져오는 중입니다'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('reloads mail once more when account sync finishes',
+      (WidgetTester tester) async {
+    const syncing = MailAccountSummary(
+      id: 'syncing-account',
+      providerId: 'naver',
+      emailAddress: 'syncing@example.com',
+      incomingProtocol: 'imap',
+      authMode: 'app-password',
+      syncStatus: 'syncing',
+      syncError: null,
+      initialSync: InitialSyncOption.recommended,
+      lastSyncedAtLabel: 'never',
+    );
+    const idle = MailAccountSummary(
+      id: 'syncing-account',
+      providerId: 'naver',
+      emailAddress: 'syncing@example.com',
+      incomingProtocol: 'imap',
+      authMode: 'app-password',
+      syncStatus: 'idle',
+      syncError: null,
+      initialSync: InitialSyncOption.recommended,
+      lastSyncedAtLabel: 'now',
+    );
+    var accountLoads = 0;
+    var messageLoads = 0;
+    await tester.binding.setSurfaceSize(const Size(1200, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          accountsProvider.overrideWith((ref) async {
+            accountLoads += 1;
+            return accountLoads == 1 ? const [syncing] : const [idle];
+          }),
+          providersProvider.overrideWith((ref) async => const []),
+          accountMessagesProvider.overrideWith((ref, accountId) async {
+            messageLoads += 1;
+            return const [];
+          }),
+        ],
+        child: const DailyPostBoxApp(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text(syncing.emailAddress).first);
+    await tester.pump();
+    final loadsBeforePoll = messageLoads;
+    await tester.pump(const Duration(seconds: 4));
+    await tester.pump();
+    await tester.pump();
+
+    // One poll plus one reload after the status leaves syncing.
+    expect(messageLoads, loadsBeforePoll + 2);
+    expect(find.text('이 계정에 표시할 메일이 없습니다'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    await tester.pump(const Duration(seconds: 4));
+    expect(messageLoads, loadsBeforePoll + 2);
+
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('keeps account management readable at the default window size',
       (WidgetTester tester) async {
     const accounts = [

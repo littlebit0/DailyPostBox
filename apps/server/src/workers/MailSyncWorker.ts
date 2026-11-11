@@ -14,6 +14,7 @@ export interface MailSyncWorkerOptions {
 export class MailSyncWorker {
   private readonly stopHandlers = new Map<string, () => Promise<void>>();
   private readonly pollingTimers = new Map<string, NodeJS.Timeout>();
+  private readonly syncPromises = new Map<string, Promise<void>>();
 
   constructor(
     private readonly accounts: AccountRepository,
@@ -29,14 +30,16 @@ export class MailSyncWorker {
   }
 
   async startAccount(account: MailAccount): Promise<void> {
-    await this.syncAccount(account).catch(() => undefined);
-
-    if (this.stopHandlers.has(account.id) || this.pollingTimers.has(account.id)) {
+    if (account.incomingProtocol === "imap") {
+      if (!this.stopHandlers.has(account.id)) {
+        await this.startImapAccount(account);
+      }
+      await this.syncAccount(account).catch(() => undefined);
       return;
     }
 
-    if (account.incomingProtocol === "imap") {
-      await this.startImapAccount(account);
+    await this.syncAccount(account).catch(() => undefined);
+    if (this.pollingTimers.has(account.id)) {
       return;
     }
 
@@ -44,6 +47,19 @@ export class MailSyncWorker {
   }
 
   async syncAccount(account: MailAccount): Promise<void> {
+    const activeSync = this.syncPromises.get(account.id);
+    if (activeSync) return activeSync;
+
+    const sync = this.performSync(account).finally(() => {
+      if (this.syncPromises.get(account.id) === sync) {
+        this.syncPromises.delete(account.id);
+      }
+    });
+    this.syncPromises.set(account.id, sync);
+    return sync;
+  }
+
+  private async performSync(account: MailAccount): Promise<void> {
     const limit = this.initialSyncLimit(account);
     account.syncStatus = "syncing";
     account.syncError = undefined;
@@ -51,11 +67,31 @@ export class MailSyncWorker {
 
     try {
       if (limit !== 0) {
-        const receiver = account.incomingProtocol === "imap" ? this.imap : this.pop3;
-        const messages = await receiver.fetchLatest(account, this.options.mailbox, limit);
-        await Promise.all(
-          messages.map((message) => this.handleIncoming(account, message, false))
-        );
+        if (account.incomingProtocol === "imap") {
+          await this.imap.fetchLatestBatches(
+            account,
+            this.options.mailbox,
+            limit,
+            async (messages) => {
+              await Promise.all(
+                messages.map((message) =>
+                  this.handleIncoming(account, message, false)
+                )
+              );
+            }
+          );
+        } else {
+          const messages = await this.pop3.fetchLatest(
+            account,
+            this.options.mailbox,
+            limit
+          );
+          await Promise.all(
+            messages.map((message) =>
+              this.handleIncoming(account, message, false)
+            )
+          );
+        }
       }
 
       account.syncStatus = "idle";

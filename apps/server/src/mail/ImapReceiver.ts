@@ -1,5 +1,5 @@
 import { ImapFlow } from "imapflow";
-import type { MessageStructureObject } from "imapflow";
+import type { FetchMessageObject, MessageStructureObject } from "imapflow";
 import { simpleParser } from "mailparser";
 import type { OAuthTokenManager } from "../auth/OAuthTokenManager.js";
 import type {
@@ -12,6 +12,10 @@ import { getProvider } from "../providers/providerRegistry.js";
 import { resolveIncomingSettings } from "../providers/resolveConnectionSettings.js";
 import type { SecretResolver } from "../security/SecretResolver.js";
 import type { MailReceiver } from "./MailReceiver.js";
+import {
+  latestUidSearchQuery,
+  newestFirstUidBatches
+} from "./imapSequenceRanges.js";
 import { extractMessageLinks } from "./messageLinks.js";
 
 export class ImapReceiver implements MailReceiver {
@@ -36,43 +40,65 @@ export class ImapReceiver implements MailReceiver {
     mailbox = "INBOX",
     limit: number | "all" = 25
   ): Promise<IncomingMessageSummary[]> {
-    const client = await this.createClient(account);
-    await client.connect();
+    const messages: IncomingMessageSummary[] = [];
+    await this.fetchLatestBatches(account, mailbox, limit, async (batch) => {
+      messages.push(...batch);
+    });
+    return messages;
+  }
 
-    try {
-      const lock = await client.getMailboxLock(mailbox);
-      try {
-        const messages: IncomingMessageSummary[] = [];
-        const totalMessages = client.mailbox ? client.mailbox.exists : 0;
-        const range = limit === "all"
-          ? "1:*"
-          : `${Math.max(1, totalMessages - limit + 1)}:*`;
+  async fetchLatestBatches(
+    account: MailAccount,
+    mailbox: string,
+    limit: number | "all",
+    onBatch: (messages: IncomingMessageSummary[]) => Promise<void>
+  ): Promise<void> {
+    const initial = await this.withConnectionRetry(async () => {
+      return this.withConnectedClient(account, async (client) => {
+        const openedMailbox = await client.mailboxOpen(mailbox, {
+          readOnly: true
+        });
+        const uids = await this.searchLatestUids(
+          client,
+          openedMailbox.exists,
+          limit
+        );
+        const batches = newestFirstUidBatches(uids, limit);
+        const firstUids = batches.at(0);
 
-        for await (const message of client.fetch(range, {
-          envelope: true,
-          flags: true,
-          uid: true
-        })) {
-          const envelope = message.envelope;
-          if (!envelope) continue;
+        return {
+          uidValidity: openedMailbox.uidValidity,
+          firstBatch: firstUids
+            ? await this.fetchUids(client, account, mailbox, firstUids)
+            : [],
+          remainingBatches: batches.slice(1)
+        };
+      });
+    });
 
-          messages.push({
-            accountId: account.id,
-            providerMessageId: String(message.uid),
-            mailbox,
-            from: envelope.from?.map((item) => item.address).filter(Boolean).join(", ") ?? "",
-            subject: envelope.subject ?? "",
-            receivedAt: envelope.date ?? new Date(),
-            hasAttachments: false
+    if (initial.firstBatch.length > 0) {
+      await onBatch(initial.firstBatch);
+    }
+
+    // Some providers close long-running IMAP sessions during large initial
+    // imports. Isolating each batch keeps already-saved batches visible and
+    // lets a disconnected batch retry with a fresh connection.
+    for (const uids of initial.remainingBatches) {
+      const batch = await this.withConnectionRetry(async () => {
+        return this.withConnectedClient(account, async (client) => {
+          const openedMailbox = await client.mailboxOpen(mailbox, {
+            readOnly: true
           });
-        }
+          if (openedMailbox.uidValidity !== initial.uidValidity) {
+            throw new Error("Mailbox UIDVALIDITY changed during import");
+          }
+          return this.fetchUids(client, account, mailbox, uids);
+        });
+      });
 
-        return limit === "all" ? messages : messages.slice(-limit);
-      } finally {
-        lock.release();
+      if (batch.length > 0) {
+        await onBatch(batch);
       }
-    } finally {
-      await client.logout().catch(() => undefined);
     }
   }
 
@@ -238,10 +264,102 @@ export class ImapReceiver implements MailReceiver {
     client.on("error", () => undefined);
     return client;
   }
+
+  private async withConnectedClient<T>(
+    account: MailAccount,
+    operation: (client: ImapFlow) => Promise<T>
+  ): Promise<T> {
+    const client = await this.createClient(account);
+    try {
+      await client.connect();
+      return await operation(client);
+    } finally {
+      await client.logout().catch(() => undefined);
+    }
+  }
+
+  private async searchLatestUids(
+    client: ImapFlow,
+    exists: number,
+    limit: number | "all"
+  ): Promise<number[]> {
+    const query = latestUidSearchQuery(exists, limit);
+    if (!query) return [];
+    return (await client.search(query, { uid: true })) || [];
+  }
+
+  private async fetchUids(
+    client: ImapFlow,
+    account: MailAccount,
+    mailbox: string,
+    uids: number[]
+  ): Promise<IncomingMessageSummary[]> {
+    const batch: IncomingMessageSummary[] = [];
+    for await (const message of client.fetch(uids, {
+      envelope: true,
+      flags: true,
+      uid: true
+    }, { uid: true })) {
+      const summary = toIncomingMessage(account, mailbox, message);
+      if (summary) batch.push(summary);
+    }
+    return batch;
+  }
+
+  private async withConnectionRetry<T>(
+    operation: () => Promise<T>
+  ): Promise<T> {
+    const retryDelaysMs = [500, 1_500];
+
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        return await operation();
+      } catch (error) {
+        if (isAuthenticationFailure(error) || attempt >= retryDelaysMs.length) {
+          throw error;
+        }
+        await delay(retryDelaysMs[attempt]);
+      }
+    }
+  }
+}
+
+function toIncomingMessage(
+  account: MailAccount,
+  mailbox: string,
+  message: FetchMessageObject
+): IncomingMessageSummary | null {
+  const envelope = message.envelope;
+  if (!envelope) return null;
+
+  return {
+    accountId: account.id,
+    providerMessageId: String(message.uid),
+    mailbox,
+    from: envelope.from?.map((item) => item.address).filter(Boolean).join(", ") ?? "",
+    subject: envelope.subject ?? "",
+    receivedAt: envelope.date instanceof Date ? envelope.date : new Date(),
+    hasAttachments: false
+  };
 }
 
 function toError(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error));
+}
+
+function isAuthenticationFailure(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+
+  const candidate = error as {
+    authenticationFailed?: boolean;
+    code?: unknown;
+  };
+  return candidate.authenticationFailed === true ||
+    candidate.code === "AUTHENTICATIONFAILED";
+}
+
+async function delay(milliseconds: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 function selectBodyParts(
