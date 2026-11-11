@@ -19,6 +19,9 @@ export class MailSyncWorker {
   private readonly stopHandlers = new Map<string, () => Promise<void>>();
   private readonly pollingTimers = new Map<string, NodeJS.Timeout>();
   private readonly syncPromises = new Map<string, Promise<void>>();
+  // stopAccount drops the token so a sync still running with replaced
+  // credentials cannot overwrite the status of the restarted sync.
+  private readonly syncTokens = new Map<string, object>();
 
   constructor(
     private readonly accounts: AccountRepository,
@@ -60,16 +63,22 @@ export class MailSyncWorker {
     const activeSync = this.syncPromises.get(account.id);
     if (activeSync) return activeSync;
 
-    const sync = this.performSync(account).finally(() => {
+    const token = {};
+    this.syncTokens.set(account.id, token);
+    const sync = this.performSync(account, token).finally(() => {
       if (this.syncPromises.get(account.id) === sync) {
         this.syncPromises.delete(account.id);
+      }
+      if (this.syncTokens.get(account.id) === token) {
+        this.syncTokens.delete(account.id);
       }
     });
     this.syncPromises.set(account.id, sync);
     return sync;
   }
 
-  private async performSync(account: MailAccount): Promise<void> {
+  private async performSync(account: MailAccount, token: object): Promise<void> {
+    const isCurrent = () => this.syncTokens.get(account.id) === token;
     const limit = this.initialSyncLimit(account);
     account.syncStatus = "syncing";
     account.syncError = undefined;
@@ -105,10 +114,12 @@ export class MailSyncWorker {
         }
       }
 
+      if (!isCurrent()) return;
       account.syncStatus = "idle";
       account.lastSyncedAt = new Date();
       await this.accounts.updateAccount(account);
     } catch (error) {
+      if (!isCurrent()) return;
       applySyncFailure(account, error);
       await this.accounts.updateAccount(account);
       throw error;
@@ -126,6 +137,9 @@ export class MailSyncWorker {
   }
 
   async stopAccount(accountId: string): Promise<void> {
+    this.syncPromises.delete(accountId);
+    this.syncTokens.delete(accountId);
+
     const timer = this.pollingTimers.get(accountId);
     if (timer) {
       clearInterval(timer);

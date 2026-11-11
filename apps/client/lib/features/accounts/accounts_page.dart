@@ -1326,6 +1326,7 @@ Future<void> reconnectAccount(
     );
     if (updated == true) {
       ref.invalidate(accountsProvider);
+      ref.invalidate(accountMessagesProvider(account.id));
       report(strings.reconnectSucceeded);
     }
     return;
@@ -1355,7 +1356,10 @@ Future<void> reconnectAccount(
           report(
               '${strings.connectionFailed}: ${friendlyError(error, strings)}');
         } finally {
-          if (context.mounted) ref.invalidate(accountsProvider);
+          if (context.mounted) {
+            ref.invalidate(accountsProvider);
+            ref.invalidate(accountMessagesProvider(account.id));
+          }
         }
       },
     ),

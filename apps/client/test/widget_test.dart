@@ -303,6 +303,7 @@ void main() {
       lastSyncedAtLabel: '9/11',
     );
     final api = _CredentialRecordingApi();
+    var messageLoads = 0;
     await tester.binding.setSurfaceSize(const Size(1200, 800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
 
@@ -312,8 +313,10 @@ void main() {
           mailApiClientProvider.overrideWithValue(api),
           accountsProvider.overrideWith((ref) async => const [account]),
           providersProvider.overrideWith((ref) async => const []),
-          accountMessagesProvider
-              .overrideWith((ref, accountId) async => const []),
+          accountMessagesProvider.overrideWith((ref, accountId) async {
+            messageLoads += 1;
+            return const [];
+          }),
         ],
         child: const DailyPostBoxApp(),
       ),
@@ -322,6 +325,7 @@ void main() {
     await tester.tap(find.text(account.emailAddress).first);
     await tester.pumpAndSettle();
 
+    final loadsBeforeReconnect = messageLoads;
     await tester.tap(find.widgetWithText(TextButton, '다시 연결'));
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField), 'new-app-password');
@@ -329,6 +333,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(api.updates, [('auth-failed-account', 'new-app-password')]);
+    expect(messageLoads, greaterThan(loadsBeforeReconnect));
     expect(find.byType(AlertDialog), findsNothing);
     expect(find.text('다시 연결했습니다. 메일을 가져오는 중입니다.'), findsOneWidget);
     expect(tester.takeException(), isNull);
