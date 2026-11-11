@@ -12,10 +12,7 @@ import { getProvider } from "../providers/providerRegistry.js";
 import { resolveIncomingSettings } from "../providers/resolveConnectionSettings.js";
 import type { SecretResolver } from "../security/SecretResolver.js";
 import type { MailReceiver } from "./MailReceiver.js";
-import {
-  newestFirstSequenceRanges,
-  type ImapSequenceRange
-} from "./imapSequenceRanges.js";
+import { newestFirstUidBatches } from "./imapSequenceRanges.js";
 import { extractMessageLinks } from "./messageLinks.js";
 
 export class ImapReceiver implements MailReceiver {
@@ -58,14 +55,16 @@ export class ImapReceiver implements MailReceiver {
         const openedMailbox = await client.mailboxOpen(mailbox, {
           readOnly: true
         });
-        const ranges = newestFirstSequenceRanges(openedMailbox.exists, limit);
-        const firstRange = ranges.at(0);
+        const uids = await client.search({ all: true }, { uid: true });
+        const batches = newestFirstUidBatches(uids || [], limit);
+        const firstUids = batches.at(0);
 
         return {
-          firstBatch: firstRange
-            ? await this.fetchSequenceRange(client, account, mailbox, firstRange)
+          uidValidity: openedMailbox.uidValidity,
+          firstBatch: firstUids
+            ? await this.fetchUids(client, account, mailbox, firstUids)
             : [],
-          remainingRanges: ranges.slice(1)
+          remainingBatches: batches.slice(1)
         };
       });
     });
@@ -75,13 +74,18 @@ export class ImapReceiver implements MailReceiver {
     }
 
     // Some providers close long-running IMAP sessions during large initial
-    // imports. Isolating each range keeps already-saved batches visible and
-    // lets a disconnected range retry with a fresh connection.
-    for (const range of initial.remainingRanges) {
+    // imports. Isolating each batch keeps already-saved batches visible and
+    // lets a disconnected batch retry with a fresh connection.
+    for (const uids of initial.remainingBatches) {
       const batch = await this.withConnectionRetry(async () => {
         return this.withConnectedClient(account, async (client) => {
-          await client.mailboxOpen(mailbox, { readOnly: true });
-          return this.fetchSequenceRange(client, account, mailbox, range);
+          const openedMailbox = await client.mailboxOpen(mailbox, {
+            readOnly: true
+          });
+          if (openedMailbox.uidValidity !== initial.uidValidity) {
+            throw new Error("Mailbox UIDVALIDITY changed during import");
+          }
+          return this.fetchUids(client, account, mailbox, uids);
         });
       });
 
@@ -267,18 +271,18 @@ export class ImapReceiver implements MailReceiver {
     }
   }
 
-  private async fetchSequenceRange(
+  private async fetchUids(
     client: ImapFlow,
     account: MailAccount,
     mailbox: string,
-    range: ImapSequenceRange
+    uids: number[]
   ): Promise<IncomingMessageSummary[]> {
     const batch: IncomingMessageSummary[] = [];
-    for await (const message of client.fetch(`${range.start}:${range.end}`, {
+    for await (const message of client.fetch(uids, {
       envelope: true,
       flags: true,
       uid: true
-    })) {
+    }, { uid: true })) {
       const summary = toIncomingMessage(account, mailbox, message);
       if (summary) batch.push(summary);
     }

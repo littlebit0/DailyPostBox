@@ -136,6 +136,52 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
+  testWidgets('keeps the syncing mailbox when an account refresh fails',
+      (WidgetTester tester) async {
+    const account = MailAccountSummary(
+      id: 'syncing-account',
+      providerId: 'naver',
+      emailAddress: 'syncing@example.com',
+      incomingProtocol: 'imap',
+      authMode: 'app-password',
+      syncStatus: 'syncing',
+      syncError: null,
+      initialSync: InitialSyncOption.recommended,
+      lastSyncedAtLabel: 'never',
+    );
+    var accountLoads = 0;
+    await tester.binding.setSurfaceSize(const Size(1200, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          accountsProvider.overrideWith((ref) async {
+            accountLoads += 1;
+            if (accountLoads > 1) throw Exception('server unavailable');
+            return const [account];
+          }),
+          providersProvider.overrideWith((ref) async => const []),
+          accountMessagesProvider
+              .overrideWith((ref, accountId) async => const []),
+        ],
+        child: const DailyPostBoxApp(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text(account.emailAddress).first);
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 4));
+    await tester.pump();
+
+    expect(accountLoads, greaterThan(1));
+    expect(find.text('메일을 가져오는 중입니다'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('keeps account management readable at the default window size',
       (WidgetTester tester) async {
     const accounts = [

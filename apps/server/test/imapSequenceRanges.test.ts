@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { newestFirstSequenceRanges } from "../src/mail/imapSequenceRanges.js";
+import {
+  newestFirstSequenceRanges,
+  newestFirstUidBatches
+} from "../src/mail/imapSequenceRanges.js";
 
 test("loads a small newest batch before older messages", () => {
   assert.deepEqual(newestFirstSequenceRanges(4_026, "all").slice(0, 2), [
@@ -26,4 +29,15 @@ test("handles empty and smaller mailboxes", () => {
   assert.deepEqual(newestFirstSequenceRanges(10, 100), [
     { start: 1, end: 10 }
   ]);
+});
+
+test("batches stable UIDs newest first without gaps or duplicates", () => {
+  // Sparse UIDs, as left behind by expunged messages, arrive unsorted.
+  const uids = [40, 2, 7, 31, 15, 3];
+  assert.deepEqual(newestFirstUidBatches(uids, 5, 2, 2), [
+    [31, 40],
+    [7, 15],
+    [3]
+  ]);
+  assert.deepEqual(newestFirstUidBatches([], "all"), []);
 });

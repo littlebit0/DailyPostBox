@@ -29,7 +29,10 @@ class AccountMailboxPage extends ConsumerWidget {
         icon: const Icon(Icons.edit_outlined),
         label: Text(strings.compose),
       ),
+      // Keep the mailbox (and its sync polling) mounted when a background
+      // refresh fails, so the next poll can recover once the API is back.
       child: accounts.when(
+        skipError: true,
         data: (items) {
           final account =
               items.where((item) => item.id == accountId).firstOrNull;

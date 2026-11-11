@@ -39,3 +39,20 @@ export function newestFirstSequenceRanges(
 
   return ranges;
 }
+
+// UIDs stay stable when other clients expunge messages between batch
+// connections, unlike sequence numbers.
+export function newestFirstUidBatches(
+  uids: readonly number[],
+  limit: number | "all",
+  firstBatchSize = 25,
+  batchSize = 250
+): number[][] {
+  const sorted = [...uids].sort((left, right) => left - right);
+  return newestFirstSequenceRanges(
+    sorted.length,
+    limit,
+    firstBatchSize,
+    batchSize
+  ).map((range) => sorted.slice(range.start - 1, range.end));
+}
