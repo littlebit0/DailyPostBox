@@ -61,6 +61,7 @@ class _MailboxContent extends ConsumerStatefulWidget {
 
 class _MailboxContentState extends ConsumerState<_MailboxContent> {
   Timer? _refreshTimer;
+  bool _refreshing = false;
 
   bool get _isSyncing =>
       const {'syncing', 'validating'}.contains(widget.account.syncStatus);
@@ -74,6 +75,17 @@ class _MailboxContentState extends ConsumerState<_MailboxContent> {
   @override
   void didUpdateWidget(covariant _MailboxContent oldWidget) {
     super.didUpdateWidget(oldWidget);
+    final wasSyncing =
+        const {'syncing', 'validating'}.contains(oldWidget.account.syncStatus);
+    if (oldWidget.account.id == widget.account.id &&
+        wasSyncing &&
+        !_isSyncing) {
+      // The last poll may have read messages before the final batch was
+      // saved, so fetch the list once more after sync finishes.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) ref.invalidate(accountMessagesProvider(widget.account.id));
+      });
+    }
     if (oldWidget.account.id != widget.account.id ||
         oldWidget.account.syncStatus != widget.account.syncStatus) {
       _configureRefreshTimer();
@@ -88,10 +100,7 @@ class _MailboxContentState extends ConsumerState<_MailboxContent> {
 
   void _configureRefreshTimer() {
     if (_isSyncing) {
-      _refreshTimer ??= Timer.periodic(
-        const Duration(seconds: 3),
-        (_) => _refresh(),
-      );
+      if (_refreshTimer == null && !_refreshing) _scheduleRefresh();
       return;
     }
 
@@ -99,10 +108,29 @@ class _MailboxContentState extends ConsumerState<_MailboxContent> {
     _refreshTimer = null;
   }
 
-  void _refresh() {
-    if (!mounted) return;
-    ref.invalidate(accountsProvider);
-    ref.invalidate(accountMessagesProvider(widget.account.id));
+  void _scheduleRefresh() {
+    _refreshTimer = Timer(const Duration(seconds: 3), () {
+      _refreshTimer = null;
+      unawaited(_refresh());
+    });
+  }
+
+  // Polls only after both requests finish, so a slow response is never
+  // discarded by a newer invalidation.
+  Future<void> _refresh() async {
+    if (!mounted || _refreshing) return;
+    _refreshing = true;
+    try {
+      await Future.wait([
+        ref.refresh(accountsProvider.future),
+        ref.refresh(accountMessagesProvider(widget.account.id).future),
+      ]);
+    } catch (_) {
+      // The providers expose the error; the next poll retries.
+    } finally {
+      _refreshing = false;
+    }
+    if (mounted && _isSyncing && _refreshTimer == null) _scheduleRefresh();
   }
 
   @override
