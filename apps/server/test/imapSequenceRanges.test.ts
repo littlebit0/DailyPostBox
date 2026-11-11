@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  latestUidSearchQuery,
   newestFirstSequenceRanges,
   newestFirstUidBatches
 } from "../src/mail/imapSequenceRanges.js";
@@ -40,4 +41,13 @@ test("batches stable UIDs newest first without gaps or duplicates", () => {
     [3]
   ]);
   assert.deepEqual(newestFirstUidBatches([], "all"), []);
+});
+
+test("searches only the newest sequence range for finite fetches", () => {
+  assert.deepEqual(latestUidSearchQuery(50_000, 1), { seq: "50000:*" });
+  assert.deepEqual(latestUidSearchQuery(50_000, 25), { seq: "49976:*" });
+  assert.deepEqual(latestUidSearchQuery(10, 100), { seq: "1:*" });
+  assert.deepEqual(latestUidSearchQuery(10, "all"), { all: true });
+  assert.equal(latestUidSearchQuery(0, "all"), null);
+  assert.equal(latestUidSearchQuery(10, 0), null);
 });

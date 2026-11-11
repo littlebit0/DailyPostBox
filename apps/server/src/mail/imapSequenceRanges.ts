@@ -56,3 +56,14 @@ export function newestFirstUidBatches(
     batchSize
   ).map((range) => sorted.slice(range.start - 1, range.end));
 }
+
+// Only "all" imports snapshot every UID; finite fetches (including the
+// single-message IDLE path) search just the newest sequence range.
+export function latestUidSearchQuery(
+  totalMessages: number,
+  limit: number | "all"
+): { all: true } | { seq: string } | null {
+  if (totalMessages <= 0 || limit === 0) return null;
+  if (limit === "all") return { all: true };
+  return { seq: `${Math.max(1, totalMessages - limit + 1)}:*` };
+}

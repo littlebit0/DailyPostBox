@@ -12,7 +12,10 @@ import { getProvider } from "../providers/providerRegistry.js";
 import { resolveIncomingSettings } from "../providers/resolveConnectionSettings.js";
 import type { SecretResolver } from "../security/SecretResolver.js";
 import type { MailReceiver } from "./MailReceiver.js";
-import { newestFirstUidBatches } from "./imapSequenceRanges.js";
+import {
+  latestUidSearchQuery,
+  newestFirstUidBatches
+} from "./imapSequenceRanges.js";
 import { extractMessageLinks } from "./messageLinks.js";
 
 export class ImapReceiver implements MailReceiver {
@@ -55,8 +58,12 @@ export class ImapReceiver implements MailReceiver {
         const openedMailbox = await client.mailboxOpen(mailbox, {
           readOnly: true
         });
-        const uids = await client.search({ all: true }, { uid: true });
-        const batches = newestFirstUidBatches(uids || [], limit);
+        const uids = await this.searchLatestUids(
+          client,
+          openedMailbox.exists,
+          limit
+        );
+        const batches = newestFirstUidBatches(uids, limit);
         const firstUids = batches.at(0);
 
         return {
@@ -269,6 +276,16 @@ export class ImapReceiver implements MailReceiver {
     } finally {
       await client.logout().catch(() => undefined);
     }
+  }
+
+  private async searchLatestUids(
+    client: ImapFlow,
+    exists: number,
+    limit: number | "all"
+  ): Promise<number[]> {
+    const query = latestUidSearchQuery(exists, limit);
+    if (!query) return [];
+    return (await client.search(query, { uid: true })) || [];
   }
 
   private async fetchUids(
