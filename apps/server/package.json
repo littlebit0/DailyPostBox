@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx src/server.ts",
-    "test": "tsx --test test/imapSequenceRanges.test.ts test/mailSyncWorker.test.ts test/accountValidate.test.ts test/accountReconnect.test.ts",
+    "test": "tsx --test test/imapSequenceRanges.test.ts test/mailSyncWorker.test.ts test/accountValidate.test.ts test/accountReconnect.test.ts test/oauthTokenManager.test.ts",
     "typecheck": "tsc --noEmit",
     "start": "node dist/server.js",
     "build": "tsc"
