@@ -16,6 +16,7 @@ import {
   latestUidSearchQuery,
   newestFirstUidBatches
 } from "./imapSequenceRanges.js";
+import { isAuthenticationFailure } from "./authenticationFailure.js";
 import { extractMessageLinks } from "./messageLinks.js";
 
 export class ImapReceiver implements MailReceiver {
@@ -345,17 +346,6 @@ function toIncomingMessage(
 
 function toError(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error));
-}
-
-function isAuthenticationFailure(error: unknown): boolean {
-  if (!error || typeof error !== "object") return false;
-
-  const candidate = error as {
-    authenticationFailed?: boolean;
-    code?: unknown;
-  };
-  return candidate.authenticationFailed === true ||
-    candidate.code === "AUTHENTICATIONFAILED";
 }
 
 async function delay(milliseconds: number): Promise<void> {

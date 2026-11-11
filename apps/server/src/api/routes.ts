@@ -13,6 +13,7 @@ import type {
 } from "../domain/types.js";
 import type { AccountRepository } from "../workers/AccountRepository.js";
 import { providerRegistry } from "../providers/providerRegistry.js";
+import { applySyncFailure } from "../mail/authenticationFailure.js";
 
 const sendSchema = z.object({
   accountId: z.string(),
@@ -80,6 +81,7 @@ export async function registerRoutes(
       message: IncomingMessageSummary
     ) => Promise<IncomingMessageContent>;
     startAccountSync: (account: MailAccount) => Promise<void>;
+    resumeAccountSync: (account: MailAccount) => Promise<void>;
     stopAccountSync: (accountId: string) => Promise<void>;
   }
 ): Promise<void> {
@@ -171,6 +173,7 @@ export async function registerRoutes(
 
     account.syncStatus = "validating";
     account.syncError = undefined;
+    account.syncErrorCode = undefined;
     await deps.accounts.updateAccount(account);
 
     try {
@@ -178,9 +181,11 @@ export async function registerRoutes(
       account.syncStatus = "idle";
       account.updatedAt = new Date();
       await deps.accounts.updateAccount(account);
+      // An authentication failure stops the watcher; a passing check must
+      // start it again or the account looks healthy but receives no mail.
+      void deps.resumeAccountSync(account);
     } catch (error) {
-      account.syncStatus = "error";
-      account.syncError = error instanceof Error ? error.message : String(error);
+      applySyncFailure(account, error);
       account.updatedAt = new Date();
       await deps.accounts.updateAccount(account);
       throw error;
@@ -200,6 +205,7 @@ export async function registerRoutes(
 
     account.syncStatus = "syncing";
     account.syncError = undefined;
+    account.syncErrorCode = undefined;
     await deps.accounts.updateAccount(account);
     void deps.startAccountSync(account);
 

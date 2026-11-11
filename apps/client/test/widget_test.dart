@@ -247,6 +247,47 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
+  testWidgets('explains an authentication failure in the mailbox',
+      (WidgetTester tester) async {
+    const account = MailAccountSummary(
+      id: 'auth-failed-account',
+      providerId: 'naver',
+      emailAddress: 'expired@example.com',
+      incomingProtocol: 'imap',
+      authMode: 'app-password',
+      syncStatus: 'error',
+      syncError: 'Command failed',
+      syncErrorCode: 'authentication',
+      initialSync: InitialSyncOption.recommended,
+      lastSyncedAtLabel: '9/11',
+    );
+    await tester.binding.setSurfaceSize(const Size(1200, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          accountsProvider.overrideWith((ref) async => const [account]),
+          providersProvider.overrideWith((ref) async => const []),
+          accountMessagesProvider
+              .overrideWith((ref, accountId) async => const []),
+        ],
+        child: const DailyPostBoxApp(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text(account.emailAddress).first);
+    await tester.pumpAndSettle();
+
+    expect(
+      find.textContaining('로그인 정보가 만료됐거나 올바르지 않아'),
+      findsOneWidget,
+    );
+    expect(find.text('Command failed'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('keeps account management readable at the default window size',
       (WidgetTester tester) async {
     const accounts = [
