@@ -255,7 +255,13 @@ export class MailSyncWorker {
     const isNew = await this.accounts.saveIncomingMessage(message);
     if (!notify || !isNew) return;
     const targets = await this.accounts.listPushTargets(account.userId);
-    await this.push.notifyNewMessage(targets, message);
+    // Push delivery must never block or tear down the IMAP watcher.
+    void this.push.notifyNewMessage(targets, message).catch((error: unknown) => {
+      console.warn("push:notify-failed", {
+        accountId: account.id,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    });
   }
 
   private initialSyncLimit(account: MailAccount): number | "all" | 0 {

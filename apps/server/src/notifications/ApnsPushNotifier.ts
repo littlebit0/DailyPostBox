@@ -14,6 +14,10 @@ export interface ApnsConfig {
 // APNs rejects provider tokens older than an hour and throttles ones
 // refreshed more often than every 20 minutes.
 const tokenLifetimeMs = 50 * 60_000;
+const requestTimeoutMs = 10_000;
+const retryDelaysMs = [1_000, 5_000];
+// APNs rejects alert payloads above 4 KB.
+const maxPayloadBytes = 4_096;
 
 export class ApnsPushNotifier implements PushNotifier {
   private readonly key: KeyObject;
@@ -22,7 +26,8 @@ export class ApnsPushNotifier implements PushNotifier {
   constructor(
     private readonly config: ApnsConfig,
     private readonly removeTarget: (target: PushTarget) => Promise<void>,
-    private readonly openSession: (origin: string) => ClientHttp2Session = connect
+    private readonly openSession: (origin: string) => ClientHttp2Session = connect,
+    private readonly wait: (ms: number) => Promise<void> = delay
   ) {
     this.key = createPrivateKey(config.privateKeyPem);
   }
@@ -36,26 +41,51 @@ export class ApnsPushNotifier implements PushNotifier {
     );
     if (appleTargets.length === 0) return;
 
+    const body = JSON.stringify(apnsPayload(message));
+    await Promise.all(appleTargets.map((target) => this.deliver(target, body)));
+  }
+
+  // Never rejects: transport errors, timeouts, throttling and APNs outages
+  // are retried a bounded number of times on a fresh connection.
+  private async deliver(target: PushTarget, body: string): Promise<void> {
+    for (let attempt = 0; ; attempt += 1) {
+      let result: { status: number; reason?: string };
+      try {
+        result = await this.sendOnce(target.deviceToken, body);
+      } catch (error) {
+        result = { status: 0, reason: error instanceof Error ? error.message : String(error) };
+      }
+      if (result.status === 200) return;
+
+      const retryable = result.status === 0 || result.status === 429 || result.status >= 500;
+      if (retryable && attempt < retryDelaysMs.length) {
+        await this.wait(retryDelaysMs[attempt]);
+        continue;
+      }
+
+      console.warn("push:apns-rejected", {
+        status: result.status,
+        reason: result.reason,
+        device: target.deviceToken.slice(0, 8)
+      });
+      if (isDeadToken(result.status, result.reason)) {
+        await this.removeTarget(target).catch(() => undefined);
+      }
+      return;
+    }
+  }
+
+  private async sendOnce(
+    deviceToken: string,
+    body: string
+  ): Promise<{ status: number; reason?: string }> {
     const origin = this.config.production
       ? "https://api.push.apple.com"
       : "https://api.sandbox.push.apple.com";
     const session = this.openSession(origin);
     session.on("error", () => undefined);
-    const body = JSON.stringify(apnsPayload(message));
-
     try {
-      await Promise.all(appleTargets.map(async (target) => {
-        const result = await this.send(session, target.deviceToken, body);
-        if (result.status === 200) return;
-        console.warn("push:apns-rejected", {
-          status: result.status,
-          reason: result.reason,
-          device: target.deviceToken.slice(0, 8)
-        });
-        if (isDeadToken(result.status, result.reason)) {
-          await this.removeTarget(target);
-        }
-      }));
+      return await this.send(session, deviceToken, body);
     } finally {
       session.close();
     }
@@ -95,6 +125,10 @@ export class ApnsPushNotifier implements PushNotifier {
         resolve({ status, reason });
       });
       request.on("error", reject);
+      request.setTimeout(requestTimeoutMs, () => {
+        request.close(constants.NGHTTP2_CANCEL);
+        reject(new Error("APNs request timed out"));
+      });
       request.end(body);
     });
   }
@@ -131,7 +165,7 @@ export function apnsProviderToken(
 }
 
 export function apnsPayload(message: IncomingMessageSummary) {
-  return {
+  const payload = {
     aps: {
       alert: {
         title: message.from || "새 메일",
@@ -143,6 +177,38 @@ export function apnsPayload(message: IncomingMessageSummary) {
     accountId: message.accountId,
     providerMessageId: message.providerMessageId
   };
+  // Shorten the body first, then the title, until the payload fits.
+  const alert = payload.aps.alert;
+  for (const field of ["body", "title"] as const) {
+    // JSON escaping can add bytes, so re-measure until it fits.
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      const overflow = Buffer.byteLength(JSON.stringify(payload)) - maxPayloadBytes;
+      if (overflow <= 0) return payload;
+      alert[field] = truncateUtf8(
+        alert[field],
+        Buffer.byteLength(alert[field]) - overflow - 8
+      );
+    }
+  }
+  return payload;
+}
+
+function truncateUtf8(value: string, maxBytes: number): string {
+  if (Buffer.byteLength(value) <= maxBytes) return value;
+  const ellipsisBytes = 3;
+  let result = "";
+  let bytes = 0;
+  for (const char of value) {
+    const charBytes = Buffer.byteLength(char);
+    if (bytes + charBytes + ellipsisBytes > maxBytes) break;
+    result += char;
+    bytes += charBytes;
+  }
+  return `${result}…`;
+}
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 function isDeadToken(status: number, reason?: string): boolean {

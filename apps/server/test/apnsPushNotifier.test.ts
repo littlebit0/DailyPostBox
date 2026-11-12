@@ -5,6 +5,7 @@ import test from "node:test";
 import type { ClientHttp2Session } from "node:http2";
 import {
   ApnsPushNotifier,
+  apnsPayload,
   apnsProviderToken
 } from "../src/notifications/ApnsPushNotifier.js";
 import type { PushTarget } from "../src/notifications/PushNotifier.js";
@@ -41,18 +42,36 @@ test("signs an ES256 provider token APNs can verify", () => {
   ));
 });
 
-function fakeSession(responses: Record<string, { status: number; body?: string }>) {
+type FakeResponse = { status: number; body?: string } | "error" | "hang";
+
+function fakeSession(responses: Record<string, FakeResponse | FakeResponse[]>) {
   const requests: { headers: Record<string, string>; body: string }[] = [];
   let origin = "";
   const session = Object.assign(new EventEmitter(), {
     request(headers: Record<string, string>) {
+      let onTimeout: (() => void) | undefined;
       const stream = Object.assign(new EventEmitter(), {
         setEncoding: () => undefined,
+        setTimeout: (_ms: number, callback: () => void) => {
+          onTimeout = callback;
+        },
+        close: () => undefined,
         end(body: string) {
           requests.push({ headers, body });
           const token = headers[":path"].split("/").at(-1)!;
-          const response = responses[token] ?? { status: 200 };
+          const scripted = responses[token] ?? { status: 200 };
+          const response = Array.isArray(scripted)
+            ? scripted.shift() ?? { status: 200 }
+            : scripted;
           setImmediate(() => {
+            if (response === "hang") {
+              onTimeout?.();
+              return;
+            }
+            if (response === "error") {
+              stream.emit("error", new Error("ECONNRESET"));
+              return;
+            }
             stream.emit("response", { ":status": response.status });
             if (response.body) stream.emit("data", response.body);
             stream.emit("end");
@@ -83,7 +102,8 @@ test("sends alerts to Apple devices and drops dead tokens", async () => {
     async (target) => {
       removed.push(target);
     },
-    session.open
+    session.open,
+    async () => undefined
   );
 
   await notifier.notifyNewMessage([
@@ -103,4 +123,38 @@ test("sends alerts to Apple devices and drops dead tokens", async () => {
     body: "Hello"
   });
   assert.deepEqual(removed.map((target) => target.deviceToken), ["deadtoken"]);
+});
+
+test("retries timeouts and transport errors without rejecting", async () => {
+  const session = fakeSession({
+    flaky: ["error", "hang", { status: 200 }],
+    down: ["hang", "hang", "hang"]
+  });
+  const notifier = new ApnsPushNotifier(
+    { privateKeyPem: pem, keyId: "KEY123", teamId: "TEAM456", topic: "com.dailypostbox.app", production: false },
+    async () => undefined,
+    session.open,
+    async () => undefined
+  );
+
+  await notifier.notifyNewMessage([
+    { userId: "demo-user", platform: "macos", deviceToken: "flaky" },
+    { userId: "demo-user", platform: "macos", deviceToken: "down" }
+  ], message);
+
+  const attempts = (token: string) =>
+    session.requests.filter((request) => request.headers[":path"].endsWith(token)).length;
+  assert.equal(attempts("flaky"), 3);
+  assert.equal(attempts("down"), 3);
+});
+
+test("keeps long alerts within the APNs payload limit", () => {
+  const payload = apnsPayload({
+    ...message,
+    from: "sender@example.com, ".repeat(300),
+    subject: "메일\"".repeat(700)
+  });
+  assert.ok(Buffer.byteLength(JSON.stringify(payload)) <= 4_096);
+  assert.ok(payload.aps.alert.body.endsWith("…"));
+  assert.equal(apnsPayload(message).aps.alert.body, "Hello");
 });
