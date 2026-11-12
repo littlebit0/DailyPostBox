@@ -10,6 +10,7 @@ export interface AccountRepository {
   deleteAccount(accountId: string): Promise<void>;
   listPushTargets(userId: string): Promise<PushTarget[]>;
   savePushTarget(target: PushTarget): Promise<void>;
+  deletePushTarget(target: PushTarget): Promise<void>;
   listInbox(userId: string): Promise<IncomingMessageSummary[]>;
   getMessage(userId: string, messageId: string): Promise<IncomingMessageSummary | undefined>;
   saveIncomingMessage(message: IncomingMessageSummary): Promise<boolean>;
@@ -68,6 +69,13 @@ export class InMemoryAccountRepository implements AccountRepository {
     }
 
     this.pushTargets.push(target);
+  }
+
+  async deletePushTarget(target: PushTarget): Promise<void> {
+    const index = this.pushTargets.findIndex(
+      (item) => item.userId === target.userId && item.deviceToken === target.deviceToken
+    );
+    if (index >= 0) this.pushTargets.splice(index, 1);
   }
 
   async listInbox(userId: string): Promise<IncomingMessageSummary[]> {

@@ -7,7 +7,10 @@ import { DevelopmentSecretResolver } from "./security/SecretResolver.js";
 import { ImapReceiver } from "./mail/ImapReceiver.js";
 import { Pop3Receiver } from "./mail/Pop3Receiver.js";
 import { SmtpSender } from "./mail/SmtpSender.js";
+import { readFileSync } from "node:fs";
+import { ApnsPushNotifier } from "./notifications/ApnsPushNotifier.js";
 import { NoopPushNotifier } from "./notifications/PushNotifier.js";
+import type { PushNotifier } from "./notifications/PushNotifier.js";
 import { InMemoryAccountRepository } from "./workers/AccountRepository.js";
 import type { AccountRepository } from "./workers/AccountRepository.js";
 import { LocalFileAccountRepository } from "./workers/LocalFileAccountRepository.js";
@@ -37,7 +40,7 @@ const oauthTokens = new OAuthTokenManager(secrets, accounts);
 const imap = new ImapReceiver(secrets, oauthTokens);
 const pop3 = new Pop3Receiver();
 const sender = new SmtpSender(secrets, oauthTokens);
-const push = new NoopPushNotifier();
+const push = createPushNotifier();
 
 const worker = new MailSyncWorker(accounts, imap, pop3, push, {
   mailbox: "INBOX",
@@ -116,3 +119,21 @@ await app.listen({
   port: env.PORT,
   host: env.HOST
 });
+
+function createPushNotifier(): PushNotifier {
+  if (env.PUSH_PROVIDER !== "apns") return new NoopPushNotifier();
+  if (!env.APNS_KEY_PATH || !env.APNS_KEY_ID || !env.APNS_TEAM_ID) {
+    app.log.warn("PUSH_PROVIDER=apns needs APNS_KEY_PATH, APNS_KEY_ID and APNS_TEAM_ID; push is disabled.");
+    return new NoopPushNotifier();
+  }
+  return new ApnsPushNotifier(
+    {
+      privateKeyPem: readFileSync(env.APNS_KEY_PATH, "utf8"),
+      keyId: env.APNS_KEY_ID,
+      teamId: env.APNS_TEAM_ID,
+      topic: env.APNS_TOPIC,
+      production: env.APNS_PRODUCTION === "true"
+    },
+    (target) => accounts.deletePushTarget(target)
+  );
+}

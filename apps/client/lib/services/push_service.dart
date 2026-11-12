@@ -1,16 +1,23 @@
 import 'dart:io';
 
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 final pushServiceProvider = Provider<PushService>((ref) => PushService());
 
 class PushService {
-  Future<void> initialize() async {
-    // Native push providers are wired after platform-specific Firebase/APNs setup.
-  }
+  static const _channel = MethodChannel('dailypostbox/push');
 
+  Future<void> initialize() async {}
+
+  /// Whether this platform can register for remote push yet.
+  bool get isSupported => Platform.isMacOS;
+
+  /// Asks for notification permission and returns the APNs device token.
+  /// Throws a [PlatformException] when permission or registration fails.
   Future<String?> getDeviceToken() async {
-    return null;
+    if (!isSupported) return null;
+    return _channel.invokeMethod<String>('getDeviceToken');
   }
 
   String get platformName {

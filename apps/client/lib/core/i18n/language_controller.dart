@@ -212,6 +212,17 @@ class AppStrings {
   String get registerThisDeviceDescription => _ko
       ? '플랫폼 푸시 토큰을 메일 서버에 등록합니다.'
       : 'Send the platform push token to the mail server.';
+  String get pushRegistered => _ko
+      ? '이 기기를 등록했습니다. 새 메일이 오면 알림을 보냅니다.'
+      : 'This device is registered. New mail will send a notification.';
+  String get pushUnsupported => _ko
+      ? '이 플랫폼은 아직 푸시 알림을 지원하지 않습니다.'
+      : 'Push notifications are not supported on this platform yet.';
+  String get pushPermissionDenied => _ko
+      ? '알림 권한이 꺼져 있습니다. 시스템 설정 > 알림에서 DailyPostBox를 허용하세요.'
+      : 'Notifications are off. Allow DailyPostBox in System Settings > Notifications.';
+  String pushRegistrationFailed(String detail) =>
+      _ko ? '기기 등록에 실패했습니다: $detail' : 'Device registration failed: $detail';
   String get languageSetting => _ko ? '언어' : 'Language';
   String get languageDescription => _ko
       ? '앱에서 사용할 표시 언어를 선택합니다.'
