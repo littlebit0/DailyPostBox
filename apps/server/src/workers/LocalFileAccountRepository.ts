@@ -88,6 +88,16 @@ export class LocalFileAccountRepository implements AccountRepository {
     await this.persist();
   }
 
+  async deletePushTarget(target: PushTarget): Promise<void> {
+    await this.ensureLoaded();
+    const index = this.pushTargets.findIndex(
+      (item) => item.userId === target.userId && item.deviceToken === target.deviceToken
+    );
+    if (index < 0) return;
+    this.pushTargets.splice(index, 1);
+    await this.persist();
+  }
+
   async listInbox(userId: string): Promise<IncomingMessageSummary[]> {
     await this.ensureLoaded();
     const accountIds = new Set(
