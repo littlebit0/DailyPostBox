@@ -47,6 +47,7 @@ type FakeResponse = { status: number; body?: string } | "error" | "hang";
 function fakeSession(responses: Record<string, FakeResponse | FakeResponse[]>) {
   const requests: { headers: Record<string, string>; body: string }[] = [];
   let origin = "";
+  let destroyed = 0;
   const session = Object.assign(new EventEmitter(), {
     request(headers: Record<string, string>) {
       let onTimeout: (() => void) | undefined;
@@ -80,10 +81,14 @@ function fakeSession(responses: Record<string, FakeResponse | FakeResponse[]>) {
       });
       return stream;
     },
-    close: () => undefined
+    close: () => undefined,
+    destroy: () => {
+      destroyed += 1;
+    }
   });
   return {
     requests,
+    destroyed: () => destroyed,
     origin: () => origin,
     open: (value: string) => {
       origin = value;
@@ -146,6 +151,8 @@ test("retries timeouts and transport errors without rejecting", async () => {
     session.requests.filter((request) => request.headers[":path"].endsWith(token)).length;
   assert.equal(attempts("flaky"), 3);
   assert.equal(attempts("down"), 3);
+  // Every failed attempt (2 for flaky, 3 for down) tears its connection down.
+  assert.equal(session.destroyed(), 5);
 });
 
 test("keeps long alerts within the APNs payload limit", () => {

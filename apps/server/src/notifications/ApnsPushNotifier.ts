@@ -85,9 +85,14 @@ export class ApnsPushNotifier implements PushNotifier {
     const session = this.openSession(origin);
     session.on("error", () => undefined);
     try {
-      return await this.send(session, deviceToken, body);
-    } finally {
+      const result = await this.send(session, deviceToken, body);
       session.close();
+      return result;
+    } catch (error) {
+      // close() waits for a graceful end that a stalled TLS handshake never
+      // reaches; destroy() releases the socket.
+      session.destroy();
+      throw error;
     }
   }
 
