@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/i18n/language_controller.dart';
 import '../../services/mail_api_client.dart';
 import '../../services/push_service.dart';
+import '../accounts/accounts_page.dart' show friendlyError;
 import '../../widgets/app_shell.dart';
 
 class SettingsPage extends ConsumerWidget {
@@ -54,16 +56,7 @@ class SettingsPage extends ConsumerWidget {
                   leading: const Icon(Icons.notifications_active_outlined),
                   title: Text(strings.registerThisDevice),
                   subtitle: Text(strings.registerThisDeviceDescription),
-                  onTap: () async {
-                    final push = ref.read(pushServiceProvider);
-                    final token = await push.getDeviceToken();
-                    if (token == null) return;
-
-                    await ref.read(mailApiClientProvider).registerPushToken(
-                          platform: push.platformName,
-                          token: token,
-                        );
-                  },
+                  onTap: () => _registerDevice(context, ref),
                 ),
               ],
             ),
@@ -71,5 +64,33 @@ class SettingsPage extends ConsumerWidget {
         ],
       ),
     );
+  }
+}
+
+Future<void> _registerDevice(BuildContext context, WidgetRef ref) async {
+  final strings = ref.read(appStringsProvider);
+  final messenger = ScaffoldMessenger.of(context);
+  final push = ref.read(pushServiceProvider);
+  void report(String message) =>
+      messenger.showSnackBar(SnackBar(content: Text(message)));
+
+  if (!push.isSupported) {
+    report(strings.pushUnsupported);
+    return;
+  }
+  try {
+    final token = await push.getDeviceToken();
+    if (token == null) return;
+    await ref.read(mailApiClientProvider).registerPushToken(
+          platform: push.platformName,
+          token: token,
+        );
+    report(strings.pushRegistered);
+  } on PlatformException catch (error) {
+    report(error.code == 'permission-denied'
+        ? strings.pushPermissionDenied
+        : strings.pushRegistrationFailed(error.message ?? error.code));
+  } catch (error) {
+    report(strings.pushRegistrationFailed(friendlyError(error, strings)));
   }
 }

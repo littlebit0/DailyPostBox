@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { MailAccount } from "../src/domain/types.js";
+import type { IncomingMessageSummary, MailAccount } from "../src/domain/types.js";
 import type { ImapReceiver } from "../src/mail/ImapReceiver.js";
 import type { Pop3Receiver } from "../src/mail/Pop3Receiver.js";
 import type { PushNotifier } from "../src/notifications/PushNotifier.js";
@@ -173,6 +173,48 @@ test("resume starts a stopped watcher once and leaves a running one alone", asyn
     await syncWorker.resumeAccount(mailAccount);
     await syncWorker.resumeAccount(mailAccount);
     assert.equal(watchCalls, 1);
+  } finally {
+    await syncWorker.stop();
+  }
+});
+
+test("a failing push does not disturb mail handling", async () => {
+  const repository = new InMemoryAccountRepository();
+  const mailAccount = account();
+  await repository.addAccount(mailAccount);
+  await repository.savePushTarget({ userId: "demo-user", platform: "macos", deviceToken: "token" });
+  let deliver: ((message: IncomingMessageSummary) => Promise<void>) | undefined;
+  const imap = {
+    watch: async (
+      _account: MailAccount,
+      _mailbox: string,
+      onMessage: (message: IncomingMessageSummary) => Promise<void>
+    ) => {
+      deliver = onMessage;
+      return async () => undefined;
+    },
+    fetchLatestBatches: async () => undefined
+  };
+  const syncWorker = new MailSyncWorker(
+    repository,
+    imap as unknown as ImapReceiver,
+    {} as Pop3Receiver,
+    { notifyNewMessage: async () => { throw new Error("ECONNRESET"); } },
+    { mailbox: "INBOX", pop3PollIntervalMs: 60_000, imapReconnectBaseDelayMs: 1, imapReconnectMaxDelayMs: 1 }
+  );
+
+  try {
+    await syncWorker.startAccount(mailAccount);
+    await deliver!({
+      accountId: mailAccount.id,
+      providerMessageId: "7",
+      mailbox: "INBOX",
+      from: "a@example.com",
+      subject: "hi",
+      receivedAt: new Date(),
+      hasAttachments: false
+    });
+    assert.equal((await repository.listInbox("demo-user")).length, 1);
   } finally {
     await syncWorker.stop();
   }
