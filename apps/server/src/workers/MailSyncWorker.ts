@@ -3,6 +3,10 @@ import type { ImapReceiver } from "../mail/ImapReceiver.js";
 import type { Pop3Receiver } from "../mail/Pop3Receiver.js";
 import type { PushNotifier } from "../notifications/PushNotifier.js";
 import type { AccountRepository } from "./AccountRepository.js";
+import {
+  applySyncFailure,
+  isAuthenticationFailure
+} from "../mail/authenticationFailure.js";
 
 export interface MailSyncWorkerOptions {
   pop3PollIntervalMs: number;
@@ -34,6 +38,12 @@ export class MailSyncWorker {
       if (!this.stopHandlers.has(account.id)) {
         await this.startImapAccount(account);
       }
+      // The watcher stopped on rejected credentials; a sync would fail the
+      // same way, or with a skipped import mark the account healthy.
+      if (!this.stopHandlers.has(account.id) &&
+        account.syncErrorCode === "authentication") {
+        return;
+      }
       await this.syncAccount(account).catch(() => undefined);
       return;
     }
@@ -44,6 +54,14 @@ export class MailSyncWorker {
     }
 
     this.startPop3Account(account);
+  }
+
+  /** Starts watching or polling only when nothing is running for the account. */
+  async resumeAccount(account: MailAccount): Promise<void> {
+    const running = account.incomingProtocol === "imap"
+      ? this.stopHandlers.has(account.id)
+      : this.pollingTimers.has(account.id);
+    if (!running) await this.startAccount(account);
   }
 
   async syncAccount(account: MailAccount): Promise<void> {
@@ -63,6 +81,7 @@ export class MailSyncWorker {
     const limit = this.initialSyncLimit(account);
     account.syncStatus = "syncing";
     account.syncError = undefined;
+    account.syncErrorCode = undefined;
     await this.accounts.updateAccount(account);
 
     try {
@@ -98,8 +117,7 @@ export class MailSyncWorker {
       account.lastSyncedAt = new Date();
       await this.accounts.updateAccount(account);
     } catch (error) {
-      account.syncStatus = "error";
-      account.syncError = error instanceof Error ? error.message : String(error);
+      applySyncFailure(account, error);
       await this.accounts.updateAccount(account);
       throw error;
     }
@@ -138,6 +156,24 @@ export class MailSyncWorker {
     const scheduleReconnect = (error: Error): void => {
       if (stopped || reconnectTimer) return;
 
+      if (isAuthenticationFailure(error)) {
+        // Repeated failed logins can lock the mailbox; wait for the user to
+        // reconnect, sync or re-validate the account instead.
+        stopped = true;
+        void activeStop?.().catch(() => undefined);
+        activeStop = undefined;
+        if (this.stopHandlers.get(account.id) === stopWatching) {
+          this.stopHandlers.delete(account.id);
+        }
+        console.warn("imap:watch-stopped-authentication", {
+          accountId: account.id,
+          error: error.message
+        });
+        applySyncFailure(account, error);
+        void this.accounts.updateAccount(account).catch(() => undefined);
+        return;
+      }
+
       const delayMs = reconnectDelay;
       reconnectDelay = Math.min(
         reconnectDelay * 2,
@@ -174,13 +210,14 @@ export class MailSyncWorker {
       }
     };
 
-    this.stopHandlers.set(account.id, async () => {
+    const stopWatching = async (): Promise<void> => {
       stopped = true;
       if (reconnectTimer) clearTimeout(reconnectTimer);
       reconnectTimer = undefined;
       await activeStop?.().catch(() => undefined);
       activeStop = undefined;
-    });
+    };
+    this.stopHandlers.set(account.id, stopWatching);
 
     await connect();
   }

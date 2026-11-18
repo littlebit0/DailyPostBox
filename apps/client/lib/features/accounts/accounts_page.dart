@@ -451,7 +451,7 @@ class _AccountDetail extends ConsumerWidget {
         if (account.syncError != null) ...[
           const SizedBox(height: 12),
           Text(
-            account.syncError!,
+            strings.syncFailure(account.syncErrorCode, account.syncError),
             style: TextStyle(color: Theme.of(context).colorScheme.error),
           ),
         ],

@@ -85,7 +85,7 @@ class MessagePage extends ConsumerWidget {
             ),
             loading: () => const Center(child: CircularProgressIndicator()),
             error: (error, stackTrace) => Center(
-              child: Text(strings.mailLoadFailedTitle),
+              child: Text(strings.messageLoadFailedTitle),
             ),
           ),
         ),

@@ -43,6 +43,7 @@ export interface MailAccount {
   encryptedSecretRef: string;
   syncStatus?: "idle" | "validating" | "syncing" | "error";
   syncError?: string;
+  syncErrorCode?: "authentication";
   initialSync?: {
     includePreviousMessages: boolean;
     limit: number | "all";

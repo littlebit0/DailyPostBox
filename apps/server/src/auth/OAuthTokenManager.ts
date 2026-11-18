@@ -3,6 +3,7 @@ import { env } from "../config/env.js";
 import { getProvider } from "../providers/providerRegistry.js";
 import type { SecretResolver } from "../security/SecretResolver.js";
 import type { AccountRepository } from "../workers/AccountRepository.js";
+import { authenticationFailure } from "../mail/authenticationFailure.js";
 
 interface StoredOAuthSecret {
   type: "oauth2";
@@ -55,7 +56,9 @@ export class OAuthTokenManager {
     const provider = getProvider(account.providerId);
     const clientId = clientIdFor(account.providerId);
     if (!provider.oauth || !clientId || !oauth.refreshToken) {
-      throw new Error("OAuth session expired. Sign in to the account again.");
+      throw authenticationFailure(
+        "OAuth session expired. Sign in to the account again."
+      );
     }
 
     const body = new URLSearchParams({
@@ -73,9 +76,12 @@ export class OAuthTokenManager {
     });
     const token = await response.json() as RefreshTokenResponse;
     if (!response.ok || !token.access_token) {
-      throw new Error(
-        token.error_description ?? token.error ?? "OAuth token refresh failed."
-      );
+      const message =
+        token.error_description ?? token.error ?? "OAuth token refresh failed.";
+      // invalid_grant: the refresh token expired or was revoked.
+      throw token.error === "invalid_grant"
+        ? authenticationFailure(message)
+        : new Error(message);
     }
 
     const refreshed: StoredOAuthSecret = {

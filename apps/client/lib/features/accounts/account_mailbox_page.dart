@@ -167,6 +167,22 @@ class _MailboxContentState extends ConsumerState<_MailboxContent> {
             ),
           ],
         ),
+        if (account.syncStatus == 'error')
+          MaterialBanner(
+            leading: Icon(
+              Icons.error_outline,
+              color: Theme.of(context).colorScheme.error,
+            ),
+            content: Text(
+              strings.syncFailure(account.syncErrorCode, account.syncError),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => context.go('/accounts'),
+                child: Text(strings.accountManagement),
+              ),
+            ],
+          ),
         Expanded(
           child: messages.when(
             data: (items) {
