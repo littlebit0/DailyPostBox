@@ -13,7 +13,10 @@ import type {
 } from "../domain/types.js";
 import type { AccountRepository } from "../workers/AccountRepository.js";
 import { providerRegistry } from "../providers/providerRegistry.js";
-import { applySyncFailure } from "../mail/authenticationFailure.js";
+import {
+  applySyncFailure,
+  isAuthenticationFailure
+} from "../mail/authenticationFailure.js";
 
 const sendSchema = z.object({
   accountId: z.string(),
@@ -195,6 +198,46 @@ export async function registerRoutes(
     return publicAccount;
   });
 
+  // Replaces a password or app password while keeping the account's stored
+  // mail and settings. The old secret stays if the new one fails to connect.
+  app.put("/accounts/:id/credentials", async (request, reply) => {
+    const params = z.object({ id: z.string() }).parse(request.params);
+    const body = z.object({ secret: z.string().min(1) }).parse(request.body);
+    const account = await deps.accounts.getAccount(params.id);
+
+    if (!account || account.userId !== demoUserId) {
+      return reply.code(404).send({ error: "Account not found" });
+    }
+    if (account.authMode === "oauth2") {
+      return reply.code(400).send({
+        error: "브라우저 로그인 계정은 브라우저에서 다시 로그인하세요."
+      });
+    }
+
+    try {
+      await deps.validateAccount({ ...account, encryptedSecretRef: body.secret });
+    } catch (error) {
+      if (isAuthenticationFailure(error)) {
+        return reply.code(400).send({
+          error: credentialFailureMessage(account, error)
+        });
+      }
+      throw error;
+    }
+
+    await deps.stopAccountSync(account.id);
+    account.encryptedSecretRef = body.secret;
+    account.syncStatus = "syncing";
+    account.syncError = undefined;
+    account.syncErrorCode = undefined;
+    account.updatedAt = new Date();
+    await deps.accounts.updateAccount(account);
+    void deps.startAccountSync(account);
+
+    const { encryptedSecretRef: _secret, ...publicAccount } = account;
+    return publicAccount;
+  });
+
   app.post("/accounts/:id/sync", async (request, reply) => {
     const params = z.object({ id: z.string() }).parse(request.params);
     const account = await deps.accounts.getAccount(params.id);
@@ -318,4 +361,23 @@ export async function registerRoutes(
 
     return reply.code(202).send({ ok: true });
   });
+}
+
+// The mail server's own reply (never the secret) tells IMAP from SMTP
+// rejections apart; Naver also needs IMAP enabled and an app password.
+function credentialFailureMessage(account: MailAccount, error: unknown): string {
+  const detail = error as { responseText?: unknown; response?: unknown };
+  const serverReply = typeof detail.responseText === "string"
+    ? `IMAP: ${detail.responseText}`
+    : typeof detail.response === "string"
+      ? `SMTP: ${detail.response}`
+      : undefined;
+  const parts = ["로그인 정보가 올바르지 않습니다."];
+  if (account.providerId === "naver") {
+    parts.push(
+      "네이버 메일 환경설정에서 IMAP/SMTP 사용을 켜고, 2단계 인증을 쓰면 애플리케이션 비밀번호(영문·숫자 12자리)를 입력하세요."
+    );
+  }
+  if (serverReply) parts.push(`(${serverReply})`);
+  return parts.join(" ");
 }

@@ -406,6 +406,12 @@ class _AccountDetail extends ConsumerWidget {
             ),
             const SizedBox(width: 8),
             IconButton.filledTonal(
+              tooltip: strings.reconnectAccount,
+              onPressed: () => reconnectAccount(context, ref, account),
+              icon: const Icon(Icons.key_outlined),
+            ),
+            const SizedBox(width: 8),
+            IconButton.filledTonal(
               tooltip: strings.syncNow,
               onPressed: () => _syncAccount(ref, account.id),
               icon: const Icon(Icons.sync),
@@ -568,9 +574,11 @@ class _BrowserLoginDialog extends ConsumerStatefulWidget {
   const _BrowserLoginDialog({
     required this.provider,
     required this.onAuthenticated,
+    this.reconnectAccountId,
   });
 
   final MailProviderSummary provider;
+  final String? reconnectAccountId;
   final Future<void> Function(String state, String emailAddress)
       onAuthenticated;
 
@@ -597,7 +605,10 @@ class _BrowserLoginDialogState extends ConsumerState<_BrowserLoginDialog> {
     final strings = ref.read(appStringsProvider);
     try {
       final api = ref.read(mailApiClientProvider);
-      final login = await api.startOAuthLogin(providerId: widget.provider.id);
+      final login = await api.startOAuthLogin(
+        providerId: widget.provider.id,
+        reconnectAccountId: widget.reconnectAccountId,
+      );
       final opened = await openExternalBrowser(login.authorizationUrl);
       if (!mounted) return;
       setState(() {
@@ -1295,6 +1306,164 @@ Future<void> _showAddAccountDialog(
     context: context,
     builder: (context) => _AddAccountDialog(provider: provider),
   );
+}
+
+/// Replaces an account's credentials while keeping its stored mail.
+Future<void> reconnectAccount(
+  BuildContext context,
+  WidgetRef ref,
+  MailAccountSummary account,
+) async {
+  final strings = ref.read(appStringsProvider);
+  final messenger = ScaffoldMessenger.maybeOf(context);
+  void report(String message) =>
+      messenger?.showSnackBar(SnackBar(content: Text(message)));
+
+  if (account.authMode != 'oauth2') {
+    final updated = await showDialog<bool>(
+      context: context,
+      builder: (context) => _ReconnectPasswordDialog(account: account),
+    );
+    if (updated == true) {
+      ref.invalidate(accountsProvider);
+      ref.invalidate(accountMessagesProvider(account.id));
+      report(strings.reconnectSucceeded);
+    }
+    return;
+  }
+
+  final providers = await ref.read(providersProvider.future);
+  final provider =
+      providers.where((item) => item.id == account.providerId).firstOrNull;
+  if (provider == null || !context.mounted) return;
+
+  final api = ref.read(mailApiClientProvider);
+  await showDialog<void>(
+    context: context,
+    barrierDismissible: false,
+    builder: (dialogContext) => _BrowserLoginDialog(
+      provider: provider,
+      reconnectAccountId: account.id,
+      onAuthenticated: (state, emailAddress) async {
+        try {
+          await api.completeOAuthLogin(
+            state: state,
+            incomingProtocol: account.incomingProtocol,
+            initialSync: account.initialSync ?? InitialSyncOption.recommended,
+          );
+          report(strings.reconnectSucceeded);
+        } catch (error) {
+          report(
+              '${strings.connectionFailed}: ${friendlyError(error, strings)}');
+        } finally {
+          if (context.mounted) {
+            ref.invalidate(accountsProvider);
+            ref.invalidate(accountMessagesProvider(account.id));
+          }
+        }
+      },
+    ),
+  );
+}
+
+class _ReconnectPasswordDialog extends ConsumerStatefulWidget {
+  const _ReconnectPasswordDialog({required this.account});
+
+  final MailAccountSummary account;
+
+  @override
+  ConsumerState<_ReconnectPasswordDialog> createState() =>
+      _ReconnectPasswordDialogState();
+}
+
+class _ReconnectPasswordDialogState
+    extends ConsumerState<_ReconnectPasswordDialog> {
+  final _secretController = TextEditingController();
+  bool _busy = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _secretController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    final secret = _secretController.text;
+    if (secret.isEmpty || _busy) return;
+    final strings = ref.read(appStringsProvider);
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await ref.read(mailApiClientProvider).updateAccountCredentials(
+            accountId: widget.account.id,
+            secret: secret,
+          );
+      if (mounted) Navigator.of(context).pop(true);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _busy = false;
+        _error =
+            '${strings.connectionFailed}: ${friendlyError(error, strings)}';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final strings = ref.watch(appStringsProvider);
+    return AlertDialog(
+      title: Text('${widget.account.emailAddress} ${strings.reconnectAccount}'),
+      content: SizedBox(
+        width: 440,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(strings.reconnectPasswordDescription),
+            const SizedBox(height: 16),
+            TextField(
+              controller: _secretController,
+              enabled: !_busy,
+              obscureText: true,
+              autofocus: true,
+              onSubmitted: (_) => _submit(),
+              decoration: InputDecoration(
+                labelText: widget.account.providerId == 'naver'
+                    ? strings.applicationPassword
+                    : strings.secretLabel,
+              ),
+            ),
+            if (_error != null) ...[
+              const SizedBox(height: 12),
+              Text(
+                _error!,
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
+            ],
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _busy ? null : () => Navigator.of(context).pop(false),
+          child: Text(strings.cancel),
+        ),
+        FilledButton(
+          onPressed: _busy ? null : _submit,
+          child: _busy
+              ? const SizedBox.square(
+                  dimension: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : Text(strings.reconnectAccount),
+        ),
+      ],
+    );
+  }
 }
 
 Future<void> _validateStoredAccount(

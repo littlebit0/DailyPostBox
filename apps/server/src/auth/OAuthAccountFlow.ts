@@ -24,6 +24,7 @@ interface OAuthSession {
   status: SessionStatus;
   error?: string;
   accountId?: string;
+  reconnectAccountId?: string;
   createdAt: Date;
 }
 
@@ -57,6 +58,7 @@ export class OAuthAccountFlow {
       accounts: AccountRepository;
       validateAccount: (account: MailAccount) => Promise<void>;
       startAccountSync: (account: MailAccount) => Promise<void>;
+      stopAccountSync: (accountId: string) => Promise<void>;
     }
   ) {}
 
@@ -65,7 +67,17 @@ export class OAuthAccountFlow {
       const params = z.object({
         providerId: z.enum(["gmail", "outlook"])
       }).parse(request.params);
+      const body = z.object({
+        accountId: z.string().optional()
+      }).parse(request.body ?? {});
       const provider = getProvider(params.providerId);
+
+      if (body.accountId) {
+        const existing = await this.deps.accounts.getAccount(body.accountId);
+        if (!existing || existing.providerId !== params.providerId) {
+          return reply.code(404).send({ error: "Account not found" });
+        }
+      }
 
       if (!provider.oauth) {
         return reply.code(400).send({
@@ -88,6 +100,7 @@ export class OAuthAccountFlow {
         providerId: params.providerId,
         codeVerifier,
         status: "waiting",
+        reconnectAccountId: body.accountId,
         createdAt: new Date()
       };
       this.sessions.set(state, session);
@@ -139,7 +152,9 @@ export class OAuthAccountFlow {
       }
 
       try {
-        const account = await this.createAccount(session, options.incomingProtocol, options.initialSync);
+        const account = session.reconnectAccountId
+          ? await this.reconnectAccount(session, session.reconnectAccountId)
+          : await this.createAccount(session, options.incomingProtocol, options.initialSync);
         session.status = "completed";
         session.accountId = account.id;
         return { accountId: account.id };
@@ -247,15 +262,7 @@ export class OAuthAccountFlow {
       emailAddress: session.emailAddress!,
       authMode: "oauth2" as AuthMode,
       incomingProtocol,
-      encryptedSecretRef: JSON.stringify({
-        type: "oauth2",
-        accessToken: token.access_token,
-        refreshToken: token.refresh_token,
-        expiresAt: token.expires_in
-          ? new Date(Date.now() + token.expires_in * 1000).toISOString()
-          : undefined,
-        scope: token.scope
-      }),
+      encryptedSecretRef: oauthSecret(token),
       syncStatus: "validating",
       initialSync,
       createdAt: now,
@@ -265,6 +272,39 @@ export class OAuthAccountFlow {
     await this.deps.validateAccount(account);
     account.syncStatus = "syncing";
     await this.deps.accounts.addAccount(account);
+    void this.deps.startAccountSync(account);
+    return account;
+  }
+
+  // Replaces only the credentials, keeping the account's stored mail and
+  // settings, after the new sign-in passes the same connection checks.
+  private async reconnectAccount(
+    session: OAuthSession,
+    accountId: string
+  ): Promise<MailAccount> {
+    const account = await this.deps.accounts.getAccount(accountId);
+    if (!account || account.providerId !== session.providerId) {
+      throw new Error("다시 연결할 계정을 찾을 수 없습니다.");
+    }
+    if (account.emailAddress.toLowerCase() !== session.emailAddress!.toLowerCase()) {
+      throw new Error(
+        `${account.emailAddress} 계정으로 로그인해야 합니다. 다른 계정으로 로그인했습니다.`
+      );
+    }
+
+    const encryptedSecretRef = oauthSecret(
+      session.token!,
+      previousRefreshToken(account.encryptedSecretRef)
+    );
+    await this.deps.validateAccount({ ...account, encryptedSecretRef });
+
+    await this.deps.stopAccountSync(account.id);
+    account.encryptedSecretRef = encryptedSecretRef;
+    account.syncStatus = "syncing";
+    account.syncError = undefined;
+    account.syncErrorCode = undefined;
+    account.updatedAt = new Date();
+    await this.deps.accounts.updateAccount(account);
     void this.deps.startAccountSync(account);
     return account;
   }
@@ -282,6 +322,31 @@ export class OAuthAccountFlow {
   private clientSecretFor(providerId: ProviderId): string | undefined {
     if (providerId === "gmail") return env.GOOGLE_OAUTH_CLIENT_SECRET;
     if (providerId === "outlook") return env.OUTLOOK_OAUTH_CLIENT_SECRET;
+    return undefined;
+  }
+}
+
+function oauthSecret(
+  token: OAuthTokenResponse,
+  fallbackRefreshToken?: string
+): string {
+  return JSON.stringify({
+    type: "oauth2",
+    accessToken: token.access_token,
+    // Providers may omit a new refresh token when re-consenting.
+    refreshToken: token.refresh_token ?? fallbackRefreshToken,
+    expiresAt: token.expires_in
+      ? new Date(Date.now() + token.expires_in * 1000).toISOString()
+      : undefined,
+    scope: token.scope
+  });
+}
+
+function previousRefreshToken(encryptedSecretRef: string): string | undefined {
+  try {
+    const parsed = JSON.parse(encryptedSecretRef) as { refreshToken?: unknown };
+    return typeof parsed.refreshToken === "string" ? parsed.refreshToken : undefined;
+  } catch {
     return undefined;
   }
 }

@@ -116,6 +116,45 @@ test("keeps the authentication error when the initial import is skipped", async 
   }
 });
 
+test("a superseded sync cannot overwrite the restarted sync's status", async () => {
+  const repository = new InMemoryAccountRepository();
+  const mailAccount = account();
+  await repository.addAccount(mailAccount);
+  let fetchCalls = 0;
+  let rejectOldFetch: (error: Error) => void = () => undefined;
+  const imap = {
+    watch: async () => async () => undefined,
+    fetchLatestBatches: () => {
+      fetchCalls += 1;
+      if (fetchCalls === 1) {
+        return new Promise<void>((_resolve, reject) => {
+          rejectOldFetch = reject;
+        });
+      }
+      return Promise.resolve();
+    }
+  };
+  const syncWorker = worker(repository, imap);
+
+  try {
+    const oldStart = syncWorker.startAccount(mailAccount);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+
+    // Reconnect: stop with the old credentials, then start again.
+    await syncWorker.stopAccount(mailAccount.id);
+    await syncWorker.startAccount(mailAccount);
+    assert.equal(fetchCalls, 2);
+    assert.equal(mailAccount.syncStatus, "idle");
+
+    rejectOldFetch(authenticationFailure("Authentication failed."));
+    await oldStart;
+    assert.equal(mailAccount.syncStatus, "idle");
+    assert.equal(mailAccount.syncErrorCode, undefined);
+  } finally {
+    await syncWorker.stop();
+  }
+});
+
 test("resume starts a stopped watcher once and leaves a running one alone", async () => {
   const repository = new InMemoryAccountRepository();
   const mailAccount = account();

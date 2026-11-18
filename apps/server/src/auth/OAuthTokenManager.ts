@@ -41,7 +41,7 @@ export class OAuthTokenManager {
 
     let pending = this.refreshes.get(account.id);
     if (!pending) {
-      pending = this.refresh(account, oauth).finally(() => {
+      pending = this.refresh(account, oauth, encryptedSecretRef).finally(() => {
         this.refreshes.delete(account.id);
       });
       this.refreshes.set(account.id, pending);
@@ -51,7 +51,8 @@ export class OAuthTokenManager {
 
   private async refresh(
     account: MailAccount,
-    oauth: StoredOAuthSecret
+    oauth: StoredOAuthSecret,
+    sourceSecretRef: string
   ): Promise<string> {
     const provider = getProvider(account.providerId);
     const clientId = clientIdFor(account.providerId);
@@ -93,6 +94,12 @@ export class OAuthTokenManager {
         : oauth.expiresAt,
       scope: token.scope ?? oauth.scope
     };
+    // A reconnect may have replaced the credentials while this request was in
+    // flight; persisting the old grant's tokens would silently revert it.
+    const stored = await this.accounts.getAccount(account.id);
+    if (stored?.encryptedSecretRef !== sourceSecretRef) {
+      return refreshed.accessToken;
+    }
     account.encryptedSecretRef = JSON.stringify(refreshed);
     account.updatedAt = new Date();
     await this.accounts.updateAccount(account);

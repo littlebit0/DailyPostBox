@@ -130,6 +130,12 @@ class AppStrings {
   String get loadingAccountMail => _ko ? '메일을 가져오는 중입니다' : 'Importing mail';
   String get loadingAccountMailDescription =>
       _ko ? '최신 메일부터 차례로 표시됩니다.' : 'Newest messages will appear first.';
+  String get reconnectAccount => _ko ? '다시 연결' : 'Reconnect';
+  String get reconnectPasswordDescription => _ko
+      ? '새 비밀번호를 확인한 뒤 저장합니다. 저장된 메일과 설정은 그대로 유지됩니다.'
+      : 'The new password is checked before saving. Stored mail and settings are kept.';
+  String get reconnectSucceeded =>
+      _ko ? '다시 연결했습니다. 메일을 가져오는 중입니다.' : 'Reconnected. Fetching mail now.';
   String get messageLoadFailedTitle =>
       _ko ? '메일 본문을 불러오지 못했습니다' : 'Could not open this message';
   String syncFailure(String? code, String? error) {
