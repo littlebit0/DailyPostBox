@@ -81,7 +81,8 @@ interface State {
 }
 
 function serializeNodes(nodes: ChildNode[], state: State, depth: number): string {
-  if (depth > maxDepth) return "";
+  // Silently dropping deep content would leave non-empty html; fall back to plain text instead.
+  if (depth > maxDepth) throw new BudgetExceeded();
   let out = "";
   for (const node of nodes) {
     if (DomUtils.isText(node)) {
@@ -100,11 +101,11 @@ function serializeElement(el: Element, state: State, depth: number): string {
   if (droppedTags.has(name)) return "";
   if (name === "img") return serializeImage(el, state);
   if (name === "body") {
-    // body itself is unwrapped, but its background must survive or light text
-    // on it would render on the client's white surface.
-    const bg = bodyBackground(el.attribs);
+    // body itself is unwrapped, but its background and text color must survive
+    // (children inherit the color) or the mail renders unreadable on the client.
+    const style = bodyStyle(el.attribs);
     const inner = serializeNodes(el.children, state, depth + 1);
-    return bg ? `<div style="background-color:${escapeAttr(bg)}">${inner}</div>` : inner;
+    return style ? `<div style="${escapeAttr(style)}">${inner}</div>` : inner;
   }
   if (!allowedTags.has(name)) return serializeNodes(el.children, state, depth + 1);
 
@@ -149,14 +150,18 @@ function serializeAttributes(tag: string, attribs: Record<string, string>): stri
   return out;
 }
 
-function bodyBackground(attribs: Record<string, string>): string | null {
-  let color: string | null = null;
-  const attr = (attribs.bgcolor ?? "").trim();
-  if (attr && attr.length <= 200 && safeAttrValue.test(attr)) color = attr;
+function bodyStyle(attribs: Record<string, string>): string {
+  const pick = (attr: string | undefined): string | null => {
+    const v = (attr ?? "").trim();
+    return v && v.length <= 200 && safeAttrValue.test(v) ? v : null;
+  };
+  let bg = pick(attribs.bgcolor);
+  let color = pick(attribs.text);
   for (const declaration of sanitizeStyle(attribs.style ?? "").split(";")) {
-    if (declaration.startsWith("background-color:")) color = declaration.slice("background-color:".length);
+    if (declaration.startsWith("background-color:")) bg = declaration.slice("background-color:".length);
+    else if (declaration.startsWith("color:")) color = declaration.slice("color:".length);
   }
-  return color;
+  return [bg && `background-color:${bg}`, color && `color:${color}`].filter(Boolean).join(";");
 }
 
 function safeHref(value: string): string | null {

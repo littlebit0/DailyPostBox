@@ -325,4 +325,16 @@ void main() {
       findsOneWidget,
     );
   });
+
+  testWidgets('div text color is inherited by children', (tester) async {
+    await pump(
+      tester,
+      '<div style="background-color:#000000;color:#ffffff"><p>code 1234</p></div>',
+    );
+    final text = tester.widget<RichText>(
+      find.text('code 1234', findRichText: true),
+    );
+    final span = (text.text as TextSpan).children!.first as TextSpan;
+    expect(span.style?.color, const Color(0xFFFFFFFF));
+  });
 }

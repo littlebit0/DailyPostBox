@@ -124,6 +124,15 @@ test("keeps body background on a wrapper div", () => {
   assert.equal(clean('<body bgcolor="#000000"><p>x</p></body>').html,
     '<div style="background-color:#000000"><p>x</p></div>');
   assert.equal(clean('<body style="background-color:#111;color:red;background:url(x)"><p>x</p></body>').html,
-    '<div style="background-color:#111"><p>x</p></div>');
+    '<div style="background-color:#111;color:red"><p>x</p></div>');
+  assert.equal(clean('<body bgcolor="#000" text="#fff"><p>x</p></body>').html,
+    '<div style="background-color:#000;color:#fff"><p>x</p></div>');
+  assert.equal(clean('<body style="color:#fff"><p>x</p></body>').html,
+    '<div style="color:#fff"><p>x</p></div>');
   assert.equal(clean("<body><p>x</p></body>").html, "<p>x</p>");
+});
+
+test("returns empty html when nesting depth is exceeded", () => {
+  assert.equal(clean("<div>".repeat(101) + "x" + "</div>".repeat(101)).html, "");
+  assert.match(clean("<div>".repeat(50) + "x" + "</div>".repeat(50)).html, /x/);
 });
