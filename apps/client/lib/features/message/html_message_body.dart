@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:html/dom.dart' as dom;
@@ -375,17 +377,13 @@ class _Renderer {
                 ColoredBox(
                   color: _background(cell) ??
                       _background(row) ??
+                      _groupBackground(row) ??
                       Colors.transparent,
                   child: Padding(
                     padding: const EdgeInsets.all(4),
                     child: _column(
                       cell,
-                      cell.localName == 'th'
-                          ? _styled(
-                              cell,
-                              _styled(row, style),
-                            ).copyWith(fontWeight: FontWeight.bold)
-                          : _styled(cell, _styled(row, style)),
+                      _cellStyle(cell, row, style),
                       _align(cell) ?? _align(row) ?? TextAlign.start,
                       recognizer,
                     ),
@@ -404,6 +402,51 @@ class _Renderer {
         children: rows.map(toRow).toList(growable: false),
       ),
     );
+  }
+
+  static const _rowGroups = {'tbody', 'thead', 'tfoot'};
+
+  dom.Element? _group(dom.Element row) {
+    final parent = row.parent;
+    return parent != null && _rowGroups.contains(parent.localName)
+        ? parent
+        : null;
+  }
+
+  Color? _groupBackground(dom.Element row) {
+    final group = _group(row);
+    return group == null ? null : _background(group);
+  }
+
+  /// Merges styles along table -> row group -> tr -> td/th.
+  TextStyle _cellStyle(dom.Element cell, dom.Element row, TextStyle table) {
+    final group = _group(row);
+    final inherited = _styled(
+      row,
+      group == null ? table : _styled(group, table),
+    );
+    final style = _styled(cell, inherited);
+    return cell.localName == 'th'
+        ? style.copyWith(fontWeight: FontWeight.bold)
+        : style;
+  }
+
+  /// Effective background of a text node: nearest painted ancestor, else the
+  /// white surface.
+  Color _effectiveBackground(dom.Node node) {
+    for (dom.Element? e = node.parent; e != null; e = e.parent) {
+      final color = _background(e);
+      if (color != null) return color;
+    }
+    return Colors.white;
+  }
+
+  /// Text that would be unreadable on its background (contrast < 3:1) falls
+  /// back to black87 or white, whichever contrasts better.
+  TextStyle _readable(TextStyle style, dom.Node node) {
+    final color = style.color ?? Colors.black87;
+    final fixed = readableTextColor(color, _effectiveBackground(node));
+    return fixed == color ? style : style.copyWith(color: fixed);
   }
 
   int _span(dom.Element cell, String attribute) =>
@@ -443,13 +486,19 @@ class _Renderer {
     TapGestureRecognizer? recognizer,
   }) {
     if (node is dom.Text) {
+      style = _readable(style, node);
       final text = _collapse(node);
       if (text.isNotEmpty && recognizer == null) {
         // Bare URLs outside an anchor stay tappable, as in the plain-text view.
         for (final segment in parseMessageBody(body: text, links: const [])) {
           final uri = segment.uri;
           if (uri == null) {
-            out.add(TextSpan(text: segment.text));
+            out.add(
+              TextSpan(
+                text: segment.text,
+                style: TextStyle(color: style.color),
+              ),
+            );
             continue;
           }
           final tap = TapGestureRecognizer()..onTap = () => onLink(uri);
@@ -473,6 +522,7 @@ class _Renderer {
         out.add(
           TextSpan(
             text: text,
+            style: TextStyle(color: style.color),
             recognizer: recognizer,
             mouseCursor: recognizer == null ? null : SystemMouseCursors.click,
           ),
@@ -701,6 +751,21 @@ class _Renderer {
       _ => null,
     };
   }
+}
+
+double _contrast(Color a, Color b) {
+  final la = a.computeLuminance();
+  final lb = b.computeLuminance();
+  return (math.max(la, lb) + 0.05) / (math.min(la, lb) + 0.05);
+}
+
+@visibleForTesting
+Color readableTextColor(Color text, Color background) {
+  if (_contrast(text, background) >= 3) return text;
+  return _contrast(Colors.black87, background) >=
+          _contrast(Colors.white, background)
+      ? Colors.black87
+      : Colors.white;
 }
 
 Uri? _safeLink(String? value) {

@@ -393,4 +393,66 @@ void main() {
     );
     expect(tester.takeException(), isNull);
   });
+
+  Color? textColor(WidgetTester tester, String text) {
+    final rich = tester.widget<RichText>(find.text(text, findRichText: true));
+    Color? color = rich.text.style?.color;
+    rich.text.visitChildren((span) {
+      if (span is TextSpan && span.toPlainText() == text) {
+        color = span.style?.color ?? color;
+      }
+      return true;
+    });
+    return color;
+  }
+
+  testWidgets('row group text color reaches cells', (tester) async {
+    await pump(
+      tester,
+      '<table bgcolor="#000000"><tbody style="color:#ffffff"><tr>'
+      '<td>code 1234</td></tr></tbody></table>',
+    );
+    expect(textColor(tester, 'code 1234'), Colors.white);
+  });
+
+  testWidgets('row group background is painted', (tester) async {
+    await pump(
+      tester,
+      '<table><thead style="background-color:#000001"><tr>'
+      '<th>head</th></tr></thead></table>',
+    );
+    expect(
+      find.byWidgetPredicate(
+        (w) => w is ColoredBox && w.color == const Color(0xFF000001),
+      ),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('white text on white falls back to dark text', (tester) async {
+    await pump(tester, '<p style="color:#ffffff">invisible</p>');
+    expect(textColor(tester, 'invisible'), Colors.black87);
+  });
+
+  testWidgets('black text on black falls back to white text', (tester) async {
+    await pump(
+      tester,
+      '<div style="background-color:#000000"><p style="color:#000000">dark</p></div>',
+    );
+    expect(textColor(tester, 'dark'), Colors.white);
+  });
+
+  testWidgets('readable text keeps its color', (tester) async {
+    await pump(
+      tester,
+      '<div style="background-color:#000000"><p style="color:#ffffff">ok</p></div>',
+    );
+    expect(textColor(tester, 'ok'), Colors.white);
+  });
+
+  test('readableTextColor keeps contrasting colors', () {
+    expect(readableTextColor(Colors.black87, Colors.white), Colors.black87);
+    expect(readableTextColor(Colors.white, Colors.white), Colors.black87);
+    expect(readableTextColor(Colors.black, Colors.black), Colors.white);
+  });
 }
