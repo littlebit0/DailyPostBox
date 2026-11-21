@@ -657,9 +657,14 @@ class _Renderer {
     final fixed = readableTextColor(color, under);
     final line = style.decorationColor;
     final fixedLine = line == null ? null : readableTextColor(line, under);
-    return fixed == color && fixedLine == line
-        ? style
-        : style.copyWith(color: fixed, decorationColor: fixedLine);
+    return style.copyWith(
+      color: fixed,
+      decorationColor: fixedLine,
+      fontSize: _clampMetric(style.fontSize, 8, 48),
+      letterSpacing: _clampMetric(style.letterSpacing, -2, 10),
+      wordSpacing: _clampMetric(style.wordSpacing, -4, 40),
+      height: _clampMetric(style.height, 0.8, 3),
+    );
   }
 
   /// Leaf text style: only color and underline color, the rest is inherited.
@@ -920,9 +925,13 @@ class _Renderer {
       case 'strike':
         style = style.copyWith(decoration: TextDecoration.lineThrough);
       case 'small':
-        style = style.copyWith(fontSize: (style.fontSize ?? 15) * 0.85);
+        style = style.copyWith(
+          fontSize: _clampFont((style.fontSize ?? 15) * 0.85),
+        );
       case 'big':
-        style = style.copyWith(fontSize: (style.fontSize ?? 15) * 1.2);
+        style = style.copyWith(
+          fontSize: _clampFont((style.fontSize ?? 15) * 1.2),
+        );
       case 'h1':
       case 'h2':
       case 'h3':
@@ -1002,6 +1011,13 @@ class _Renderer {
     };
   }
 }
+
+/// Composed font size stays readable however deep relative tags nest.
+double _clampFont(double v) => _clampMetric(v, 8, 48)!;
+
+/// NaN becomes the lower bound; infinities and overflow are capped.
+double? _clampMetric(double? v, double lo, double hi) =>
+    v == null ? null : (v.isNaN ? lo : v.clamp(lo, hi));
 
 double _contrast(Color a, Color b) {
   final la = a.computeLuminance();

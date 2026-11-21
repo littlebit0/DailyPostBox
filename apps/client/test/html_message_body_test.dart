@@ -797,4 +797,30 @@ void main() {
     expect(readableTextColor(Colors.white, Colors.white), Colors.black87);
     expect(readableTextColor(Colors.black, Colors.black), Colors.white);
   });
+
+  testWidgets('nested small/big font size is clamped to 8..48', (tester) async {
+    Future<double> sizeOf(String open, String close) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(body: HtmlMessageBody(html: '${open * 90}deep$close')),
+        ),
+      );
+      final rich = tester.widget<RichText>(
+        find.textContaining('deep', findRichText: true),
+      );
+      // Innermost span carries the composed (final) size.
+      double? size;
+      void walk(InlineSpan span) {
+        if (span is! TextSpan) return;
+        size = span.style?.fontSize ?? size;
+        span.children?.forEach(walk);
+      }
+
+      walk(rich.text);
+      return size!;
+    }
+
+    expect(await sizeOf('<small>', ''), 8);
+    expect(await sizeOf('<big>', ''), 48);
+  });
 }
