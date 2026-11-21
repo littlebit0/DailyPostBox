@@ -23,6 +23,24 @@ class _PollApi extends MailApiClient {
       outcomes[calls++ < outcomes.length ? calls - 1 : outcomes.length - 1];
 }
 
+class _SendApi extends MailApiClient {
+  _SendApi() : super(baseUrl: 'http://127.0.0.1:1');
+
+  @override
+  Future<SendReceipt> sendMail({
+    required String accountId,
+    required List<String> to,
+    required String subject,
+    required String body,
+    int delaySeconds = 5,
+  }) async =>
+      const SendReceipt('id', Duration(seconds: 5));
+
+  @override
+  Future<SendOutcome> fetchSendOutcome(String id) async =>
+      const SendOutcome(status: 'sent');
+}
+
 void main() {
   const receipt = SendReceipt('id', Duration.zero);
   const tick = Duration(milliseconds: 1);
@@ -98,5 +116,52 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('typing in progress'), findsOneWidget);
     expect(find.text('Hello'), findsNothing);
+  });
+
+  testWidgets('sending from recovery pops back to the original compose with undo snackbar',
+      (tester) async {
+    final router = GoRouter(routes: [
+      GoRoute(path: '/', builder: (_, __) => const ComposePage()),
+      GoRoute(
+        path: '/compose/recover',
+        builder: (_, state) => ComposePage(initialDraft: state.extra as ComposeDraft),
+      ),
+    ]);
+    await tester.pumpWidget(ProviderScope(
+      overrides: [
+        mailApiClientProvider.overrideWithValue(_SendApi()),
+        composeAccountsProvider.overrideWith((ref) async => const [
+              MailAccountSummary(
+                id: 'a1',
+                providerId: 'p',
+                emailAddress: 'me@example.test',
+                incomingProtocol: 'imap',
+                authMode: 'password',
+                syncStatus: 'idle',
+                syncError: null,
+                initialSync: null,
+                lastSyncedAtLabel: '',
+              ),
+            ]),
+      ],
+      child: MaterialApp.router(routerConfig: router),
+    ));
+    await tester.pump();
+    await tester.enterText(find.byType(TextField).first, 'typing in progress');
+    router.push('/compose/recover', extra: _draft);
+    await tester.pumpAndSettle();
+    expect(find.text('Hello'), findsOneWidget);
+
+    await tester.tap(find.byIcon(Icons.send_outlined));
+    await tester.pumpAndSettle(const Duration(milliseconds: 100));
+
+    expect(find.text('typing in progress'), findsOneWidget);
+    expect(find.text('Hello'), findsNothing);
+    expect(find.byType(SnackBar), findsOneWidget);
+    expect(find.byType(SnackBarAction), findsOneWidget);
+
+    // Let the snackbar and the detached outcome poll finish before teardown.
+    await tester.pump(const Duration(seconds: 6));
+    await tester.pump(const Duration(seconds: 3));
   });
 }

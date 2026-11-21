@@ -187,7 +187,13 @@ class _ComposePageState extends ConsumerState<ComposePage> {
     // Detached from this page on purpose: the composer closes right after sending.
     unawaited(_reportFailure(client, receipt, strings, messenger, router));
 
-    if (mounted) context.go('/accounts/$accountId/mail');
+    // Pushed pages (recovery compose) pop so the composer underneath keeps its input.
+    if (!mounted) return;
+    if (context.canPop()) {
+      context.pop();
+    } else {
+      context.go('/accounts/$accountId/mail');
+    }
   }
 }
 
