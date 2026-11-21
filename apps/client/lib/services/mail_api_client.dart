@@ -16,12 +16,13 @@ final mailCacheProvider = Provider<MailCache>((ref) {
 });
 
 final mailApiClientProvider = Provider<MailApiClient>((ref) {
-  final offline = ref.read(offlineSinceProvider.notifier);
+  final cached = ref.read(cachedPathsProvider.notifier);
   return MailApiClient(
     baseUrl: resolveMailApiBaseUrl(),
     cache: ref.watch(mailCacheProvider),
     // Deferred so it never mutates provider state during a build.
-    onCacheState: (savedAt) => Future.microtask(() => offline.state = savedAt),
+    onCacheState: (path, cachedAt) =>
+        Future.microtask(() => recordCacheState(cached, path, cachedAt)),
   );
 });
 
@@ -65,16 +66,26 @@ class MailApiClient {
   final Dio _dio;
   final MailCache? cache;
 
-  /// Called after each cacheable read: the cache time when the server was
-  /// unreachable and cached data was returned, null after a live response.
-  final void Function(DateTime? cachedAt)? onCacheState;
+  /// Called after each cacheable read of `path`: the cache time when the
+  /// server was unreachable and cached data was returned, null when live.
+  final void Function(String path, DateTime? cachedAt)? onCacheState;
+
+  static const inboxPath = '/mail/inbox';
+  static const accountsPath = '/accounts';
+  static const providersPath = '/providers';
+  static String accountMessagesPath(String accountId) =>
+      '/accounts/$accountId/messages';
+  static String messagePath({required String messageId, String? accountId}) =>
+      accountId == null
+      ? '/mail/messages/$messageId'
+      : '/accounts/$accountId/messages/$messageId';
 
   /// GET [path] and cache the body. When the server is unreachable, return the
   /// last cached body for the same path, or rethrow if none exists.
   Future<T?> _getCached<T>(String path) async {
     try {
       final response = await _dio.get<T>(path);
-      onCacheState?.call(null);
+      onCacheState?.call(path, null);
       await cache?.write(path, response.data);
       return response.data;
     } catch (error) {
@@ -82,13 +93,13 @@ class MailApiClient {
       final cached = await cache?.read(path);
       final data = cached?.data;
       if (data is! T) rethrow;
-      onCacheState?.call(cached!.savedAt);
+      onCacheState?.call(path, cached!.savedAt);
       return data;
     }
   }
 
   Future<List<MailSummary>> fetchInbox() async {
-    final data = await _getCached<List<dynamic>>('/mail/inbox') ?? [];
+    final data = await _getCached<List<dynamic>>(inboxPath) ?? [];
     return data
         .map((item) => MailSummary.fromJson(item as Map<String, dynamic>))
         .toList();
@@ -96,14 +107,14 @@ class MailApiClient {
 
   Future<List<MailSummary>> fetchAccountMessages(String accountId) async {
     final data =
-        await _getCached<List<dynamic>>('/accounts/$accountId/messages') ?? [];
+        await _getCached<List<dynamic>>(accountMessagesPath(accountId)) ?? [];
     return data
         .map((item) => MailSummary.fromJson(item as Map<String, dynamic>))
         .toList();
   }
 
   Future<List<MailAccountSummary>> fetchAccounts() async {
-    final data = await _getCached<List<dynamic>>('/accounts') ?? [];
+    final data = await _getCached<List<dynamic>>(accountsPath) ?? [];
     return data
         .map(
           (item) => MailAccountSummary.fromJson(item as Map<String, dynamic>),
@@ -112,7 +123,7 @@ class MailApiClient {
   }
 
   Future<List<MailProviderSummary>> fetchProviders() async {
-    final data = await _getCached<List<dynamic>>('/providers') ?? [];
+    final data = await _getCached<List<dynamic>>(providersPath) ?? [];
     return data
         .map(
           (item) => MailProviderSummary.fromJson(item as Map<String, dynamic>),
@@ -122,7 +133,7 @@ class MailApiClient {
 
   Future<MessageDetail> fetchMessage(String messageId) async {
     final data = await _getCached<Map<String, dynamic>>(
-      '/mail/messages/$messageId',
+      messagePath(messageId: messageId),
     );
     return MessageDetail.fromJson(data ?? {});
   }
@@ -132,7 +143,7 @@ class MailApiClient {
     required String messageId,
   }) async {
     final data = await _getCached<Map<String, dynamic>>(
-      '/accounts/$accountId/messages/$messageId',
+      messagePath(messageId: messageId, accountId: accountId),
     );
     return MessageDetail.fromJson(data ?? {});
   }

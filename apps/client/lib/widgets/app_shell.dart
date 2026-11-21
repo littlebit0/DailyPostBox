@@ -12,6 +12,7 @@ class AppShell extends ConsumerWidget {
     required this.selectedDestinationId,
     required this.child,
     this.floatingActionButton,
+    this.cachePaths = const [],
   });
 
   static const managementDestinationId = 'account-management';
@@ -23,6 +24,10 @@ class AppShell extends ConsumerWidget {
   final String selectedDestinationId;
   final Widget child;
   final Widget? floatingActionButton;
+
+  /// API paths of the resources [child] shows; the offline banner appears
+  /// when any of them was served from the cache.
+  final List<String> cachePaths;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -81,7 +86,10 @@ class AppShell extends ConsumerWidget {
       onDestinationSelected: selectDestination,
     );
 
-    final offlineSince = ref.watch(offlineSinceProvider);
+    final offlineSince = offlineSinceFor(
+      ref.watch(cachedPathsProvider),
+      cachePaths,
+    );
     final content = Column(
       children: [
         Expanded(child: child),

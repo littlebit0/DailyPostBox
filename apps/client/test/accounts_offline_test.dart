@@ -56,14 +56,15 @@ void main() {
       ProviderScope(
         overrides: [
           mailApiClientProvider.overrideWith((ref) {
-            final offline = ref.read(offlineSinceProvider.notifier);
+            final cached = ref.read(cachedPathsProvider.notifier);
             return MailApiClient(
               baseUrl: 'http://127.0.0.1:1',
               dio: Dio(BaseOptions(baseUrl: 'http://127.0.0.1:1'))
                 ..httpClientAdapter = _DownAdapter(),
               cache: cache,
-              onCacheState: (savedAt) =>
-                  Future.microtask(() => offline.state = savedAt),
+              onCacheState: (path, cachedAt) => Future.microtask(
+                () => recordCacheState(cached, path, cachedAt),
+              ),
             );
           }),
         ],

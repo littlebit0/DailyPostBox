@@ -30,11 +30,14 @@ class AccountsPage extends ConsumerWidget {
     final providers = ref.watch(providersProvider);
     final strings = ref.watch(appStringsProvider);
     final providerItems = providers.asData?.value;
+    const cachePaths = [MailApiClient.accountsPath, MailApiClient.providersPath];
     // Add/validate/sync/delete need the server; they are disabled while offline.
-    final offline = ref.watch(offlineSinceProvider) != null;
+    final offline =
+        offlineSinceFor(ref.watch(cachedPathsProvider), cachePaths) != null;
 
     return AppShell(
       selectedDestinationId: AppShell.managementDestinationId,
+      cachePaths: cachePaths,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [

@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:dio/dio.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:daily_postbox/services/mail_api_client.dart';
@@ -34,22 +35,31 @@ void main() {
   late _FakeAdapter adapter;
   late MailApiClient api;
   late List<DateTime?> states;
+  late ProviderContainer container;
 
   setUp(() {
     dir = Directory.systemTemp.createTempSync('mail_cache_test');
     cache = MailCache(() async => dir);
     adapter = _FakeAdapter();
     states = [];
+    container = ProviderContainer();
+    final cached = container.read(cachedPathsProvider.notifier);
     api = MailApiClient(
       baseUrl: 'http://127.0.0.1:1',
       dio: Dio(BaseOptions(baseUrl: 'http://127.0.0.1:1'))
         ..httpClientAdapter = adapter,
       cache: cache,
-      onCacheState: states.add,
+      onCacheState: (path, cachedAt) {
+        states.add(cachedAt);
+        recordCacheState(cached, path, cachedAt);
+      },
     );
   });
 
-  tearDown(() => dir.deleteSync(recursive: true));
+  tearDown(() {
+    container.dispose();
+    dir.deleteSync(recursive: true);
+  });
 
   test('serves cached list and body when the server is unreachable', () async {
     await api.fetchAccountMessages('acc1');
@@ -80,5 +90,39 @@ void main() {
     expect(await cache.read('/accounts/acc1/messages'), isNull);
     expect(await cache.read('/mail/inbox'), isNull);
     expect(await cache.read('/accounts/acc2/messages'), isNotNull);
+  });
+
+  test('clearAccount keeps the provider list cache', () async {
+    await cache.write('/providers', [
+      {'id': 'gmail', 'displayName': 'Gmail'},
+    ]);
+    await cache.write('/accounts', []);
+
+    await cache.clearAccount('acc1');
+
+    expect(await cache.read('/accounts'), isNull);
+    expect((await cache.read('/providers'))?.data, isA<List<dynamic>>());
+  });
+
+  test('offline state is tracked per resource path', () async {
+    final messagePath =
+        MailApiClient.messagePath(messageId: 'm1', accountId: 'acc1');
+    final mailboxPath = MailApiClient.accountMessagesPath('acc1');
+    await api.fetchAccountMessage(accountId: 'acc1', messageId: 'm1');
+
+    adapter.offline = true;
+    await api.fetchAccountMessage(accountId: 'acc1', messageId: 'm1');
+    adapter.offline = false;
+    await api.fetchAccountMessages('acc1');
+
+    final cached = container.read(cachedPathsProvider);
+    expect(offlineSinceFor(cached, [messagePath]), isNotNull);
+    expect(offlineSinceFor(cached, [mailboxPath]), isNull);
+
+    await api.fetchAccountMessage(accountId: 'acc1', messageId: 'm1');
+    expect(
+      offlineSinceFor(container.read(cachedPathsProvider), [messagePath]),
+      isNull,
+    );
   });
 }

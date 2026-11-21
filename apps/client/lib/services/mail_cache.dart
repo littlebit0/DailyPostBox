@@ -3,9 +3,38 @@ import 'dart:io';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-/// Set while a screen shows cached data because the server was unreachable.
-/// Holds the time the shown data was last fetched; null when online.
-final offlineSinceProvider = StateProvider<DateTime?>((ref) => null);
+/// Request paths whose latest data came from the cache because the server was
+/// unreachable, with the cache time. A live response for a path removes it, so
+/// each screen derives its offline state from the resources it shows.
+final cachedPathsProvider =
+    StateProvider<Map<String, DateTime>>((ref) => const {});
+
+/// Records one cacheable read in [cachedPathsProvider].
+void recordCacheState(
+  StateController<Map<String, DateTime>> controller,
+  String path,
+  DateTime? cachedAt,
+) {
+  final next = {...controller.state};
+  if (cachedAt == null) {
+    next.remove(path);
+  } else {
+    next[path] = cachedAt;
+  }
+  controller.state = next;
+}
+
+/// Oldest cache time among [paths], or null when all of them are live.
+DateTime? offlineSinceFor(Map<String, DateTime> cached, Iterable<String> paths) {
+  DateTime? oldest;
+  for (final path in paths) {
+    final savedAt = cached[path];
+    if (savedAt != null && (oldest == null || savedAt.isBefore(oldest))) {
+      oldest = savedAt;
+    }
+  }
+  return oldest;
+}
 
 class CachedPayload {
   const CachedPayload({required this.data, required this.savedAt});
@@ -16,16 +45,19 @@ class CachedPayload {
 
 /// JSON-file cache of server responses keyed by request path.
 /// Account-scoped paths (`/accounts/{id}/...`) live in one folder per account
-/// so deleting an account removes its mail from the device.
+/// so deleting an account removes its mail from the device. The provider list
+/// holds no account data and lives apart so it survives account deletion.
 class MailCache {
   MailCache(this._root);
 
   final Future<Directory> Function() _root;
 
   static const _sharedFolder = 'shared';
+  static const _providersFolder = 'providers';
   static final _accountPath = RegExp(r'^/accounts/([^/]+)/');
 
   static String _folderFor(String path) {
+    if (path == '/providers') return _providersFolder;
     final match = _accountPath.firstMatch(path);
     return match == null ? _sharedFolder : 'a_${match.group(1)}';
   }

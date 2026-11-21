@@ -20,6 +20,7 @@ class InboxPage extends ConsumerWidget {
 
     return AppShell(
       selectedDestinationId: AppShell.managementDestinationId,
+      cachePaths: const [MailApiClient.inboxPath],
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () => context.go('/compose'),
         icon: const Icon(Icons.edit_outlined),

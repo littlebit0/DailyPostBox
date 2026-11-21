@@ -98,6 +98,9 @@ class MessagePage extends ConsumerWidget {
     }
     return AppShell(
       selectedDestinationId: AppShell.accountDestinationId(selectedAccountId),
+      cachePaths: [
+        MailApiClient.messagePath(messageId: messageId, accountId: accountId),
+      ],
       child: content,
     );
   }
