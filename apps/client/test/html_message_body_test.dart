@@ -245,4 +245,14 @@ void main() {
     await tester.pump();
     expect(opened, Uri.parse('https://example.com/x'));
   });
+
+  testWidgets('huge element counts fall back to plain text', (tester) async {
+    await pump(tester, '<div>x</div>' * (maxHtmlElements + 1));
+    expect(tester.takeException(), isNull);
+    expect(find.byType(Column), findsNothing);
+    expect(find.textContaining('xxx', findRichText: true), findsOneWidget);
+
+    await pump(tester, '<div>x</div>' * 10);
+    expect(find.byType(Column), findsWidgets);
+  });
 }

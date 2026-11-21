@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { sanitizeHtml } from "../src/mail/safeHtml.js";
+import { maxElements, sanitizeHtml } from "../src/mail/safeHtml.js";
 
 const clean = (html: string, allow = false) =>
   sanitizeHtml(html, { allowRemoteImages: allow });
@@ -105,4 +105,11 @@ test("keeps spaces in href path and query by encoding them, still blocks scheme 
   for (const href of ["java script:alert(1)", "javascript :alert(1)", " java\tscript:alert(1)", "java&#10;script:alert(1)", "\u0001javascript:alert(1)", "jav&#x09;ascript:alert(1)"]) {
     assert.equal(clean(`<a href="${href}">x</a>`).html, "<a>x</a>", href);
   }
+});
+
+test("returns empty html when the element budget is exceeded", () => {
+  const ok = "<div>x</div>".repeat(maxElements);
+  assert.match(clean(ok).html, /^<div>x<\/div>/);
+  assert.equal(clean(ok + "<div>y</div>").html, "");
+  assert.equal(clean("<span>a</span>".repeat(maxElements + 1)).html, "");
 });

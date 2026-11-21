@@ -5,6 +5,7 @@ type ChildNode = ReturnType<typeof parseDocument>["children"][number];
 type Element = Parameters<typeof DomUtils.getName>[0];
 
 export interface SafeHtmlResult {
+  /** Empty when the mail has no usable HTML or exceeds the element budget. */
   html: string;
   /** Number of remote (http/https) images removed or, with allowRemoteImages, kept. */
   remoteImageCount: number;
@@ -49,19 +50,29 @@ const allowedStyleProps = new Set([
 const dataImagePattern = /^data:image\/(?:png|gif|jpe?g|webp);base64,[a-z0-9+/=\s]+$/i;
 const safeAttrValue = /^[\w\s#%.,:/()\-+]*$/;
 const maxDepth = 100;
+// More elements than this means a pathological mail: return no HTML so the
+// client shows the plain-text body instead of building a huge widget tree.
+export const maxElements = 5000;
+class BudgetExceeded extends Error {}
 
 export function sanitizeHtml(
   source: string,
   options: SafeHtmlOptions = {}
 ): SafeHtmlResult {
-  const state = { remoteImageCount: 0, allowRemote: options.allowRemoteImages === true };
-  const html = serializeNodes(parseDocument(source).children, state, 0);
-  return { html, remoteImageCount: state.remoteImageCount };
+  const state = { remoteImageCount: 0, allowRemote: options.allowRemoteImages === true, elements: 0 };
+  try {
+    const html = serializeNodes(parseDocument(source).children, state, 0);
+    return { html, remoteImageCount: state.remoteImageCount };
+  } catch (error) {
+    if (error instanceof BudgetExceeded) return { html: "", remoteImageCount: 0 };
+    throw error;
+  }
 }
 
 interface State {
   remoteImageCount: number;
   allowRemote: boolean;
+  elements: number;
 }
 
 function serializeNodes(nodes: ChildNode[], state: State, depth: number): string {
@@ -79,6 +90,7 @@ function serializeNodes(nodes: ChildNode[], state: State, depth: number): string
 }
 
 function serializeElement(el: Element, state: State, depth: number): string {
+  if (++state.elements > maxElements) throw new BudgetExceeded();
   const name = el.name.toLowerCase();
   if (droppedTags.has(name)) return "";
   if (name === "img") return serializeImage(el, state);

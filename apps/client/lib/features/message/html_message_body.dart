@@ -57,6 +57,11 @@ class _HtmlMessageBodyState extends State<HtmlMessageBody> {
   void _rebuild() {
     _disposeRecognizers();
     final body = html_parser.parseFragment(widget.html);
+    if (_countElements(body) > maxHtmlElements) {
+      // Same order as the server budget; avoids building a huge widget tree.
+      _content = Text(body.text ?? '');
+      return;
+    }
     final linkColor = Theme.of(context).colorScheme.primary;
     final renderer = _Renderer(
       linkColor: linkColor,
@@ -85,6 +90,21 @@ class _HtmlMessageBodyState extends State<HtmlMessageBody> {
       ),
     );
   }
+}
+
+/// Above this many elements the body is shown as plain text.
+const maxHtmlElements = 5000;
+
+int _countElements(dom.Node root) {
+  var count = 0;
+  final stack = <dom.Node>[root];
+  while (stack.isNotEmpty) {
+    final node = stack.removeLast();
+    if (node is dom.Element) count++;
+    if (count > maxHtmlElements) break;
+    stack.addAll(node.nodes);
+  }
+  return count;
 }
 
 const _blockTags = {
