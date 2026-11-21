@@ -176,6 +176,76 @@ void main() {
     expect(find.text('둘째 메일'), findsNothing);
   });
 
+  testWidgets('Enter on a Tab-focused button activates it, not the message', (
+    WidgetTester tester,
+  ) async {
+    const account = MailAccountSummary(
+      id: 'account-1',
+      providerId: 'gmail',
+      emailAddress: 'mailbox@example.com',
+      incomingProtocol: 'imap',
+      authMode: 'oauth2',
+      syncStatus: 'idle',
+      syncError: null,
+      initialSync: InitialSyncOption.recommended,
+      lastSyncedAtLabel: 'now',
+    );
+    const messages = [
+      MailSummary(
+        id: 'm1',
+        sender: 'a@example.com',
+        subject: '첫째 메일',
+        snippet: '',
+        receivedAtLabel: 'now',
+        unread: true,
+      ),
+    ];
+    await tester.binding.setSurfaceSize(const Size(1200, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          accountsProvider.overrideWith((ref) async => const [account]),
+          providersProvider.overrideWith((ref) async => const []),
+          accountMessagesProvider.overrideWith(
+            (ref, accountId) async => messages,
+          ),
+        ],
+        child: const DailyPostBoxApp(),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text(account.emailAddress).first);
+    await tester.pumpAndSettle();
+
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.keyJ, character: 'j');
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.keyJ);
+    await tester.pump();
+
+    // Tab until the compose FAB holds focus.
+    for (var i = 0;
+        i < 20 &&
+            FocusManager.instance.primaryFocus?.context
+                    ?.findAncestorWidgetOfExactType<FloatingActionButton>() ==
+                null;
+        i++) {
+      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+      await tester.pump();
+    }
+    expect(
+      FocusManager.instance.primaryFocus?.context
+          ?.findAncestorWidgetOfExactType<FloatingActionButton>(),
+      isNotNull,
+    );
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pumpAndSettle();
+    // FAB handler ran (navigated to compose); the message was not opened.
+    expect(find.text('첫째 메일'), findsNothing);
+    expect(find.byType(FloatingActionButton), findsNothing);
+  });
+
   testWidgets('keeps the j/k selected mailbox row visible', (
     WidgetTester tester,
   ) async {

@@ -78,10 +78,16 @@ bool _typingInTextField() =>
     null;
 
 class _GuardedCallbackAction<T extends Intent> extends CallbackAction<T> {
-  _GuardedCallbackAction({required super.onInvoke});
+  _GuardedCallbackAction({required super.onInvoke, this.requiredFocus});
+
+  /// When set, the action runs only while this node itself has primary focus,
+  /// so focused buttons and rows keep their default activation.
+  final FocusNode? requiredFocus;
 
   @override
-  bool isEnabled(T intent) => !_typingInTextField();
+  bool isEnabled(T intent) =>
+      !_typingInTextField() &&
+      (requiredFocus == null || requiredFocus!.hasPrimaryFocus);
 }
 
 class _MailboxContent extends ConsumerStatefulWidget {
@@ -98,6 +104,7 @@ class _MailboxContentState extends ConsumerState<_MailboxContent> {
   bool _refreshing = false;
   String? _selectedId;
   final _rowKeys = <String, GlobalKey>{};
+  final _mailboxFocus = FocusNode(debugLabel: 'mailbox');
 
   bool get _isSyncing =>
       const {'syncing', 'validating'}.contains(widget.account.syncStatus);
@@ -131,6 +138,7 @@ class _MailboxContentState extends ConsumerState<_MailboxContent> {
   @override
   void dispose() {
     _refreshTimer?.cancel();
+    _mailboxFocus.dispose();
     super.dispose();
   }
 
@@ -255,6 +263,7 @@ class _MailboxContentState extends ConsumerState<_MailboxContent> {
           ),
           _OpenSelectedIntent: _GuardedCallbackAction<_OpenSelectedIntent>(
             onInvoke: (_) => _openSelected(),
+            requiredFocus: _mailboxFocus,
           ),
           _ComposeIntent: _GuardedCallbackAction<_ComposeIntent>(
             onInvoke: (_) => _compose(),
@@ -263,7 +272,7 @@ class _MailboxContentState extends ConsumerState<_MailboxContent> {
             onInvoke: (_) => _showHelp(),
           ),
         },
-        child: Focus(autofocus: true, child: child),
+        child: Focus(focusNode: _mailboxFocus, autofocus: true, child: child),
       ),
     );
     if (defaultTargetPlatform != TargetPlatform.macOS) return body;
