@@ -63,6 +63,7 @@ class _MailboxContent extends ConsumerStatefulWidget {
 class _MailboxContentState extends ConsumerState<_MailboxContent> {
   Timer? _refreshTimer;
   bool _refreshing = false;
+  String? _category;
 
   bool get _isSyncing =>
       const {'syncing', 'validating'}.contains(widget.account.syncStatus);
@@ -189,9 +190,31 @@ class _MailboxContentState extends ConsumerState<_MailboxContent> {
               ),
             ],
           ),
+        Wrap(
+          spacing: 8,
+          children: [
+            for (final (value, label) in [
+              (null, strings.categoryAll),
+              ('person', strings.categoryPerson),
+              ('notification', strings.categoryNotification),
+              ('newsletter', strings.categoryNewsletter),
+            ])
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+                child: ChoiceChip(
+                  label: Text(label),
+                  selected: _category == value,
+                  onSelected: (_) => setState(() => _category = value),
+                ),
+              ),
+          ],
+        ),
         Expanded(
           child: messages.when(
-            data: (items) {
+            data: (all) {
+              final items = _category == null
+                  ? all
+                  : all.where((m) => m.category == _category).toList();
               if (items.isEmpty) {
                 return Center(
                   child: Column(

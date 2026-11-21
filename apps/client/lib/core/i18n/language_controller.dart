@@ -125,6 +125,10 @@ class AppStrings {
   String get syncRange => _ko ? '동기화 범위' : 'Sync range';
   String get comingSoon => _ko ? '준비 중' : 'Coming soon';
   String get noAccountSelected => _ko ? '계정을 선택하세요' : 'Select an account';
+  String get categoryAll => _ko ? '전체' : 'All';
+  String get categoryPerson => _ko ? '사람' : 'People';
+  String get categoryNotification => _ko ? '알림' : 'Notifications';
+  String get categoryNewsletter => _ko ? '뉴스레터' : 'Newsletters';
   String get noMessagesForAccount =>
       _ko ? '이 계정에 표시할 메일이 없습니다' : 'No mail for this account yet';
   String get loadingAccountMail => _ko ? '메일을 가져오는 중입니다' : 'Importing mail';

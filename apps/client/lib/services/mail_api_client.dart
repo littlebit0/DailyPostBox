@@ -259,8 +259,10 @@ class MailSummary {
     required this.snippet,
     required this.receivedAtLabel,
     required this.unread,
+    this.category = 'person',
   });
 
+  final String category;
   final String id;
   final String sender;
   final String subject;
@@ -276,6 +278,7 @@ class MailSummary {
       snippet: json['snippet'] as String? ?? '',
       receivedAtLabel: _formatReceivedAt(json['receivedAt'] as String?),
       unread: true,
+      category: json['category'] as String? ?? 'person',
     );
   }
 }

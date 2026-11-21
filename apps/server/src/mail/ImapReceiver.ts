@@ -17,6 +17,11 @@ import {
   newestFirstUidBatches
 } from "./imapSequenceRanges.js";
 import { isAuthenticationFailure } from "./authenticationFailure.js";
+import {
+  classificationHeaderNames,
+  classifyMessage,
+  parseRawHeaders
+} from "./classifyMessage.js";
 import { extractMessageLinks } from "./messageLinks.js";
 
 export class ImapReceiver implements MailReceiver {
@@ -299,7 +304,8 @@ export class ImapReceiver implements MailReceiver {
     for await (const message of client.fetch(uids, {
       envelope: true,
       flags: true,
-      uid: true
+      uid: true,
+      headers: classificationHeaderNames
     }, { uid: true })) {
       const summary = toIncomingMessage(account, mailbox, message);
       if (summary) batch.push(summary);
@@ -333,14 +339,16 @@ function toIncomingMessage(
   const envelope = message.envelope;
   if (!envelope) return null;
 
+  const from = envelope.from?.map((item) => item.address).filter(Boolean).join(", ") ?? "";
   return {
     accountId: account.id,
     providerMessageId: String(message.uid),
     mailbox,
-    from: envelope.from?.map((item) => item.address).filter(Boolean).join(", ") ?? "",
+    from,
     subject: envelope.subject ?? "",
     receivedAt: envelope.date instanceof Date ? envelope.date : new Date(),
-    hasAttachments: false
+    hasAttachments: false,
+    category: classifyMessage(parseRawHeaders(message.headers), from)
   };
 }
 
