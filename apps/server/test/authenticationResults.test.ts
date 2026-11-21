@@ -25,7 +25,7 @@ test("softfail is not reported", () => {
 });
 
 test("outlook protection host is trusted", () => {
-  const h = "Authentication-Results: spf=fail; dkim=none\r\n";
+  const h = "Authentication-Results: evil.example; spf=fail; dkim=none\r\n";
   assert.deepEqual(parseAuthenticationFailures(h, "outlook"), []);
   const h2 = "Authentication-Results: BN0PR01.protection.outlook.com; dmarc=fail action=none header.from=x.test\r\n";
   assert.deepEqual(parseAuthenticationFailures(h2, "outlook"), ["dmarc"]);
@@ -49,4 +49,11 @@ test("only the topmost header counts", () => {
 test("unverified providers are ignored", () => {
   const h = "Authentication-Results: mx.naver.com; dmarc=fail\r\n";
   assert.deepEqual(parseAuthenticationFailures(h, "naver"), []);
+});
+
+test("outlook header without authserv-id (Microsoft documented example)", () => {
+  const h =
+    "Authentication-Results: spf=fail smtp.mailfrom=contoso.com;\r\n dkim=fail header.d=contoso.com; dmarc=fail action=quarantine;\r\n compauth=fail reason=000\r\n";
+  assert.deepEqual(parseAuthenticationFailures(h, "outlook"), ["dmarc", "spf", "dkim"]);
+  assert.deepEqual(parseAuthenticationFailures(h, "gmail"), []);
 });

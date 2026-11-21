@@ -31,9 +31,13 @@ export function parseAuthenticationFailures(
     .replace(/^[^:]*:/, "")
     .replace(/\([^)]*\)/g, " ")
     .trim();
-  const [head, ...clauses] = value.split(";");
+  const [head, ...rest] = value.split(";");
   const authservId = head.trim().split(/\s+/)[0]?.toLowerCase();
-  if (!authservId || !isTrusted(authservId)) return [];
+  // Outlook's documented format omits the authserv-id (starts with `spf=fail ...`), so the topmost header is trusted without one.
+  const outlookNoId =
+    providerId === "outlook" && /^[a-z0-9-]+=/.test(authservId ?? "");
+  if (!authservId || !(outlookNoId || isTrusted(authservId))) return [];
+  const clauses = outlookNoId ? [head, ...rest] : rest;
 
   const results = new Map<string, string[]>();
   for (const clause of clauses) {
