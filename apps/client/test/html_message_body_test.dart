@@ -450,6 +450,66 @@ void main() {
     expect(textColor(tester, 'ok'), Colors.white);
   });
 
+  List<TextSpan> allSpans(WidgetTester tester) {
+    final out = <TextSpan>[];
+    void walk(InlineSpan span) {
+      if (span is! TextSpan) return;
+      out.add(span);
+      span.children?.forEach(walk);
+    }
+
+    walk(tester.widget<RichText>(find.byType(RichText).first).text);
+    return out;
+  }
+
+  TextStyle? leafStyle(WidgetTester tester, String text) => allSpans(
+        tester,
+      ).lastWhere((s) => s.text == text).style;
+
+  testWidgets('auto-detected url keeps contrast against its background', (
+    tester,
+  ) async {
+    final primary = ThemeData().colorScheme.primary;
+    final hex = primary.toARGB32().toRadixString(16).substring(2);
+    await pump(
+      tester,
+      '<div style="background-color:#$hex"><p>https://example.com/a</p></div>',
+    );
+    final style =
+        allSpans(tester).firstWhere((s) => s.recognizer != null).style!;
+    expect(style.color, isNot(primary));
+    expect(style.decorationColor, isNot(primary));
+    expect(style.decoration, TextDecoration.underline);
+  });
+
+  testWidgets('anchor background is painted and used for contrast', (
+    tester,
+  ) async {
+    await pump(
+      tester,
+      '<a href="https://example.com" style="background-color:#000000">'
+      '<font color="#ffffff">verify</font></a>'
+      '<a href="https://example.com" style="background-color:#000000">'
+      '<font color="#000000">dark</font></a>',
+    );
+    expect(
+      allSpans(tester).map((s) => s.style?.backgroundColor),
+      contains(const Color(0xFF000000)),
+    );
+    expect(leafStyle(tester, 'verify')!.color, Colors.white);
+    expect(leafStyle(tester, 'dark')!.color, Colors.white);
+  });
+
+  testWidgets('unpainted ancestor background causes no correction', (
+    tester,
+  ) async {
+    await pump(
+      tester,
+      '<span bgcolor="#000000"><font color="#000000">plain</font></span>',
+    );
+    expect(leafStyle(tester, 'plain')!.color, const Color(0xFF000000));
+  });
+
   test('readableTextColor keeps contrasting colors', () {
     expect(readableTextColor(Colors.black87, Colors.white), Colors.black87);
     expect(readableTextColor(Colors.white, Colors.white), Colors.black87);

@@ -71,7 +71,7 @@ class _HtmlMessageBodyState extends State<HtmlMessageBody> {
     const base = TextStyle(color: Colors.black87, fontSize: 15, height: 1.45);
     _content = Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: renderer.children(body.nodes, base),
+      children: renderer.children(body.nodes, base, Colors.white),
     );
   }
 
@@ -145,9 +145,13 @@ class _Renderer {
   final void Function(Uri uri) onLink;
   final List<TapGestureRecognizer> recognizers;
 
+  /// [bg] is the background actually painted behind the content: the nearest
+  /// widget/decoration color passed down, overridden for text by an inline
+  /// `TextStyle.backgroundColor`.
   List<Widget> children(
     List<dom.Node> nodes,
-    TextStyle style, {
+    TextStyle style,
+    Color bg, {
     TextAlign align = TextAlign.start,
     TapGestureRecognizer? recognizer,
   }) {
@@ -179,15 +183,16 @@ class _Renderer {
           children(
             node.nodes,
             linkStyle,
+            bg,
             align: align,
             recognizer: linkRecognizer,
           ),
         );
       } else if (node is dom.Element && _blockTags.contains(node.localName)) {
         flush();
-        widgets.add(_block(node, style, recognizer));
+        widgets.add(_block(node, style, bg, recognizer));
       } else {
-        _inline(node, style, spans, recognizer: recognizer);
+        _inline(node, style, bg, spans, recognizer: recognizer);
       }
     }
     flush();
@@ -198,6 +203,9 @@ class _Renderer {
       el.nodes.any((c) => c is dom.Element && _blockTags.contains(c.localName));
 
   (TextStyle, TapGestureRecognizer?) _link(dom.Element a, TextStyle style) {
+    // The anchor background is painted as a text background.
+    final anchorBg = _background(a);
+    if (anchorBg != null) style = style.copyWith(backgroundColor: anchorBg);
     final uri = _safeLink(a.attributes['href']);
     if (uri == null) return (style, null);
     final recognizer = TapGestureRecognizer()..onTap = () => onLink(uri);
@@ -221,9 +229,11 @@ class _Renderer {
   Widget _block(
     dom.Element el,
     TextStyle parent,
+    Color outer,
     TapGestureRecognizer? recognizer,
   ) {
     final style = _styled(el, parent);
+    final bg = _background(el) ?? outer;
     final align = _align(el) ?? TextAlign.start;
     final tag = el.localName;
 
@@ -235,7 +245,7 @@ class _Renderer {
         );
       case 'table':
         final caption = el.children.where((c) => c.localName == 'caption');
-        final table = _table(el, style, recognizer);
+        final table = _table(el, style, outer, recognizer);
         if (caption.isEmpty) return table;
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -246,6 +256,7 @@ class _Renderer {
                 _column(
                   c,
                   _styled(c, style),
+                  _background(c) ?? outer,
                   _align(c) ?? TextAlign.center,
                   recognizer,
                 ),
@@ -265,12 +276,21 @@ class _Renderer {
               children: [
                 SizedBox(
                   width: 28,
-                  child: Text(tag == 'ol' ? '$index.' : '•', style: style),
+                  child: Text(
+                    tag == 'ol' ? '$index.' : '•',
+                    style: _fix(style, bg),
+                  ),
                 ),
                 Expanded(
                   child: _paint(
                     child,
-                    _column(child, _styled(child, style), align, recognizer),
+                    _column(
+                      child,
+                      _styled(child, style),
+                      _background(child) ?? bg,
+                      align,
+                      recognizer,
+                    ),
                   ),
                 ),
               ],
@@ -297,7 +317,7 @@ class _Renderer {
               left: BorderSide(color: Colors.black26, width: 3),
             ),
           ),
-          child: _column(el, style, align, recognizer),
+          child: _column(el, style, bg, align, recognizer),
         );
       default:
         final spacing =
@@ -306,7 +326,7 @@ class _Renderer {
           el,
           Padding(
             padding: EdgeInsets.symmetric(vertical: spacing),
-            child: _column(el, style, align, recognizer),
+            child: _column(el, style, bg, align, recognizer),
           ),
         );
     }
@@ -315,20 +335,29 @@ class _Renderer {
   Widget _column(
     dom.Element el,
     TextStyle style,
+    Color bg,
     TextAlign align,
     TapGestureRecognizer? recognizer,
   ) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: children(el.nodes, style, align: align, recognizer: recognizer),
+      children: children(
+        el.nodes,
+        style,
+        bg,
+        align: align,
+        recognizer: recognizer,
+      ),
     );
   }
 
   Widget _table(
     dom.Element table,
     TextStyle style,
+    Color outer,
     TapGestureRecognizer? recognizer,
   ) {
+    final tableBg = _background(table) ?? outer;
     final rows = <Map<int, (dom.Element cell, dom.Element row)>>[];
     // column -> number of following rows still covered by a rowspan cell.
     var pending = <int, int>{};
@@ -369,21 +398,22 @@ class _Renderer {
       return Text(table.text, style: style);
     }
 
+    Color? cellBg(dom.Element cell, dom.Element row) =>
+        _background(cell) ?? _background(row) ?? _groupBackground(row);
+
     TableRow toRow(Map<int, (dom.Element cell, dom.Element row)> slots) =>
         TableRow(
           children: [
             for (var i = 0; i < columns; i++)
               if (slots[i] case (final cell, final row))
                 ColoredBox(
-                  color: _background(cell) ??
-                      _background(row) ??
-                      _groupBackground(row) ??
-                      Colors.transparent,
+                  color: cellBg(cell, row) ?? Colors.transparent,
                   child: Padding(
                     padding: const EdgeInsets.all(4),
                     child: _column(
                       cell,
                       _cellStyle(cell, row, style),
+                      cellBg(cell, row) ?? tableBg,
                       _align(cell) ?? _align(row) ?? TextAlign.start,
                       recognizer,
                     ),
@@ -431,22 +461,24 @@ class _Renderer {
         : style;
   }
 
-  /// Effective background of a text node: nearest painted ancestor, else the
-  /// white surface.
-  Color _effectiveBackground(dom.Node node) {
-    for (dom.Element? e = node.parent; e != null; e = e.parent) {
-      final color = _background(e);
-      if (color != null) return color;
-    }
-    return Colors.white;
+  /// Final step for every text style: text that would be unreadable on [bg]
+  /// (contrast < 3:1) falls back to black87 or white, whichever contrasts
+  /// better. Corrects the underline color too, so links stay visible.
+  TextStyle _fix(TextStyle style, Color bg) {
+    final under = style.backgroundColor ?? bg;
+    final color = style.color ?? Colors.black87;
+    final fixed = readableTextColor(color, under);
+    final line = style.decorationColor;
+    final fixedLine = line == null ? null : readableTextColor(line, under);
+    return fixed == color && fixedLine == line
+        ? style
+        : style.copyWith(color: fixed, decorationColor: fixedLine);
   }
 
-  /// Text that would be unreadable on its background (contrast < 3:1) falls
-  /// back to black87 or white, whichever contrasts better.
-  TextStyle _readable(TextStyle style, dom.Node node) {
-    final color = style.color ?? Colors.black87;
-    final fixed = readableTextColor(color, _effectiveBackground(node));
-    return fixed == color ? style : style.copyWith(color: fixed);
+  /// Leaf text style: only color and underline color, the rest is inherited.
+  TextStyle _leaf(TextStyle composed, Color bg) {
+    final f = _fix(composed, bg);
+    return TextStyle(color: f.color, decorationColor: f.decorationColor);
   }
 
   int _span(dom.Element cell, String attribute) =>
@@ -482,23 +514,18 @@ class _Renderer {
   void _inline(
     dom.Node node,
     TextStyle style,
+    Color bg,
     List<InlineSpan> out, {
     TapGestureRecognizer? recognizer,
   }) {
     if (node is dom.Text) {
-      style = _readable(style, node);
       final text = _collapse(node);
       if (text.isNotEmpty && recognizer == null) {
         // Bare URLs outside an anchor stay tappable, as in the plain-text view.
         for (final segment in parseMessageBody(body: text, links: const [])) {
           final uri = segment.uri;
           if (uri == null) {
-            out.add(
-              TextSpan(
-                text: segment.text,
-                style: TextStyle(color: style.color),
-              ),
-            );
+            out.add(TextSpan(text: segment.text, style: _leaf(style, bg)));
             continue;
           }
           final tap = TapGestureRecognizer()..onTap = () => onLink(uri);
@@ -508,10 +535,13 @@ class _Renderer {
               text: segment.text,
               recognizer: tap,
               mouseCursor: SystemMouseCursors.click,
-              style: style.copyWith(
-                color: linkColor,
-                decoration: TextDecoration.underline,
-                decorationColor: linkColor,
+              style: _fix(
+                style.copyWith(
+                  color: linkColor,
+                  decoration: TextDecoration.underline,
+                  decorationColor: linkColor,
+                ),
+                bg,
               ),
             ),
           );
@@ -522,7 +552,7 @@ class _Renderer {
         out.add(
           TextSpan(
             text: text,
-            style: TextStyle(color: style.color),
+            style: _leaf(style, bg),
             recognizer: recognizer,
             mouseCursor: recognizer == null ? null : SystemMouseCursors.click,
           ),
@@ -548,6 +578,7 @@ class _Renderer {
                 children: children(
                   node.nodes,
                   linkStyle,
+                  bg,
                   recognizer: linkRecognizer,
                 ),
               ),
@@ -557,14 +588,14 @@ class _Renderer {
         }
         final spans = <InlineSpan>[];
         for (final child in node.nodes) {
-          _inline(child, linkStyle, spans, recognizer: linkRecognizer);
+          _inline(child, linkStyle, bg, spans, recognizer: linkRecognizer);
         }
         out.add(TextSpan(style: linkStyle, children: spans));
       default:
         final next = _styled(node, style);
         final children = <InlineSpan>[];
         for (final child in node.nodes) {
-          _inline(child, next, children, recognizer: recognizer);
+          _inline(child, next, bg, children, recognizer: recognizer);
         }
         out.add(TextSpan(style: next, children: children));
     }
