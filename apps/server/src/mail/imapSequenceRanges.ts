@@ -67,3 +67,31 @@ export function latestUidSearchQuery(
   if (limit === "all") return { all: true };
   return { seq: `${Math.max(1, totalMessages - limit + 1)}:*` };
 }
+
+/** Continue after this UID when the mailbox still uses the same numbering. */
+export interface ImapSyncCursor {
+  uid: number;
+  // Unknown for cursors derived from saved mail before cursors were stored.
+  uidValidity?: string;
+}
+
+// A changed UIDVALIDITY renumbers the mailbox, so the old cursor means
+// nothing there and the sync falls back to the newest-messages fetch.
+export function cursorUid(
+  cursor: ImapSyncCursor | undefined,
+  uidValidity: string
+): number | undefined {
+  if (!cursor) return undefined;
+  if (cursor.uidValidity !== undefined && cursor.uidValidity !== uidValidity) {
+    return undefined;
+  }
+  return cursor.uid;
+}
+
+// Everything after a cursor is fetched; the limit only caps imports.
+export function batchLimit(
+  afterUid: number | undefined,
+  limit: number | "all"
+): number | "all" {
+  return afterUid === undefined ? limit : "all";
+}
