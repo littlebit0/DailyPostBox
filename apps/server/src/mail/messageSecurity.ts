@@ -14,10 +14,13 @@ export function detectMessageSecurity(root: StructureNode): MessageSecurity {
   let signed: MessageSecurity["signed"] = null;
   let encrypted: MessageSecurity["encrypted"] = null;
 
-  const visit = (node: StructureNode): void => {
-    // Attachments are not the displayed body, so their security does not
-    // describe this message (matches selectBodyParts in ImapReceiver).
-    if (node.disposition?.toLowerCase() === "attachment") return;
+  // `wrapper` marks the root and the parts of a multipart/signed or
+  // multipart/encrypted reached through it: RFC 8551 sends those with
+  // `disposition: attachment` (smime.p7m/p7s), yet they wrap this message.
+  const visit = (node: StructureNode, wrapper: boolean): void => {
+    // Other attachments are not the displayed body, so their security does
+    // not describe this message (matches selectBodyParts in ImapReceiver).
+    if (!wrapper && node.disposition?.toLowerCase() === "attachment") return;
     const type = node.type.toLowerCase();
     const protocol = node.parameters?.protocol?.toLowerCase();
     const smimeType = node.parameters?.["smime-type"]?.toLowerCase();
@@ -44,9 +47,10 @@ export function detectMessageSecurity(root: StructureNode): MessageSecurity {
         (smimeType === undefined && name.endsWith(".p7m"))
       ) encrypted ??= "smime";
     }
-    for (const child of node.childNodes ?? []) visit(child);
+    const wrapsChildren = type === "multipart/signed" || type === "multipart/encrypted";
+    for (const child of node.childNodes ?? []) visit(child, wrapsChildren);
   };
 
-  visit(root);
+  visit(root, true);
   return { signed, encrypted, verified: false };
 }

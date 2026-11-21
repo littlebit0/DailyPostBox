@@ -87,3 +87,31 @@ test("treats only enveloped S/MIME types as encrypted", () => {
   assert.equal(signed.signed, "smime");
   assert.equal(signed.encrypted, null);
 });
+
+test("detects root S/MIME parts sent with attachment disposition", () => {
+  const p7m = { disposition: "attachment", dispositionParameters: { filename: "smime.p7m" } };
+  assert.equal(
+    detectMessageSecurity({ type: "application/pkcs7-mime", parameters: { "smime-type": "enveloped-data" }, ...p7m }).encrypted,
+    "smime"
+  );
+  assert.equal(
+    detectMessageSecurity({ type: "application/pkcs7-mime", parameters: { "smime-type": "signed-data" }, ...p7m }).signed,
+    "smime"
+  );
+  const signedEnvelope = detectMessageSecurity({
+    type: "multipart/signed",
+    parameters: { protocol: "application/pkcs7-signature" },
+    disposition: "attachment",
+    childNodes: [
+      { type: "application/pkcs7-mime", parameters: { "smime-type": "enveloped-data" }, ...p7m },
+      { type: "application/pkcs7-signature", disposition: "attachment", dispositionParameters: { filename: "smime.p7s" } }
+    ]
+  });
+  assert.deepEqual(signedEnvelope, { signed: "smime", encrypted: "smime", verified: false });
+  // A wrapper part attached inside another mail is still that mail's attachment.
+  const attached = detectMessageSecurity({
+    type: "multipart/mixed",
+    childNodes: [text, { type: "application/pkcs7-mime", parameters: { "smime-type": "enveloped-data" }, ...p7m }]
+  });
+  assert.equal(attached.encrypted, null);
+});
