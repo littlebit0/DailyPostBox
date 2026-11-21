@@ -271,7 +271,10 @@ export class ImapReceiver implements MailReceiver {
 
   // Callers persist the account, so the result survives restarts.
   private recordCapabilities(account: MailAccount, client: ImapFlow): void {
-    account.incomingCapabilities = detectImapCapabilities(client.capabilities);
+    const detected = detectImapCapabilities(client.capabilities);
+    // watch() refuses providers without supportsIdle, so "idle" means IDLE is actually used.
+    detected.idle &&= getProvider(account.providerId).incoming.supportsIdle;
+    account.incomingCapabilities = detected;
   }
 
   private async withConnectedClient<T>(
