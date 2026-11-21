@@ -218,6 +218,59 @@ void main() {
     expect(twenty, ten);
   });
 
+  testWidgets('colspan cell spans the merged width', (tester) async {
+    await pump(
+      tester,
+      '<table><tr><td colspan="2">title</td></tr>'
+      '<tr><td>a</td><td>b</td></tr></table>',
+    );
+    double width(String text) => tester
+        .getSize(
+          find
+              .ancestor(
+                of: find.text(text, findRichText: true),
+                matching: find.byType(Row),
+              )
+              .first,
+        )
+        .width;
+    final title = tester
+        .getSize(
+          find
+              .ancestor(
+                of: find.text('title', findRichText: true),
+                matching: find.byType(ColoredBox),
+              )
+              .first,
+        )
+        .width;
+    expect(title, closeTo(width('a'), 1));
+    expect(
+      tester.getTopLeft(find.text('b', findRichText: true)).dx,
+      greaterThan(tester.getTopLeft(find.text('a', findRichText: true)).dx),
+    );
+  });
+
+  testWidgets('failed image inside a link shows alt and stays tappable', (
+    tester,
+  ) async {
+    Uri? opened;
+    await pump(
+      tester,
+      '<a href="https://example.com/verify">'
+      '<img src="https://cdn.example.com/missing.png" alt="인증하기"></a>',
+      launcher: (uri) async {
+        opened = uri;
+        return true;
+      },
+    );
+    await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+    await tester.pumpAndSettle();
+    expect(find.text('인증하기'), findsOneWidget);
+    await tester.tap(find.text('인증하기'));
+    expect(opened, Uri.parse('https://example.com/verify'));
+  });
+
   testWidgets('row text style is inherited by cells', (tester) async {
     await pump(
       tester,
@@ -277,7 +330,7 @@ void main() {
     expect(tester.allWidgets.length, lessThan(1000));
 
     await pump(tester, '<table><tr><td colspan="2">a</td></tr></table>');
-    expect(find.byType(Table), findsOneWidget);
+    expect(find.byType(Expanded), findsOneWidget);
   });
 
   testWidgets('bare URLs outside anchors are tappable', (tester) async {

@@ -459,30 +459,74 @@ class _Renderer {
     Color? cellBg(dom.Element cell, dom.Element row) =>
         _background(cell) ?? _background(row) ?? _groupBackground(row);
 
+    Widget cellBox(dom.Element cell, dom.Element row, bool bordered) {
+      final color = cellBg(cell, row);
+      final padded = Padding(
+        padding: const EdgeInsets.all(4),
+        child: _column(
+          cell,
+          _cellStyle(cell, row, style),
+          color ?? tableBg,
+          _align(cell) ?? _align(row) ?? TextAlign.start,
+          recognizer,
+        ),
+      );
+      return ColoredBox(
+        color: color ?? Colors.transparent,
+        child: bordered
+            ? DecoratedBox(
+                decoration: BoxDecoration(
+                  border: Border.all(color: Colors.black26),
+                ),
+                child: padded,
+              )
+            : padded,
+      );
+    }
+
+    final bordered = (int.tryParse(table.attributes['border'] ?? '') ?? 0) > 0;
+    bool anySpan(String name) =>
+        rows.any((r) => r.values.any((v) => _span(v.$1, name) > 1));
+    // Flutter's Table cannot merge cells. Without rowspan, each row becomes a
+    // Row of Expanded(flex: colspan) so merged cells span their full width.
+    // shortcut: colspan + rowspan together stays on Table (merged cells only
+    // approximate), upgrade with a real grid layout if it matters.
+    if (anySpan('colspan') && !anySpan('rowspan')) {
+      Widget spanRow(Map<int, (dom.Element, dom.Element)> slots) {
+        final children = <Widget>[];
+        var used = 0;
+        for (final i in slots.keys.toList()..sort()) {
+          final (cell, row) = slots[i]!;
+          final span = _span(cell, 'colspan');
+          used += span;
+          children.add(
+            Expanded(flex: span, child: cellBox(cell, row, bordered)),
+          );
+        }
+        if (used < columns) children.add(Spacer(flex: columns - used));
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: children,
+        );
+      }
+
+      return ColoredBox(
+        color: _background(table) ?? Colors.transparent,
+        child: Column(children: rows.map(spanRow).toList(growable: false)),
+      );
+    }
+
     TableRow toRow(Map<int, (dom.Element cell, dom.Element row)> slots) =>
         TableRow(
           children: [
             for (var i = 0; i < columns; i++)
               if (slots[i] case (final cell, final row))
-                ColoredBox(
-                  color: cellBg(cell, row) ?? Colors.transparent,
-                  child: Padding(
-                    padding: const EdgeInsets.all(4),
-                    child: _column(
-                      cell,
-                      _cellStyle(cell, row, style),
-                      cellBg(cell, row) ?? tableBg,
-                      _align(cell) ?? _align(row) ?? TextAlign.start,
-                      recognizer,
-                    ),
-                  ),
-                )
+                cellBox(cell, row, false)
               else
                 const SizedBox.shrink(),
           ],
         );
 
-    final bordered = (int.tryParse(table.attributes['border'] ?? '') ?? 0) > 0;
     return ColoredBox(
       color: _background(table) ?? Colors.transparent,
       child: Table(
@@ -704,7 +748,13 @@ class _Renderer {
         ),
         width: width,
         height: height,
-        errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+        // Keep alt text (or a marker) so the enclosing link stays usable.
+        errorBuilder: (_, __, ___) => Text(
+          (img.attributes['alt'] ?? '').trim().isEmpty
+              ? '[이미지]'
+              : img.attributes['alt']!,
+          style: _leaf(style, bg),
+        ),
       );
     }
     if (image == null) {
