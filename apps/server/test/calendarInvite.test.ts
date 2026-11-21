@@ -85,3 +85,17 @@ test("derives end from DURATION when DTEND is absent", () => {
   const bad = parseCalendarInvite(wrap("DTSTART:20261201T090000Z\r\nDURATION:soon"));
   assert.equal(bad?.end, null);
 });
+
+test("ignores properties of nested components such as VALARM", () => {
+  const invite = parseCalendarInvite(
+    `BEGIN:VCALENDAR\r\nBEGIN:VTIMEZONE\r\nTZID:X\r\nBEGIN:STANDARD\r\nDTSTART:19701025T030000\r\nEND:STANDARD\r\nEND:VTIMEZONE\r\nMETHOD:REQUEST\r\n` +
+      "BEGIN:VEVENT\r\nDTSTART:20261201T090000Z\r\n" +
+      "BEGIN:VALARM\r\nTRIGGER:-PT15M\r\nDURATION:PT5M\r\nREPEAT:2\r\nSUMMARY:Alarm\r\nDESCRIPTION:Reminder\r\nLOCATION:Nowhere\r\nEND:VALARM\r\n" +
+      "SUMMARY:Meeting\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+  );
+  assert.equal(invite?.start, "2026-12-01T09:00:00Z");
+  assert.equal(invite?.end, null);
+  assert.equal(invite?.summary, "Meeting");
+  assert.equal(invite?.location, null);
+  assert.equal(invite?.method, "REQUEST");
+});

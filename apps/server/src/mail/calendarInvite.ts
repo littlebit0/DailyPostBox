@@ -13,19 +13,30 @@ export function parseCalendarInvite(ics: string): CalendarInvite | null {
   const eventProps: Prop[] = [];
   let inEvent = false;
   let seenEvent = false;
+  // Depth of components nested below VCALENDAR/VEVENT (VALARM, VTIMEZONE, ...); their properties are skipped.
+  let nested = 0;
 
   for (const line of lines) {
     const upper = line.trim().toUpperCase();
-    if (upper === "BEGIN:VEVENT") {
+    if (upper === "BEGIN:VEVENT" && nested === 0) {
       if (seenEvent) break;
       inEvent = true;
       seenEvent = true;
       continue;
     }
-    if (upper === "END:VEVENT") {
+    if (upper === "END:VEVENT" && nested === 0) {
       inEvent = false;
       continue;
     }
+    if (upper.startsWith("BEGIN:") && upper !== "BEGIN:VCALENDAR") {
+      nested += 1;
+      continue;
+    }
+    if (upper.startsWith("END:") && upper !== "END:VCALENDAR") {
+      nested = Math.max(0, nested - 1);
+      continue;
+    }
+    if (nested > 0) continue;
     const prop = parseLine(line);
     if (!prop) continue;
     if (inEvent) eventProps.push(prop);
