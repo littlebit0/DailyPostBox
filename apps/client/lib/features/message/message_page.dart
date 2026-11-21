@@ -22,6 +22,14 @@ final messageProvider =
   return api.fetchMessage(request.messageId);
 });
 
+final aiSummaryEnabledProvider = FutureProvider<bool>((ref) async {
+  try {
+    return await ref.watch(mailApiClientProvider).fetchAiSummaryEnabled();
+  } catch (_) {
+    return false;
+  }
+});
+
 class MessagePage extends ConsumerWidget {
   const MessagePage({
     super.key,
@@ -38,6 +46,8 @@ class MessagePage extends ConsumerWidget {
       messageProvider((messageId: messageId, accountId: accountId)),
     );
     final strings = ref.watch(appStringsProvider);
+    final summaryEnabled =
+        accountId != null && ref.watch(aiSummaryEnabledProvider).value == true;
     final mailboxPath =
         accountId == null ? '/accounts' : '/accounts/$accountId/mail';
 
@@ -80,6 +90,12 @@ class MessagePage extends ConsumerWidget {
                 Text('${strings.from}: ${item.sender}'),
                 Text(item.receivedAtLabel),
                 const Divider(height: 32),
+                if (summaryEnabled)
+                  _SummaryCard(
+                    accountId: accountId!,
+                    messageId: messageId,
+                    strings: strings,
+                  ),
                 LinkedMessageBody(body: item.body, links: item.links),
               ],
             ),
@@ -99,6 +115,100 @@ class MessagePage extends ConsumerWidget {
     return AppShell(
       selectedDestinationId: AppShell.accountDestinationId(selectedAccountId),
       child: content,
+    );
+  }
+}
+
+class _SummaryCard extends ConsumerStatefulWidget {
+  const _SummaryCard({
+    required this.accountId,
+    required this.messageId,
+    required this.strings,
+  });
+
+  final String accountId;
+  final String messageId;
+  final AppStrings strings;
+
+  @override
+  ConsumerState<_SummaryCard> createState() => _SummaryCardState();
+}
+
+class _SummaryCardState extends ConsumerState<_SummaryCard> {
+  bool _loading = false;
+  String? _summary;
+  bool _failed = false;
+
+  Future<void> _run() async {
+    setState(() {
+      _loading = true;
+      _failed = false;
+    });
+    try {
+      final text = await ref
+          .read(mailApiClientProvider)
+          .summarizeMessage(
+            accountId: widget.accountId,
+            messageId: widget.messageId,
+          );
+      if (mounted) setState(() => _summary = text);
+    } catch (_) {
+      if (mounted) setState(() => _failed = true);
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final strings = widget.strings;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: Card(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      strings.summaryTitle,
+                      style: Theme.of(context).textTheme.titleSmall,
+                    ),
+                  ),
+                  if (_loading)
+                    const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  else
+                    TextButton.icon(
+                      onPressed: _run,
+                      icon: const Icon(Icons.auto_awesome_outlined),
+                      label: Text(strings.summarize),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Text(
+                strings.summaryNotice,
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+              if (_summary != null) ...[
+                const SizedBox(height: 12),
+                SelectableText(_summary!),
+              ],
+              if (_failed) ...[
+                const SizedBox(height: 12),
+                Text(strings.summaryFailed),
+              ],
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
