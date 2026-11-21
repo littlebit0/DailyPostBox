@@ -410,3 +410,47 @@ test("a reconnect after a failed first watch still catches up", async () => {
     await syncWorker.stop();
   }
 });
+
+test("a reconnect during a running import queues another sync", async () => {
+  const repository = new InMemoryAccountRepository();
+  const mailAccount = account();
+  await repository.addAccount(mailAccount);
+  let disconnect: ((error: Error) => void) | undefined;
+  let releaseImport!: () => void;
+  const runningImport = new Promise<void>((resolve) => {
+    releaseImport = resolve;
+  });
+  let syncs = 0;
+  const imap = {
+    watch: async (
+      _account: MailAccount,
+      _mailbox: string,
+      _onMessage: unknown,
+      onDisconnect: (error: Error) => void
+    ) => {
+      disconnect = onDisconnect;
+      return async () => undefined;
+    },
+    fetchLatestBatches: async () => {
+      syncs += 1;
+      if (syncs === 1) await runningImport;
+      return { uidValidity: "7", highestUid: 41 };
+    }
+  };
+  const syncWorker = worker(repository, imap);
+
+  try {
+    const start = syncWorker.startAccount(mailAccount);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    disconnect!(new Error("IMAP connection closed."));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(syncs, 1);
+
+    releaseImport();
+    await start;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(syncs, 2);
+  } finally {
+    await syncWorker.stop();
+  }
+});
