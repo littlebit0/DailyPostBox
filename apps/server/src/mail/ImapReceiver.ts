@@ -177,7 +177,11 @@ export class ImapReceiver implements MailReceiver {
         }
       }
 
-      if (htmlFallback) return { ...htmlFallback, links: htmlLinks };
+      if (htmlFallback) return { ...htmlFallback, links: htmlLinks, html: rawHtml };
+      // Image-only HTML has no extractable text but still needs html returned.
+      if (rawHtml) {
+        return { text: "", truncated: false, links: htmlLinks, html: rawHtml };
+      }
       return { text: "", truncated: false, links: [] };
     } finally {
       await client.logout().catch(() => undefined);
