@@ -299,13 +299,13 @@ export class MailSyncWorker {
             account, mailbox, batch.map((m) => Number(m.providerMessageId))
           )).map((m) => [m.providerMessageId, m.category])
         );
-        for (const message of batch) {
-          await this.accounts.saveIncomingMessage({
+        // Concurrent saves let the file repository coalesce them into one write.
+        await Promise.all(batch.map((message) =>
+          this.accounts.saveIncomingMessage({
             ...message,
             // Gone from the server: default to "person" so it is tried once.
             category: fetched.get(message.providerMessageId) ?? "person"
-          });
-        }
+          })));
       }
     }
   }
