@@ -153,8 +153,9 @@ void main() {
     expect(opened, Uri.parse('https://example.com/go'));
   });
 
-  testWidgets('data uri image is not decoded, alt text is shown',
-      (tester) async {
+  testWidgets('data uri image is not decoded, alt text is shown', (
+    tester,
+  ) async {
     await pump(
       tester,
       '<p><img src="data:image/png;base64,iVBORw0KGgo=" alt="pic"></p>',
@@ -336,5 +337,34 @@ void main() {
     );
     final span = (text.text as TextSpan).children!.first as TextSpan;
     expect(span.style?.color, const Color(0xFFFFFFFF));
+  });
+
+  testWidgets('block background is not inherited as text background', (
+    tester,
+  ) async {
+    await pump(
+      tester,
+      '<div style="background-color:#000000;color:#ffffff"><table><tr>'
+      '<td bgcolor="#ffffff" style="color:#000000">code 1234</td></tr></table></div>',
+    );
+    final text = tester.widget<RichText>(
+      find.text('code 1234', findRichText: true),
+    );
+    final span = (text.text as TextSpan).children!.first as TextSpan;
+    expect(span.style?.backgroundColor, isNull);
+  });
+
+  testWidgets('inline span background still applies to text', (tester) async {
+    await pump(tester, '<span style="background-color:#ffff00">hi</span>');
+    final text = tester.widget<RichText>(find.text('hi', findRichText: true));
+    expect(text.text.toStringDeep(), contains('backgroundColor'));
+  });
+
+  testWidgets('invalid image height does not break layout', (tester) async {
+    await pump(
+      tester,
+      '<img src="https://example.com/a.png" height="Infinity" width="-5">',
+    );
+    expect(tester.takeException(), isNull);
   });
 }

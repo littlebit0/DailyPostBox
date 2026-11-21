@@ -136,3 +136,13 @@ test("returns empty html when nesting depth is exceeded", () => {
   assert.equal(clean("<div>".repeat(101) + "x" + "</div>".repeat(101)).html, "");
   assert.match(clean("<div>".repeat(50) + "x" + "</div>".repeat(50)).html, /x/);
 });
+
+test("drops non-numeric or absurd width/height", () => {
+  const r = sanitizeHtml(
+    '<table width="100%"><tr><td width="Infinity" height="99999999">x</td></tr></table><img src="https://e.com/a.png" width="120" height="NaN">',
+    { allowRemoteImages: true }
+  );
+  assert.match(r.html, /<table width="100%">/);
+  assert.doesNotMatch(r.html, /Infinity|99999999|NaN/);
+  assert.match(r.html, /width="120"/);
+});

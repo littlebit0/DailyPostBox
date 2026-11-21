@@ -48,6 +48,8 @@ const allowedStyleProps = new Set([
   "border-right", "border-collapse", "border-radius"
 ]);
 const safeAttrValue = /^[\w\s#%.,:/()\-+]*$/;
+// width/height attrs: plain number with optional px or %; drops Infinity/NaN/huge.
+const sizeAttr = /^\d{1,4}(px|%)?$/;
 const maxDepth = 100;
 // More elements than this means a pathological mail: return no HTML so the
 // client shows the plain-text body instead of building a huge widget tree.
@@ -141,6 +143,7 @@ function serializeAttributes(tag: string, attribs: Record<string, string>): stri
     } else if (
       (globalAttrs.has(key) || tagSet?.has(key)) &&
       !(tag === "img" && key === "src") &&
+      !((key === "width" || key === "height") && !sizeAttr.test(value)) &&
       value.length <= 200 &&
       (key === "title" || key === "alt" || key === "face" || safeAttrValue.test(value))
     ) {

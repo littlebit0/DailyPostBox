@@ -173,8 +173,14 @@ class _Renderer {
         // Keep block structure inside a link and hand the tap down to it.
         flush();
         final (linkStyle, linkRecognizer) = _link(node, style);
-        widgets.addAll(children(node.nodes, linkStyle,
-            align: align, recognizer: linkRecognizer));
+        widgets.addAll(
+          children(
+            node.nodes,
+            linkStyle,
+            align: align,
+            recognizer: linkRecognizer,
+          ),
+        );
       } else if (node is dom.Element && _blockTags.contains(node.localName)) {
         flush();
         widgets.add(_block(node, style, recognizer));
@@ -186,9 +192,8 @@ class _Renderer {
     return widgets;
   }
 
-  bool _hasBlock(dom.Element el) => el.nodes.any(
-        (c) => c is dom.Element && _blockTags.contains(c.localName),
-      );
+  bool _hasBlock(dom.Element el) =>
+      el.nodes.any((c) => c is dom.Element && _blockTags.contains(c.localName));
 
   (TextStyle, TapGestureRecognizer?) _link(dom.Element a, TextStyle style) {
     final uri = _safeLink(a.attributes['href']);
@@ -228,8 +233,12 @@ class _Renderer {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             for (final c in caption)
-              _column(c, _styled(c, style), _align(c) ?? TextAlign.center,
-                  recognizer),
+              _column(
+                c,
+                _styled(c, style),
+                _align(c) ?? TextAlign.center,
+                recognizer,
+              ),
             table,
           ],
         );
@@ -269,8 +278,9 @@ class _Renderer {
           child: _column(el, style, align, recognizer),
         );
       default:
-        final spacing =
-            (tag == 'p' || (tag?.startsWith('h') ?? false)) ? 6.0 : 0.0;
+        final spacing = (tag == 'p' || (tag?.startsWith('h') ?? false))
+            ? 6.0
+            : 0.0;
         return ColoredBox(
           color: _background(el) ?? Colors.transparent,
           child: Padding(
@@ -344,7 +354,8 @@ class _Renderer {
             for (var i = 0; i < columns; i++)
               if (slots[i] case (final cell, final row))
                 ColoredBox(
-                  color: _background(cell) ??
+                  color:
+                      _background(cell) ??
                       _background(row) ??
                       Colors.transparent,
                   child: Padding(
@@ -378,8 +389,10 @@ class _Renderer {
   }
 
   int _span(dom.Element cell, String attribute) =>
-      (int.tryParse(cell.attributes[attribute] ?? '') ?? 1)
-          .clamp(1, maxHtmlSpan);
+      (int.tryParse(cell.attributes[attribute] ?? '') ?? 1).clamp(
+        1,
+        maxHtmlSpan,
+      );
 
   /// `bgcolor` attribute or inline `background-color` of a table element.
   Color? _background(dom.Element el) {
@@ -515,8 +528,8 @@ class _Renderer {
 
   InlineSpan _image(dom.Element img, TapGestureRecognizer? recognizer) {
     final src = img.attributes['src'] ?? '';
-    final width = double.tryParse(img.attributes['width'] ?? '');
-    final height = double.tryParse(img.attributes['height'] ?? '');
+    final width = _imageSize(img.attributes['width']);
+    final height = _imageSize(img.attributes['height']);
     Widget? image;
 
     // data: URIs are never decoded: a tiny PNG can claim a huge pixel size.
@@ -544,6 +557,26 @@ class _Renderer {
               ),
       ),
     );
+  }
+
+  bool _paintsOwnBackground(dom.Element el) =>
+      _blockTags.contains(el.localName) ||
+      const {
+        'tr',
+        'td',
+        'th',
+        'tbody',
+        'thead',
+        'tfoot',
+      }.contains(el.localName);
+
+  /// Finite positive size, capped; anything else (NaN, Infinity, 0, negative,
+  /// percentages) is ignored.
+  double? _imageSize(String? raw) {
+    final n = double.tryParse((raw ?? '').trim().replaceAll('px', ''));
+    return n != null && n.isFinite && n > 0
+        ? n.clamp(1, 2000).toDouble()
+        : null;
   }
 
   TextStyle _styled(dom.Element el, TextStyle parent) {
@@ -602,9 +635,14 @@ class _Renderer {
           if (color != null) style = style.copyWith(color: color);
         case 'background-color':
           final color = _color(value);
-          if (color != null) style = style.copyWith(backgroundColor: color);
+          // Blocks paint their own box (_background); text background would be
+          // inherited by children that set a different box color.
+          if (color != null && !_paintsOwnBackground(el)) {
+            style = style.copyWith(backgroundColor: color);
+          }
         case 'font-weight':
-          final bold = value == 'bold' ||
+          final bold =
+              value == 'bold' ||
               value == 'bolder' ||
               (int.tryParse(value) ?? 0) >= 600;
           style = style.copyWith(
