@@ -2,6 +2,13 @@ import type { MessageStructureObject } from "imapflow";
 import type { IncomingMessageAttachment } from "../domain/types.js";
 
 // imapflow already decodes RFC 2231 / encoded-word names in the parameters.
+// IMAP BODYSTRUCTURE size is the transfer-encoded size; estimate the decoded size for base64.
+// shortcut: assumes 76-char lines + CRLF, quoted-printable keeps the encoded size.
+export function estimateDecodedSize(size: number, encoding?: string): number {
+  if (encoding?.toLowerCase() !== "base64") return size;
+  return Math.floor(((size - Math.floor(size / 78) * 2) * 3) / 4);
+}
+
 export function extractAttachments(
   root: MessageStructureObject
 ): IncomingMessageAttachment[] {
@@ -23,7 +30,7 @@ export function extractAttachments(
           filename ||
           `attachment-${node.part}${type === "message/rfc822" ? ".eml" : ""}`,
         contentType: type,
-        size: node.size ?? 0
+        size: estimateDecodedSize(node.size ?? 0, node.encoding)
       });
       return;
     }

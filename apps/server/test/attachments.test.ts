@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { extractAttachments } from "../src/mail/attachments.js";
+import { estimateDecodedSize, extractAttachments } from "../src/mail/attachments.js";
 
 test("extracts attachment parts and skips body parts", () => {
   const result = extractAttachments({
@@ -133,4 +133,21 @@ test("attachment route streams the part with an encoded filename", async () => {
     (await app.inject("/accounts/a1/messages/7/attachments/..%2Fx")).statusCode,
     500
   );
+});
+
+test("estimates decoded size for base64 parts only", () => {
+  // Real file was 3,655 bytes; IMAP reported 5,012 encoded bytes.
+  const decoded = estimateDecodedSize(5012, "base64");
+  assert.equal(decoded, 3663);
+  assert.ok(Math.abs(decoded - 3655) / 3655 < 0.01);
+  assert.equal(estimateDecodedSize(5012, "quoted-printable"), 5012);
+  assert.equal(estimateDecodedSize(5012), 5012);
+
+  const [att] = extractAttachments({
+    type: "multipart/mixed",
+    childNodes: [
+      { part: "1", type: "image/png", size: 5012, encoding: "BASE64", disposition: "attachment" }
+    ]
+  });
+  assert.equal(att.size, 3663);
 });
