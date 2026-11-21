@@ -49,6 +49,8 @@ export interface MailAccount {
     limit: number | "all";
   };
   lastSyncedAt?: Date;
+  // UIDVALIDITY of the synced mailbox, as a string (IMAP sends a bigint).
+  uidValidity?: string;
   connectionOverride?: {
     incoming?: {
       host: string;

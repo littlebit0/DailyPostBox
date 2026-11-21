@@ -52,19 +52,24 @@ export class ImapReceiver implements MailReceiver {
     account: MailAccount,
     mailbox: string,
     limit: number | "all",
-    onBatch: (messages: IncomingMessageSummary[]) => Promise<void>
+    onBatch: (messages: IncomingMessageSummary[]) => Promise<void>,
+    // Runs on the fetching connection before any message is read; it may
+    // return a new limit (a fresh import after the numbering changed).
+    onMailboxOpened?: (uidValidity: string) => Promise<number | "all" | undefined>
   ): Promise<void> {
     const initial = await this.withConnectionRetry(async () => {
       return this.withConnectedClient(account, async (client) => {
         const openedMailbox = await client.mailboxOpen(mailbox, {
           readOnly: true
         });
+        const effectiveLimit =
+          (await onMailboxOpened?.(String(openedMailbox.uidValidity))) ?? limit;
         const uids = await this.searchLatestUids(
           client,
           openedMailbox.exists,
-          limit
+          effectiveLimit
         );
-        const batches = newestFirstUidBatches(uids, limit);
+        const batches = newestFirstUidBatches(uids, effectiveLimit);
         const firstUids = batches.at(0);
 
         return {

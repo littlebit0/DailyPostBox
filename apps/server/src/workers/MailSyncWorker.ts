@@ -87,13 +87,13 @@ export class MailSyncWorker {
 
   private async performSync(account: MailAccount, token: object): Promise<void> {
     const isCurrent = () => this.syncTokens.get(account.id) === token;
-    const limit = this.initialSyncLimit(account);
     account.syncStatus = "syncing";
     account.syncError = undefined;
     account.syncErrorCode = undefined;
     await this.accounts.updateAccount(account);
 
     try {
+      const limit = this.initialSyncLimit(account);
       if (limit !== 0) {
         if (account.incomingProtocol === "imap") {
           await this.imap.fetchLatestBatches(
@@ -106,7 +106,8 @@ export class MailSyncWorker {
                   this.handleIncoming(account, message, false)
                 )
               );
-            }
+            },
+            (uidValidity) => this.reconcileUidValidity(account, uidValidity)
           );
         } else {
           const messages = await this.pop3.fetchLatest(
@@ -262,6 +263,26 @@ export class MailSyncWorker {
         error: error instanceof Error ? error.message : String(error)
       });
     });
+  }
+
+  // Saved UIDs point at other messages once the mailbox's UIDVALIDITY
+  // changes, so the account's mail is dropped and imported again with the
+  // account's initial import choice. The limit is derived from the account
+  // on every call, so a connection retry after the reset keeps that choice.
+  private async reconcileUidValidity(
+    account: MailAccount,
+    current: string
+  ): Promise<number | "all"> {
+    if (account.uidValidity !== current) {
+      if (account.uidValidity !== undefined) {
+        console.warn("imap:uidvalidity-changed", { accountId: account.id });
+        await this.accounts.deleteMessages(account.id);
+        account.lastSyncedAt = undefined;
+      }
+      account.uidValidity = current;
+      await this.accounts.updateAccount(account);
+    }
+    return this.initialSyncLimit(account);
   }
 
   private initialSyncLimit(account: MailAccount): number | "all" | 0 {
