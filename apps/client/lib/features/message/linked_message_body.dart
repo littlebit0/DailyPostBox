@@ -74,7 +74,7 @@ class _LinkedMessageBodyState extends State<LinkedMessageBody> {
   }
 
   Future<void> _openLink(Uri uri) async {
-    final launcher = widget.linkLauncher ?? _launchExternalLink;
+    final launcher = widget.linkLauncher ?? launchMessageLink;
     await launcher(uri);
   }
 
@@ -357,6 +357,6 @@ void _addPlainText(List<MessageBodySegment> segments, String text) {
   segments.add(MessageBodySegment(text: text));
 }
 
-Future<bool> _launchExternalLink(Uri uri) {
+Future<bool> launchMessageLink(Uri uri) {
   return launchUrl(uri, mode: LaunchMode.externalApplication);
 }

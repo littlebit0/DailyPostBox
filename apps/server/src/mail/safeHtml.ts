@@ -1,0 +1,167 @@
+import { DomUtils, parseDocument } from "htmlparser2";
+
+// domhandler is only a transitive dependency, so derive its types here.
+type ChildNode = ReturnType<typeof parseDocument>["children"][number];
+type Element = Parameters<typeof DomUtils.getName>[0];
+
+export interface SafeHtmlResult {
+  html: string;
+  /** Number of remote (http/https) images removed or, with allowRemoteImages, kept. */
+  remoteImageCount: number;
+}
+
+export interface SafeHtmlOptions {
+  allowRemoteImages?: boolean;
+}
+
+const allowedTags = new Set([
+  "a", "abbr", "b", "big", "blockquote", "br", "caption", "center", "code",
+  "col", "colgroup", "dd", "div", "dl", "dt", "em", "font", "h1", "h2", "h3",
+  "h4", "h5", "h6", "hr", "i", "img", "li", "ol", "p", "pre", "s", "small",
+  "span", "strike", "strong", "sub", "sup", "table", "tbody", "td", "tfoot",
+  "th", "thead", "tr", "u", "ul"
+]);
+// Dropped together with their contents; every other unknown tag is unwrapped.
+const droppedTags = new Set([
+  "script", "style", "iframe", "frame", "frameset", "object", "embed", "applet",
+  "noscript", "template", "textarea", "select", "option", "svg", "math", "head",
+  "title", "link", "meta", "base", "audio", "video", "canvas", "map", "xml"
+]);
+const voidTags = new Set(["br", "hr", "img", "col"]);
+const globalAttrs = new Set(["title", "dir", "lang", "align", "valign"]);
+const tagAttrs: Record<string, Set<string>> = {
+  td: new Set(["colspan", "rowspan", "width", "height", "bgcolor"]),
+  th: new Set(["colspan", "rowspan", "width", "height", "bgcolor"]),
+  table: new Set(["width", "height", "bgcolor", "cellpadding", "cellspacing", "border"]),
+  col: new Set(["span", "width"]),
+  font: new Set(["color", "size", "face"]),
+  img: new Set(["alt", "width", "height"])
+};
+const allowedStyleProps = new Set([
+  "color", "background-color", "font-size", "font-weight", "font-style",
+  "font-family", "text-align", "text-decoration", "line-height", "margin",
+  "margin-top", "margin-bottom", "margin-left", "margin-right", "padding",
+  "padding-top", "padding-bottom", "padding-left", "padding-right", "width",
+  "height", "max-width", "vertical-align", "white-space", "letter-spacing",
+  "text-transform", "border", "border-top", "border-bottom", "border-left",
+  "border-right", "border-collapse", "border-radius"
+]);
+const dataImagePattern = /^data:image\/(?:png|gif|jpe?g|webp);base64,[a-z0-9+/=\s]+$/i;
+const safeAttrValue = /^[\w\s#%.,:/()\-+]*$/;
+const maxDepth = 100;
+
+export function sanitizeHtml(
+  source: string,
+  options: SafeHtmlOptions = {}
+): SafeHtmlResult {
+  const state = { remoteImageCount: 0, allowRemote: options.allowRemoteImages === true };
+  const html = serializeNodes(parseDocument(source).children, state, 0);
+  return { html, remoteImageCount: state.remoteImageCount };
+}
+
+interface State {
+  remoteImageCount: number;
+  allowRemote: boolean;
+}
+
+function serializeNodes(nodes: ChildNode[], state: State, depth: number): string {
+  if (depth > maxDepth) return "";
+  let out = "";
+  for (const node of nodes) {
+    if (DomUtils.isText(node)) {
+      out += escapeText(node.data);
+    } else if (DomUtils.isTag(node)) {
+      out += serializeElement(node, state, depth);
+    }
+    // comments, directives, CDATA and processing instructions are dropped.
+  }
+  return out;
+}
+
+function serializeElement(el: Element, state: State, depth: number): string {
+  const name = el.name.toLowerCase();
+  if (droppedTags.has(name)) return "";
+  if (name === "img") return serializeImage(el, state);
+  if (!allowedTags.has(name)) return serializeNodes(el.children, state, depth + 1);
+
+  const attrs = serializeAttributes(name, el.attribs);
+  if (voidTags.has(name)) return `<${name}${attrs}>`;
+  return `<${name}${attrs}>${serializeNodes(el.children, state, depth + 1)}</${name}>`;
+}
+
+function serializeImage(el: Element, state: State): string {
+  const src = (el.attribs.src ?? "").trim();
+  const alt = el.attribs.alt ?? "";
+  if (dataImagePattern.test(src)) {
+    return `<img src="${escapeAttr(src)}"${serializeAttributes("img", el.attribs)}>`;
+  }
+  if (/^(?:https?:)?\/\//i.test(src)) {
+    state.remoteImageCount += 1;
+    if (state.allowRemote && /^https?:\/\//i.test(src)) {
+      return `<img src="${escapeAttr(src)}"${serializeAttributes("img", el.attribs)}>`;
+    }
+  }
+  // Blocked, cid: and unknown sources: keep only the alt text.
+  return escapeText(alt);
+}
+
+function serializeAttributes(tag: string, attribs: Record<string, string>): string {
+  let out = "";
+  const tagSet = tagAttrs[tag];
+  for (const [rawKey, value] of Object.entries(attribs)) {
+    const key = rawKey.toLowerCase();
+    if (key === "style") {
+      const style = sanitizeStyle(value);
+      if (style) out += ` style="${escapeAttr(style)}"`;
+    } else if (key === "href" && tag === "a") {
+      const href = safeHref(value);
+      if (href) out += ` href="${escapeAttr(href)}"`;
+    } else if (
+      (globalAttrs.has(key) || tagSet?.has(key)) &&
+      !(tag === "img" && key === "src") &&
+      value.length <= 200 &&
+      (key === "title" || key === "alt" || key === "face" || safeAttrValue.test(value))
+    ) {
+      out += ` ${key}="${escapeAttr(value)}"`;
+    }
+  }
+  return out;
+}
+
+function safeHref(value: string): string | null {
+  // Strip control chars/whitespace browsers ignore inside schemes ("java\tscript:").
+  const candidate = value.replace(/[\u0000- \u007f-\u009f]/g, "");
+  if (!candidate || candidate.length > 8192) return null;
+  try {
+    const url = new URL(candidate);
+    const scheme = url.protocol.toLowerCase();
+    if (scheme !== "http:" && scheme !== "https:" && scheme !== "mailto:") return null;
+    if (scheme !== "mailto:" && !url.host) return null;
+    return candidate;
+  } catch {
+    return null;
+  }
+}
+
+function sanitizeStyle(style: string): string {
+  const kept: string[] = [];
+  for (const declaration of style.split(";")) {
+    const index = declaration.indexOf(":");
+    if (index < 0) continue;
+    const prop = declaration.slice(0, index).trim().toLowerCase();
+    const value = declaration.slice(index + 1).trim();
+    if (!allowedStyleProps.has(prop) || !value) continue;
+    // No url(), expression(), escapes, comments or at-rules in any value.
+    if (/url\s*\(|expression|[\\@]|\/\*|javascript|behavior|<|>|\bimage\b/i.test(value)) continue;
+    kept.push(`${prop}:${value}`);
+  }
+  return kept.join(";");
+}
+
+function escapeText(value: string): string {
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function escapeAttr(value: string): string {
+  return escapeText(value).replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}

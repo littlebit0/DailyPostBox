@@ -12,6 +12,7 @@ import type {
   ProviderId
 } from "../domain/types.js";
 import type { AccountRepository } from "../workers/AccountRepository.js";
+import { sanitizeHtml } from "../mail/safeHtml.js";
 import { providerRegistry } from "../providers/providerRegistry.js";
 import {
   applySyncFailure,
@@ -302,7 +303,8 @@ export async function registerRoutes(
       receivedAt: message.receivedAt.toISOString(),
       body: content.text,
       bodyTruncated: content.truncated,
-      bodyLinks: content.links
+      bodyLinks: content.links,
+      ...safeHtmlFields(content, request.query)
     };
   });
 
@@ -334,7 +336,8 @@ export async function registerRoutes(
       receivedAt: message.receivedAt.toISOString(),
       body: content.text,
       bodyTruncated: content.truncated,
-      bodyLinks: content.links
+      bodyLinks: content.links,
+      ...safeHtmlFields(content, request.query)
     };
   });
 
@@ -365,6 +368,15 @@ export async function registerRoutes(
 
 // The mail server's own reply (never the secret) tells IMAP from SMTP
 // rejections apart; Naver also needs IMAP enabled and an app password.
+// Remote images stay blocked unless the client asks with ?remoteImages=allow.
+function safeHtmlFields(content: IncomingMessageContent, query: unknown) {
+  if (!content.html) return { html: "", remoteImageCount: 0 };
+  const allowRemoteImages =
+    (query as { remoteImages?: unknown } | null)?.remoteImages === "allow";
+  const { html, remoteImageCount } = sanitizeHtml(content.html, { allowRemoteImages });
+  return { html: html.trim() ? html : "", remoteImageCount };
+}
+
 function credentialFailureMessage(account: MailAccount, error: unknown): string {
   const detail = error as { responseText?: unknown; response?: unknown };
   const serverReply = typeof detail.responseText === "string"

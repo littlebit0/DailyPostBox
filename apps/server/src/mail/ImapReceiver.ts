@@ -125,6 +125,7 @@ export class ImapReceiver implements MailReceiver {
       const bodyParts = selectBodyParts(message.bodyStructure);
       let htmlFallback: IncomingMessageContent | null = null;
       let htmlLinks: IncomingMessageLink[] = [];
+      let rawHtml: string | undefined;
 
       for (const bodyPart of bodyParts) {
         const download = await client.download(
@@ -141,10 +142,11 @@ export class ImapReceiver implements MailReceiver {
 
         if (bodyPart.type.toLowerCase() !== "text/html") {
           const text = cleanMessageText(decoded);
-          if (text) return { text, truncated, links: htmlLinks };
+          if (text) return { text, truncated, links: htmlLinks, html: rawHtml };
           continue;
         }
 
+        rawHtml ??= decoded;
         htmlLinks = mergeMessageLinks(
           htmlLinks,
           extractMessageLinks(decoded)
@@ -167,7 +169,8 @@ export class ImapReceiver implements MailReceiver {
           htmlFallback = {
             text,
             truncated,
-            links: htmlLinks
+            links: htmlLinks,
+            html: rawHtml
           };
         }
       }

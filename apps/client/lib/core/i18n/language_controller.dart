@@ -136,6 +136,9 @@ class AppStrings {
       : 'The new password is checked before saving. Stored mail and settings are kept.';
   String get reconnectSucceeded =>
       _ko ? '다시 연결했습니다. 메일을 가져오는 중입니다.' : 'Reconnected. Fetching mail now.';
+  String remoteImagesBlocked(int count) =>
+      _ko ? '원격 이미지 $count개 차단됨' : '$count remote images blocked';
+  String get showImagesOnce => _ko ? '이번만 보기' : 'Show this time';
   String get messageLoadFailedTitle =>
       _ko ? '메일 본문을 불러오지 못했습니다' : 'Could not open this message';
   String syncFailure(String? code, String? error) {
