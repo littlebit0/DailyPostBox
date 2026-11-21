@@ -13,11 +13,16 @@ export interface MailSyncWorkerOptions {
   mailbox: string;
   imapReconnectBaseDelayMs: number;
   imapReconnectMaxDelayMs: number;
+  /** Pause between thread-metadata backfill batches (default 250). */
+  backfillYieldMs?: number;
 }
 
 export class MailSyncWorker {
+  private static readonly backfillBatch = 50;
   private readonly stopHandlers = new Map<string, () => Promise<void>>();
   private readonly pollingTimers = new Map<string, NodeJS.Timeout>();
+  // accountId -> running backfill; stopAccount/stop drop the token to cancel it.
+  private readonly backfills = new Map<string, { token: object; done: Promise<void>; saving?: Promise<unknown> }>();
   private readonly syncPromises = new Map<string, Promise<void>>();
   // stopAccount drops the token so a sync still running with replaced
   // credentials cannot overwrite the status of the restarted sync.
@@ -122,6 +127,10 @@ export class MailSyncWorker {
         }
       }
 
+      if (account.incomingProtocol === "imap" && isCurrent()) {
+        this.startBackfill(account);
+      }
+
       if (!isCurrent()) return;
       account.syncStatus = "idle";
       account.lastSyncedAt = new Date();
@@ -135,6 +144,9 @@ export class MailSyncWorker {
   }
 
   async stop(): Promise<void> {
+    const saving = [...this.backfills.values()].map((b) => b.saving);
+    this.backfills.clear();
+    await Promise.all(saving);
     for (const timer of this.pollingTimers.values()) clearInterval(timer);
     this.pollingTimers.clear();
 
@@ -147,6 +159,10 @@ export class MailSyncWorker {
   async stopAccount(accountId: string): Promise<void> {
     this.syncPromises.delete(accountId);
     this.syncTokens.delete(accountId);
+    const backfill = this.backfills.get(accountId);
+    this.backfills.delete(accountId);
+    // Wait for the batch save already issued so nothing is written after the caller deletes the account.
+    await backfill?.saving?.catch(() => undefined);
 
     const timer = this.pollingTimers.get(accountId);
     if (timer) {
@@ -262,6 +278,95 @@ export class MailSyncWorker {
         error: error instanceof Error ? error.message : String(error)
       });
     });
+  }
+
+  /** Resolves when the account's background backfill (if any) has ended. */
+  async backfillSettled(accountId: string): Promise<void> {
+    await this.backfills.get(accountId)?.done;
+  }
+
+  // Messages stored before threading existed have no header metadata and the
+  // 25-message sync never revisits them. Backfill runs in the background in
+  // 50-message batches until none is left. Progress is the stored metadata
+  // itself (a message the server no longer has gets `references: []`), so a
+  // restart or the next sync simply continues with what is still missing.
+  private startBackfill(account: MailAccount): void {
+    if (this.backfills.has(account.id)) return;
+    const token = {};
+    const entry: { token: object; done: Promise<void>; saving?: Promise<unknown> } = {
+      token,
+      done: Promise.resolve()
+    };
+    this.backfills.set(account.id, entry);
+    entry.done = this.backfillThreadMetadata(account, token, entry)
+      .catch((error) => {
+        console.warn("imap:backfill-stopped", {
+          accountId: account.id,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      })
+      .then(async () => {
+        if (this.backfills.get(account.id)?.token !== token || !account.threadBackfill) return;
+        // Tell clients the backfill ended so they reload the list once more.
+        account.threadBackfill = undefined;
+        await this.accounts.updateAccount(account).catch(() => undefined);
+      })
+      .finally(() => {
+        if (this.backfills.get(account.id)?.token === token) {
+          this.backfills.delete(account.id);
+        }
+      });
+  }
+
+  private async backfillThreadMetadata(
+    account: MailAccount,
+    token: object,
+    entry: { saving?: Promise<unknown> }
+  ): Promise<void> {
+    const active = () => this.backfills.get(account.id)?.token === token;
+    const pending = (await this.accounts.listInbox(account.userId))
+      .filter((message) =>
+        message.accountId === account.id &&
+        message.messageId === undefined &&
+        message.gmailThreadId === undefined &&
+        message.references === undefined &&
+        /^\d+$/.test(message.providerMessageId));
+
+    const byMailbox = new Map<string, typeof pending>();
+    for (const message of pending) {
+      const group = byMailbox.get(message.mailbox);
+      if (group) group.push(message);
+      else byMailbox.set(message.mailbox, [message]);
+    }
+    if (pending.length === 0 || !active()) return;
+    account.threadBackfill = "running";
+    await this.accounts.updateAccount(account);
+    for (const [mailbox, stored] of byMailbox) {
+      for (let i = 0; i < stored.length; i += MailSyncWorker.backfillBatch) {
+        // Yield first so sync and other accounts are not starved.
+        await new Promise((resolve) => setTimeout(resolve, this.options.backfillYieldMs ?? 250));
+        if (!active()) return;
+        const batch = stored.slice(i, i + MailSyncWorker.backfillBatch);
+        const fetched = new Map(
+          (await this.imap.fetchSummariesByUid(
+            account, mailbox, batch.map((m) => Number(m.providerMessageId))
+          )).map((m) => [m.providerMessageId, m])
+        );
+        if (!active()) return;
+        // Concurrent saves share one coalesced file write instead of one per message.
+        entry.saving = Promise.all(batch.map((message) => {
+          const found = fetched.get(message.providerMessageId);
+          return this.accounts.saveIncomingMessage({
+            ...message,
+            messageId: found?.messageId,
+            inReplyTo: found?.inReplyTo,
+            references: found?.references ?? [],
+            gmailThreadId: found?.gmailThreadId
+          });
+        }));
+        await entry.saving;
+      }
+    }
   }
 
   private initialSyncLimit(account: MailAccount): number | "all" | 0 {

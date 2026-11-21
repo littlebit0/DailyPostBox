@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../features/accounts/account_mailbox_page.dart';
 import '../features/accounts/accounts_page.dart';
+import '../features/accounts/thread_page.dart';
 import '../features/message/compose_page.dart';
 import '../features/message/message_page.dart';
 import '../features/settings/settings_page.dart';
@@ -29,6 +30,17 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           state: state,
           child: AccountMailboxPage(
             accountId: state.pathParameters['accountId']!,
+          ),
+        ),
+      ),
+      GoRoute(
+        path: '/accounts/:accountId/threads/:threadId',
+        pageBuilder: (context, state) => _verticalPage(
+          state: state,
+          disableTransition: true,
+          child: ThreadPage(
+            accountId: state.pathParameters['accountId']!,
+            threadId: state.pathParameters['threadId']!,
           ),
         ),
       ),

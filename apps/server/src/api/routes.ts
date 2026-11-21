@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { MailSender } from "../mail/MailSender.js";
+import { withThreadInfo } from "../mail/threading.js";
 import type {
   AuthMode,
   IncomingMessageContent,
@@ -265,8 +266,30 @@ export async function registerRoutes(
     }
 
     const messages = await deps.accounts.listInbox(demoUserId);
-    return messages
-      .filter((message) => message.accountId === params.id)
+    return withThreadInfo(
+      messages.filter((message) => message.accountId === params.id)
+    ).map((message) => ({
+        ...message,
+        id: message.providerMessageId,
+        receivedAt: message.receivedAt.toISOString()
+      }));
+  });
+
+  app.get("/accounts/:id/threads/:threadId", async (request, reply) => {
+    const params = z.object({ id: z.string(), threadId: z.string() })
+      .parse(request.params);
+    const account = await deps.accounts.getAccount(params.id);
+
+    if (!account || account.userId !== demoUserId) {
+      return reply.code(404).send({ error: "Account not found" });
+    }
+
+    const messages = await deps.accounts.listInbox(demoUserId);
+    return withThreadInfo(
+      messages.filter((message) => message.accountId === params.id)
+    )
+      .filter((message) => message.threadId === params.threadId)
+      .sort((a, b) => a.receivedAt.getTime() - b.receivedAt.getTime())
       .map((message) => ({
         ...message,
         id: message.providerMessageId,

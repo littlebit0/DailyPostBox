@@ -18,6 +18,7 @@ import {
 } from "./imapSequenceRanges.js";
 import { isAuthenticationFailure } from "./authenticationFailure.js";
 import { extractMessageLinks } from "./messageLinks.js";
+import { MAX_HEADER_BYTES, boundMessageId, parseMessageIds } from "./threading.js";
 
 export class ImapReceiver implements MailReceiver {
   private static readonly maxBodyBytes = 2 * 1024 * 1024;
@@ -101,6 +102,21 @@ export class ImapReceiver implements MailReceiver {
         await onBatch(batch);
       }
     }
+  }
+
+  /** Re-reads headers of already stored messages (one connection, one mailbox). */
+  async fetchSummariesByUid(
+    account: MailAccount,
+    mailbox: string,
+    uids: number[]
+  ): Promise<IncomingMessageSummary[]> {
+    if (uids.length === 0) return [];
+    return this.withConnectionRetry(() =>
+      this.withConnectedClient(account, async (client) => {
+        await client.mailboxOpen(mailbox, { readOnly: true });
+        return this.fetchUids(client, account, mailbox, uids);
+      })
+    );
   }
 
   async fetchMessageContent(
@@ -299,7 +315,9 @@ export class ImapReceiver implements MailReceiver {
     for await (const message of client.fetch(uids, {
       envelope: true,
       flags: true,
-      uid: true
+      uid: true,
+      threadId: true,
+      headers: ["references"]
     }, { uid: true })) {
       const summary = toIncomingMessage(account, mailbox, message);
       if (summary) batch.push(summary);
@@ -340,7 +358,13 @@ function toIncomingMessage(
     from: envelope.from?.map((item) => item.address).filter(Boolean).join(", ") ?? "",
     subject: envelope.subject ?? "",
     receivedAt: envelope.date instanceof Date ? envelope.date : new Date(),
-    hasAttachments: false
+    hasAttachments: false,
+    messageId: boundMessageId(envelope.messageId),
+    inReplyTo: boundMessageId(envelope.inReplyTo),
+    references: parseMessageIds(
+      message.headers?.subarray(0, MAX_HEADER_BYTES).toString("utf8")
+    ),
+    gmailThreadId: message.threadId
   };
 }
 

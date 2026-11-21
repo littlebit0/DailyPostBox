@@ -208,6 +208,12 @@ class AppStrings {
   String get pushNotificationsDescription => _ko
       ? '새 IMAP 메일은 서버 푸시를 통해 즉시 전달됩니다.'
       : 'New IMAP messages are delivered immediately through server push.';
+  String get threadView => _ko ? '대화 보기' : 'Conversation view';
+  String get threadViewDescription => _ko
+      ? '같은 대화의 메일을 한 줄로 묶어 보여줍니다.'
+      : 'Group mail from the same conversation into one row.';
+  String get thread => _ko ? '대화' : 'Conversation';
+  String threadMessageCount(int count) => _ko ? '$count통' : '$count';
   String get registerThisDevice => _ko ? '이 기기 등록' : 'Register this device';
   String get registerThisDeviceDescription => _ko
       ? '플랫폼 푸시 토큰을 메일 서버에 등록합니다.'

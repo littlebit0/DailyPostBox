@@ -59,6 +59,19 @@ class MailApiClient {
         .toList();
   }
 
+  Future<List<MailSummary>> fetchThread(
+    String accountId,
+    String threadId,
+  ) async {
+    final response = await _dio.get<List<dynamic>>(
+      '/accounts/$accountId/threads/${Uri.encodeComponent(threadId)}',
+    );
+    final data = response.data ?? [];
+    return data
+        .map((item) => MailSummary.fromJson(item as Map<String, dynamic>))
+        .toList();
+  }
+
   Future<List<MailAccountSummary>> fetchAccounts() async {
     final response = await _dio.get<List<dynamic>>('/accounts');
     final data = response.data ?? [];
@@ -259,6 +272,8 @@ class MailSummary {
     required this.snippet,
     required this.receivedAtLabel,
     required this.unread,
+    this.threadId,
+    this.threadCount = 1,
   });
 
   final String id;
@@ -267,6 +282,8 @@ class MailSummary {
   final String snippet;
   final String receivedAtLabel;
   final bool unread;
+  final String? threadId;
+  final int threadCount;
 
   factory MailSummary.fromJson(Map<String, dynamic> json) {
     return MailSummary(
@@ -276,8 +293,20 @@ class MailSummary {
       snippet: json['snippet'] as String? ?? '',
       receivedAtLabel: _formatReceivedAt(json['receivedAt'] as String?),
       unread: true,
+      threadId: json['threadId'] as String?,
+      threadCount: json['threadCount'] as int? ?? 1,
     );
   }
+}
+
+/// Keeps the first (newest) message of each thread. Mail without a thread id
+/// stays as its own row.
+List<MailSummary> groupByThread(List<MailSummary> items) {
+  final seen = <String>{};
+  return [
+    for (final item in items)
+      if (item.threadId == null || seen.add(item.threadId!)) item,
+  ];
 }
 
 class MessageDetail {
@@ -338,6 +367,7 @@ class MailAccountSummary {
     this.syncErrorCode,
     required this.initialSync,
     required this.lastSyncedAtLabel,
+    this.threadBackfilling = false,
   });
 
   final String id;
@@ -350,6 +380,8 @@ class MailAccountSummary {
   final String? syncErrorCode;
   final InitialSyncOption? initialSync;
   final String lastSyncedAtLabel;
+  // Server is still filling thread metadata for older messages.
+  final bool threadBackfilling;
 
   factory MailAccountSummary.fromJson(Map<String, dynamic> json) {
     return MailAccountSummary(
@@ -366,6 +398,7 @@ class MailAccountSummary {
               json['initialSync'] as Map<String, dynamic>)
           : null,
       lastSyncedAtLabel: _formatReceivedAt(json['lastSyncedAt'] as String?),
+      threadBackfilling: json['threadBackfill'] == 'running',
     );
   }
 }
