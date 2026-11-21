@@ -6,7 +6,8 @@ import type {
   IncomingMessageContent,
   IncomingMessageLink,
   IncomingMessageSummary,
-  MailAccount
+  MailAccount,
+  MessageFlagChange
 } from "../domain/types.js";
 import { getProvider } from "../providers/providerRegistry.js";
 import { resolveIncomingSettings } from "../providers/resolveConnectionSettings.js";
@@ -179,6 +180,26 @@ export class ImapReceiver implements MailReceiver {
     }
   }
 
+  async setFlags(
+    account: MailAccount,
+    mailbox: string,
+    providerMessageId: string,
+    change: MessageFlagChange
+  ): Promise<void> {
+    await this.withConnectedClient(account, async (client) => {
+      await client.mailboxOpen(mailbox);
+      const options = { uid: true };
+      for (const [flag, value] of [
+        ["\\Seen", change.seen],
+        ["\\Flagged", change.flagged]
+      ] as const) {
+        if (value === undefined) continue;
+        const apply = value ? client.messageFlagsAdd : client.messageFlagsRemove;
+        await apply.call(client, providerMessageId, [flag], options);
+      }
+    });
+  }
+
   async watch(
     account: MailAccount,
     mailbox: string,
@@ -340,7 +361,9 @@ function toIncomingMessage(
     from: envelope.from?.map((item) => item.address).filter(Boolean).join(", ") ?? "",
     subject: envelope.subject ?? "",
     receivedAt: envelope.date instanceof Date ? envelope.date : new Date(),
-    hasAttachments: false
+    hasAttachments: false,
+    seen: message.flags?.has("\\Seen") ?? false,
+    flagged: message.flags?.has("\\Flagged") ?? false
   };
 }
 
