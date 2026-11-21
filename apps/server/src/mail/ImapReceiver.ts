@@ -18,6 +18,7 @@ import {
 } from "./imapSequenceRanges.js";
 import { isAuthenticationFailure } from "./authenticationFailure.js";
 import { extractMessageLinks } from "./messageLinks.js";
+import { detectImapCapabilities } from "./imapCapabilities.js";
 
 export class ImapReceiver implements MailReceiver {
   private static readonly maxBodyBytes = 2 * 1024 * 1024;
@@ -31,6 +32,7 @@ export class ImapReceiver implements MailReceiver {
     const client = await this.createClient(account);
     try {
       await client.connect();
+      this.recordCapabilities(account, client);
     } finally {
       await client.logout().catch(() => undefined);
     }
@@ -208,6 +210,7 @@ export class ImapReceiver implements MailReceiver {
 
     try {
       await client.connect();
+      this.recordCapabilities(account, client);
       await client.mailboxOpen(mailbox);
     } catch (error) {
       stopped = true;
@@ -266,6 +269,14 @@ export class ImapReceiver implements MailReceiver {
     return client;
   }
 
+  // Callers persist the account, so the result survives restarts.
+  private recordCapabilities(account: MailAccount, client: ImapFlow): void {
+    const detected = detectImapCapabilities(client.capabilities);
+    // watch() refuses providers without supportsIdle, so "idle" means IDLE is actually used.
+    detected.idle &&= getProvider(account.providerId).incoming.supportsIdle;
+    account.incomingCapabilities = detected;
+  }
+
   private async withConnectedClient<T>(
     account: MailAccount,
     operation: (client: ImapFlow) => Promise<T>
@@ -273,6 +284,7 @@ export class ImapReceiver implements MailReceiver {
     const client = await this.createClient(account);
     try {
       await client.connect();
+      this.recordCapabilities(account, client);
       return await operation(client);
     } finally {
       await client.logout().catch(() => undefined);

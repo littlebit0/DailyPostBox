@@ -136,6 +136,43 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
+  testWidgets('shows the receive mode from IMAP capabilities',
+      (WidgetTester tester) async {
+    final json = {
+      'id': 'a',
+      'providerId': 'naver',
+      'emailAddress': 'a@example.com',
+      'incomingProtocol': 'imap',
+    };
+    final polling = MailAccountSummary.fromJson({
+      ...json,
+      'incomingCapabilities': {
+        'idle': false,
+        'checkedAt': '2020-01-01T00:00:00Z'
+      },
+    });
+    final unknown = MailAccountSummary.fromJson(json);
+    expect(polling.idleSupported, isFalse);
+    expect(unknown.idleSupported, isNull);
+
+    await tester.binding.setSurfaceSize(const Size(1200, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          accountsProvider.overrideWith((ref) async => [polling]),
+          providersProvider.overrideWith((ref) async => const []),
+        ],
+        child: const DailyPostBoxApp(),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('계정관리').first);
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('주기 확인'), findsOneWidget);
+  });
+
   testWidgets('keeps the syncing mailbox when an account refresh fails',
       (WidgetTester tester) async {
     const account = MailAccountSummary(
