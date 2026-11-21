@@ -24,7 +24,8 @@ class ComposePage extends ConsumerStatefulWidget {
 }
 
 class _ComposePageState extends ConsumerState<ComposePage> {
-  final _toKey = GlobalKey<RecipientFieldState>();
+  final _toAddresses = <String>[];
+  final _toController = TextEditingController();
   final _subjectController = TextEditingController();
   final _bodyController = TextEditingController();
   String? _accountId;
@@ -37,6 +38,7 @@ class _ComposePageState extends ConsumerState<ComposePage> {
 
   @override
   void dispose() {
+    _toController.dispose();
     _subjectController.dispose();
     _bodyController.dispose();
     super.dispose();
@@ -94,11 +96,11 @@ class _ComposePageState extends ConsumerState<ComposePage> {
                   ),
                   const SizedBox(height: 12),
                   RecipientField(
-                    key: _toKey,
                     label: strings.to,
                     errorText: strings.invalidRecipient,
                     suggest: ref.read(mailApiClientProvider).suggestContacts,
-                    onChanged: (_) {},
+                    addresses: _toAddresses,
+                    controller: _toController,
                   ),
                   const SizedBox(height: 12),
                   TextField(
@@ -137,10 +139,10 @@ class _ComposePageState extends ConsumerState<ComposePage> {
     final accountId = _accountId;
     if (accountId == null) return;
 
-    final field = _toKey.currentState;
-    final to = field?.commitPending() ?? const <String>[];
+    if (commitRecipientText(_toAddresses, _toController)) setState(() {});
+    final to = List<String>.unmodifiable(_toAddresses);
     final strings = ref.read(appStringsProvider);
-    if (to.isEmpty || field!.hasInvalid) {
+    if (to.isEmpty || hasInvalidRecipient(to)) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Text(to.isEmpty
             ? strings.recipientRequired
