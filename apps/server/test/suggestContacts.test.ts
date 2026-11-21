@@ -39,3 +39,16 @@ test("empty query, empty from and limit", () => {
   const many = Array.from({ length: 5 }, (_, i) => message(`u${i}@example.test`, i + 1));
   assert.equal(suggestContacts(many, "u", 3).length, 3);
 });
+
+test("excludes non-repliable addresses but keeps normal ones", () => {
+  const blocked = [
+    "no_reply@email.apple.com", "noreply@x.test", "NoReply+tag@x.test", "no-reply@x.test",
+    "do.not.reply@x.test", "donotreply@x.test", "do-not-reply@x.test", "notreply@x.test",
+    "Mailer-Daemon@x.test", "postmaster@x.test", "bounce@x.test", "bounces+abc123@x.test"
+  ];
+  const result = suggestContacts(
+    [...blocked.map((from, i) => message(from, i + 1)), message("ann@example.test", 1), message("replyguy@x.test", 2)],
+    "@"
+  );
+  assert.deepEqual(result.map((item) => item.address).sort(), ["ann@example.test", "replyguy@x.test"]);
+});
