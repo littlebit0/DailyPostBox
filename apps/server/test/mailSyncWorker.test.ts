@@ -457,3 +457,14 @@ test("polling keeps the opt-out from importing previous mail", async () => {
     await syncWorker.stop();
   }
 });
+
+test("stopping unknown accounts keeps no per-account state", async () => {
+  const repository = new InMemoryAccountRepository();
+  const syncWorker = worker(repository, {});
+  for (let index = 0; index < 100; index += 1) {
+    await syncWorker.stopAccount(`unknown-${index}`);
+  }
+  const pending = (syncWorker as unknown as { pendingStarts: Map<string, object> }).pendingStarts;
+  assert.equal(pending.size, 0);
+  await syncWorker.stop();
+});

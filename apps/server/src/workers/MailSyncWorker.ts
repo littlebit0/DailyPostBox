@@ -23,9 +23,9 @@ export class MailSyncWorker {
   // stopAccount drops the token so a sync still running with replaced
   // credentials cannot overwrite the status of the restarted sync.
   private readonly syncTokens = new Map<string, object>();
-  // Bumped by stopAccount so a start still awaiting its first sync does not
-  // install a polling timer for a stopped or deleted account.
-  private readonly stopCounts = new Map<string, number>();
+  // Held only while a start awaits its first sync; stopAccount removes it so
+  // that start installs no polling timer for a stopped or deleted account.
+  private readonly pendingStarts = new Map<string, object>();
 
   constructor(
     private readonly accounts: AccountRepository,
@@ -55,10 +55,12 @@ export class MailSyncWorker {
       return;
     }
 
-    const stopCount = this.stopCounts.get(account.id) ?? 0;
+    const start = {};
+    this.pendingStarts.set(account.id, start);
     await this.syncAccount(account).catch(() => undefined);
-    if (this.pollingTimers.has(account.id) ||
-      (this.stopCounts.get(account.id) ?? 0) !== stopCount) {
+    const stillWanted = this.pendingStarts.get(account.id) === start;
+    if (stillWanted) this.pendingStarts.delete(account.id);
+    if (!stillWanted || this.pollingTimers.has(account.id)) {
       return;
     }
 
@@ -167,7 +169,7 @@ export class MailSyncWorker {
   }
 
   async stopAccount(accountId: string): Promise<void> {
-    this.stopCounts.set(accountId, (this.stopCounts.get(accountId) ?? 0) + 1);
+    this.pendingStarts.delete(accountId);
     this.syncPromises.delete(accountId);
     this.syncTokens.delete(accountId);
 
