@@ -55,7 +55,7 @@ export class SendQueue {
   constructor(
     private readonly sender: MailSender,
     private readonly onError: (error: unknown) => void = () => undefined,
-    private readonly retainMs = 60_000,
+    private readonly retainMs = 10 * 60_000, // >= client polling horizon (5 min)
     limits: Partial<SendQueueLimits> = {}
   ) {
     this.limits = { ...defaultSendQueueLimits, ...limits };

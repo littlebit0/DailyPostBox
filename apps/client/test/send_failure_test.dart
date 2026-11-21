@@ -56,4 +56,37 @@ void main() {
     expect(find.text('Hello'), findsOneWidget);
     expect(find.text('Body text'), findsOneWidget);
   });
+
+  test('keeps polling past 10 tries while still sending, until failure', () async {
+    final api = _PollApi([
+      for (var i = 0; i < 25; i++) const SendOutcome(status: 'sending'),
+      const SendOutcome(status: 'failed', error: 'late', draft: _draft),
+    ]);
+    final outcome = await awaitSendOutcome(api, receipt,
+        interval: tick, maxInterval: tick, maxWait: const Duration(seconds: 5));
+    expect(outcome?.error, 'late');
+    expect(api.calls, 26);
+  });
+
+  test('gives up after maxWait while still pending', () async {
+    final api = _PollApi([const SendOutcome(status: 'pending')]);
+    expect(
+        await awaitSendOutcome(api, receipt,
+            interval: tick, maxInterval: tick, maxWait: const Duration(milliseconds: 20)),
+        isNull);
+  });
+
+  testWidgets('recovery draft replaces an already-open composer via new key', (tester) async {
+    Widget app(Widget page) => ProviderScope(
+          overrides: [composeAccountsProvider.overrideWith((ref) async => const [])],
+          child: MaterialApp(home: page),
+        );
+    await tester.pumpWidget(app(const ComposePage()));
+    await tester.pump();
+    expect(find.text('Hello'), findsNothing);
+    await tester.pumpWidget(app(ComposePage(key: ObjectKey(_draft), initialDraft: _draft)));
+    await tester.pump();
+    expect(find.text('Hello'), findsOneWidget);
+    expect(find.text('Body text'), findsOneWidget);
+  });
 }

@@ -212,23 +212,29 @@ Future<void> _reportFailure(
   ));
 }
 
-/// Waits out the undo window, then polls a few times. Returns the outcome only when the send failed.
+/// Waits out the undo window, then polls with backoff while the send is pending/sending, up to [maxWait].
+/// Returns the outcome only when the send failed.
 Future<SendOutcome?> awaitSendOutcome(
   MailApiClient client,
   SendReceipt receipt, {
   Duration interval = const Duration(seconds: 2),
-  int attempts = 10,
+  Duration maxInterval = const Duration(seconds: 15),
+  Duration maxWait = const Duration(minutes: 5),
 }) async {
   if (receipt.remaining > Duration.zero) await Future<void>.delayed(receipt.remaining);
-  for (var i = 0; i < attempts; i++) {
-    await Future<void>.delayed(interval);
+  var waited = Duration.zero;
+  var delay = interval;
+  while (waited < maxWait) {
+    await Future<void>.delayed(delay);
+    waited += delay;
     try {
       final outcome = await client.fetchSendOutcome(receipt.id);
       if (outcome.status == 'failed') return outcome;
       if (outcome.status == 'sent' || outcome.status == 'cancelled') return null;
     } catch (_) {
-      // Transient error or expired entry: try again, then give up quietly.
+      // Transient error or expired entry: keep trying until maxWait.
     }
+    delay = delay * 2 > maxInterval ? maxInterval : delay * 2;
   }
   return null;
 }

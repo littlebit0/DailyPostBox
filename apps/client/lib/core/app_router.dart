@@ -49,6 +49,8 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         pageBuilder: (context, state) => _verticalPage(
           state: state,
           child: ComposePage(
+            // A recovered draft gets its own page state so an open composer is not reused or clobbered.
+            key: state.extra is ComposeDraft ? ObjectKey(state.extra) : null,
             initialAccountId: state.pathParameters['accountId'],
             initialDraft: state.extra as ComposeDraft?,
           ),
