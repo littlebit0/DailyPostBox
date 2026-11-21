@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:daily_postbox/features/accounts/accounts_page.dart';
 import 'package:daily_postbox/features/message/linked_message_body.dart';
 import 'package:daily_postbox/main.dart';
+import 'package:daily_postbox/services/badge_service.dart';
 import 'package:daily_postbox/services/mail_api_client.dart';
 
 void main() {
@@ -490,6 +491,48 @@ void main() {
     await tester.pump();
 
     expect(openedUri, Uri.parse(url));
+  });
+
+  test('unread count sums unread messages across accounts', () async {
+    MailAccountSummary account(String id) => MailAccountSummary(
+      id: id,
+      providerId: 'gmail',
+      emailAddress: '$id@example.com',
+      incomingProtocol: 'imap',
+      authMode: 'oauth2',
+      syncStatus: 'idle',
+      syncError: null,
+      initialSync: InitialSyncOption.recommended,
+      lastSyncedAtLabel: 'now',
+    );
+    MailSummary mail(String id, bool unread) => MailSummary(
+      id: id,
+      sender: 's',
+      subject: 's',
+      snippet: '',
+      receivedAtLabel: '',
+      unread: unread,
+    );
+    final container = ProviderContainer(
+      overrides: [
+        accountsProvider.overrideWith(
+          (ref) async => [account('a'), account('b')],
+        ),
+        accountMessagesProvider(
+          'a',
+        ).overrideWith((ref) async => [mail('1', true), mail('2', false)]),
+        accountMessagesProvider(
+          'b',
+        ).overrideWith((ref) async => [mail('3', true)]),
+      ],
+    );
+    addTearDown(container.dispose);
+    container.listen(unreadCountProvider, (_, __) {});
+    await container.read(accountsProvider.future);
+    await container.read(accountMessagesProvider('a').future);
+    await container.read(accountMessagesProvider('b').future);
+
+    expect(container.read(unreadCountProvider), 2);
   });
 
   test('merges word boxes into one continuous underline per line', () {
