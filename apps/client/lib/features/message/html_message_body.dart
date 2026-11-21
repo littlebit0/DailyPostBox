@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:html/dom.dart' as dom;
 import 'package:html/parser.dart' as html_parser;
 
+import 'bounded_network_image.dart';
 import 'linked_message_body.dart';
 
 /// Renders HTML that the server already sanitized with an allow-list.
@@ -824,7 +825,7 @@ class _Renderer {
       // shortcut: animated images are bounded per frame only; cap frames later.
       image = Image(
         image: ResizeImage(
-          NetworkImage(src),
+          BoundedNetworkImage(src),
           width: _maxImageDecode,
           height: _maxImageDecode,
           policy: ResizeImagePolicy.fit,
