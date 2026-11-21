@@ -1,10 +1,24 @@
+import 'dart:io';
+
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:path_provider/path_provider.dart';
+
+import 'mail_cache.dart';
+
+final mailCacheProvider = Provider<MailCache>((ref) {
+  return MailCache(() async =>
+      Directory('${(await getApplicationSupportDirectory()).path}/mail_cache'));
+});
 
 final mailApiClientProvider = Provider<MailApiClient>((ref) {
+  final offline = ref.read(offlineSinceProvider.notifier);
   return MailApiClient(
     baseUrl: resolveMailApiBaseUrl(),
+    cache: ref.watch(mailCacheProvider),
+    // Deferred so it never mutates provider state during a build.
+    onCacheState: (savedAt) => Future.microtask(() => offline.state = savedAt),
   );
 });
 
@@ -31,37 +45,62 @@ bool isMailApiConnectionError(Object error) {
 }
 
 class MailApiClient {
-  MailApiClient({required String baseUrl})
-      : _dio = Dio(
-          BaseOptions(
-            baseUrl: baseUrl,
-            connectTimeout: const Duration(seconds: 10),
-            receiveTimeout: const Duration(seconds: 30),
-          ),
-        );
+  MailApiClient({
+    required String baseUrl,
+    Dio? dio,
+    this.cache,
+    this.onCacheState,
+  }) : _dio = dio ??
+            Dio(
+              BaseOptions(
+                baseUrl: baseUrl,
+                connectTimeout: const Duration(seconds: 10),
+                receiveTimeout: const Duration(seconds: 30),
+              ),
+            );
 
   final Dio _dio;
+  final MailCache? cache;
+
+  /// Called after each cacheable read: the cache time when the server was
+  /// unreachable and cached data was returned, null after a live response.
+  final void Function(DateTime? cachedAt)? onCacheState;
+
+  /// GET [path] and cache the body. When the server is unreachable, return the
+  /// last cached body for the same path, or rethrow if none exists.
+  Future<T?> _getCached<T>(String path) async {
+    try {
+      final response = await _dio.get<T>(path);
+      onCacheState?.call(null);
+      await cache?.write(path, response.data);
+      return response.data;
+    } catch (error) {
+      if (!isMailApiConnectionError(error)) rethrow;
+      final cached = await cache?.read(path);
+      final data = cached?.data;
+      if (data is! T) rethrow;
+      onCacheState?.call(cached!.savedAt);
+      return data;
+    }
+  }
 
   Future<List<MailSummary>> fetchInbox() async {
-    final response = await _dio.get<List<dynamic>>('/mail/inbox');
-    final data = response.data ?? [];
+    final data = await _getCached<List<dynamic>>('/mail/inbox') ?? [];
     return data
         .map((item) => MailSummary.fromJson(item as Map<String, dynamic>))
         .toList();
   }
 
   Future<List<MailSummary>> fetchAccountMessages(String accountId) async {
-    final response =
-        await _dio.get<List<dynamic>>('/accounts/$accountId/messages');
-    final data = response.data ?? [];
+    final data =
+        await _getCached<List<dynamic>>('/accounts/$accountId/messages') ?? [];
     return data
         .map((item) => MailSummary.fromJson(item as Map<String, dynamic>))
         .toList();
   }
 
   Future<List<MailAccountSummary>> fetchAccounts() async {
-    final response = await _dio.get<List<dynamic>>('/accounts');
-    final data = response.data ?? [];
+    final data = await _getCached<List<dynamic>>('/accounts') ?? [];
     return data
         .map(
             (item) => MailAccountSummary.fromJson(item as Map<String, dynamic>))
@@ -78,19 +117,19 @@ class MailApiClient {
   }
 
   Future<MessageDetail> fetchMessage(String messageId) async {
-    final response =
-        await _dio.get<Map<String, dynamic>>('/mail/messages/$messageId');
-    return MessageDetail.fromJson(response.data ?? {});
+    final data =
+        await _getCached<Map<String, dynamic>>('/mail/messages/$messageId');
+    return MessageDetail.fromJson(data ?? {});
   }
 
   Future<MessageDetail> fetchAccountMessage({
     required String accountId,
     required String messageId,
   }) async {
-    final response = await _dio.get<Map<String, dynamic>>(
+    final data = await _getCached<Map<String, dynamic>>(
       '/accounts/$accountId/messages/$messageId',
     );
-    return MessageDetail.fromJson(response.data ?? {});
+    return MessageDetail.fromJson(data ?? {});
   }
 
   Future<void> addAccount({
@@ -178,6 +217,7 @@ class MailApiClient {
 
   Future<void> deleteAccount(String accountId) async {
     await _dio.delete('/accounts/$accountId');
+    await cache?.clearAccount(accountId);
   }
 
   Future<void> registerPushToken({
