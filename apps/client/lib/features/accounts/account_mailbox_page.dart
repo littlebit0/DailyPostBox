@@ -74,6 +74,12 @@ class _MailboxContentState extends ConsumerState<_MailboxContent> {
   @override
   void didUpdateWidget(covariant _MailboxContent oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.account.id != widget.account.id) {
+      // Search results belong to the previous account; their UIDs are not
+      // valid for the newly selected one.
+      _searchController.clear();
+      _search = null;
+    }
     final wasSyncing = const {
       'syncing',
       'validating',
