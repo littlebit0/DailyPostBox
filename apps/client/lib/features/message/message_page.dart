@@ -80,6 +80,7 @@ class MessagePage extends ConsumerWidget {
                 Text('${strings.from}: ${item.sender}'),
                 Text(item.receivedAtLabel),
                 const Divider(height: 32),
+                if (item.invite != null) _InviteCard(invite: item.invite!),
                 LinkedMessageBody(body: item.body, links: item.links),
               ],
             ),
@@ -99,6 +100,35 @@ class MessagePage extends ConsumerWidget {
     return AppShell(
       selectedDestinationId: AppShell.accountDestinationId(selectedAccountId),
       child: content,
+    );
+  }
+}
+
+class _InviteCard extends ConsumerWidget {
+  const _InviteCard({required this.invite});
+
+  final CalendarInvite invite;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final strings = ref.watch(appStringsProvider);
+    final location = invite.location;
+    final organizer = invite.organizer;
+    return Card(
+      margin: const EdgeInsets.only(bottom: 24),
+      child: ListTile(
+        leading: const Icon(Icons.event),
+        title: Text(
+          invite.summary.isEmpty ? strings.calendarInvite : invite.summary,
+        ),
+        subtitle: Text([
+          invite.timeLabel,
+          if (invite.recurring) strings.inviteRecurring,
+          if (location != null) location,
+          if (organizer != null) strings.inviteOrganizer(organizer),
+        ].join('\n')),
+        isThreeLine: true,
+      ),
     );
   }
 }

@@ -5,10 +5,62 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:daily_postbox/features/accounts/accounts_page.dart';
 import 'package:daily_postbox/features/message/linked_message_body.dart';
+import 'package:daily_postbox/features/message/message_page.dart';
 import 'package:daily_postbox/main.dart';
 import 'package:daily_postbox/services/mail_api_client.dart';
 
 void main() {
+  testWidgets('shows a calendar invite card on the message page',
+      (WidgetTester tester) async {
+    await tester.binding.setSurfaceSize(const Size(1200, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          messageProvider.overrideWith(
+            (ref, request) async => const MessageDetail(
+              id: '1',
+              sender: 'a@example.test',
+              subject: 'Invite',
+              body: 'Join us',
+              links: [],
+              receivedAtLabel: 'now',
+              invite: CalendarInvite(
+                summary: 'Design review',
+                start: '2026-12-01T09:00:00',
+                end: '2026-12-01T10:00:00',
+                location: 'Room 1',
+                organizer: 'Kim',
+              ),
+            ),
+          ),
+        ],
+        child: const MaterialApp(home: MessagePage(messageId: '1')),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Design review'), findsOneWidget);
+    expect(find.textContaining('2026-12-01 09:00 ~ 10:00'), findsOneWidget);
+    expect(find.textContaining('Room 1'), findsOneWidget);
+  });
+
+  test('formats calendar invite times', () {
+    final invite = CalendarInvite.fromJson({
+      'summary': 'Sync',
+      'start': '2026-12-01T09:00:00',
+      'end': '2026-12-01T10:30:00',
+    });
+    expect(invite.timeLabel, '2026-12-01 09:00 ~ 10:30');
+
+    const allDay = CalendarInvite(
+      summary: 'Holiday',
+      start: '2026-12-25',
+      allDay: true,
+    );
+    expect(allDay.timeLabel, '2026-12-25');
+  });
+
   testWidgets('renders mail app shell', (WidgetTester tester) async {
     await tester.pumpWidget(
       ProviderScope(

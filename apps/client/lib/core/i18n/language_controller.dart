@@ -138,6 +138,10 @@ class AppStrings {
       _ko ? '다시 연결했습니다. 메일을 가져오는 중입니다.' : 'Reconnected. Fetching mail now.';
   String get messageLoadFailedTitle =>
       _ko ? '메일 본문을 불러오지 못했습니다' : 'Could not open this message';
+  String get calendarInvite => _ko ? '일정 초대' : 'Calendar invite';
+  String get inviteRecurring => _ko ? '반복 일정' : 'Recurring event';
+  String inviteOrganizer(String name) =>
+      _ko ? '초대한 사람: $name' : 'Organizer: $name';
   String syncFailure(String? code, String? error) {
     if (code == 'authentication') {
       return _ko
