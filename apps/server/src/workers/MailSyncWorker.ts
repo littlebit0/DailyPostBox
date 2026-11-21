@@ -101,10 +101,14 @@ export class MailSyncWorker {
     const isCurrent = () => this.syncTokens.get(account.id) === token;
     const limit = this.initialSyncLimit(account);
     // Polled accounts have no IDLE watcher to notify them, so new mail found
-    // after the first import is announced here; imported history is not.
-    const notify = account.lastSyncedAt !== undefined &&
+    // after the first import is announced here. Older mail a later poll
+    // reaches for the first time (beyond a small first import) is history:
+    // only mail that reached the server after the account was added counts.
+    const polled = account.lastSyncedAt !== undefined &&
       account.incomingProtocol === "imap" &&
       !supportsImapIdle(account);
+    const notifies = (message: IncomingMessageSummary) =>
+      polled && (message.arrivedAt ?? message.receivedAt) >= account.createdAt;
     // An account that opted out of previous mail keeps only mail that
     // reached the server after it was added. The server's arrival time is
     // used, not the sender's Date header, so delayed new mail is kept.
@@ -127,7 +131,7 @@ export class MailSyncWorker {
             async (messages) => {
               await Promise.all(
                 messages.filter(isWanted).map((message) =>
-                  this.handleIncoming(account, message, notify)
+                  this.handleIncoming(account, message, notifies(message))
                 )
               );
             }

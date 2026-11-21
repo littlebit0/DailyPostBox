@@ -468,3 +468,63 @@ test("stopping unknown accounts keeps no per-account state", async () => {
   assert.equal(pending.size, 0);
   await syncWorker.stop();
 });
+
+test("history first reached by a later poll sends no notification", async () => {
+  const repository = new InMemoryAccountRepository();
+  const mailAccount = customAccount();
+  mailAccount.lastSyncedAt = undefined;
+  mailAccount.initialSync = { includePreviousMessages: true, limit: 1 };
+  mailAccount.createdAt = new Date("2026-11-22T00:00:00Z");
+  await repository.addAccount(mailAccount);
+  await repository.savePushTarget({ userId: "demo-user", platform: "macos", deviceToken: "token" });
+  const message = (uid: string, arrivedAt: string): IncomingMessageSummary => ({
+    accountId: mailAccount.id,
+    providerMessageId: uid,
+    mailbox: "INBOX",
+    from: "a@example.com",
+    subject: uid,
+    receivedAt: new Date(arrivedAt),
+    arrivedAt: new Date(arrivedAt),
+    hasAttachments: false
+  });
+  let fetches = 0;
+  const notified: string[] = [];
+  const imap = {
+    watch: async () => async () => undefined,
+    fetchLatestBatches: async (
+      _account: MailAccount,
+      _mailbox: string,
+      _limit: unknown,
+      onBatch: (messages: IncomingMessageSummary[]) => Promise<void>
+    ) => {
+      fetches += 1;
+      await onBatch(fetches === 1
+        ? [message("3", "2026-11-21T10:00:00Z")]
+        : [
+            message("1", "2026-11-20T10:00:00Z"),
+            message("2", "2026-11-21T09:00:00Z"),
+            message("3", "2026-11-21T10:00:00Z"),
+            message("4", "2026-11-22T01:00:00Z")
+          ]);
+    }
+  };
+  const syncWorker = new MailSyncWorker(
+    repository,
+    imap as unknown as ImapReceiver,
+    {} as Pop3Receiver,
+    {
+      notifyNewMessage: async (_targets, item) => {
+        notified.push(item.providerMessageId);
+      }
+    },
+    { mailbox: "INBOX", pop3PollIntervalMs: 60_000, imapReconnectBaseDelayMs: 1, imapReconnectMaxDelayMs: 1 }
+  );
+
+  try {
+    await syncWorker.syncAccount(mailAccount);
+    await syncWorker.syncAccount(mailAccount);
+    assert.deepEqual(notified, ["4"]);
+  } finally {
+    await syncWorker.stop();
+  }
+});
