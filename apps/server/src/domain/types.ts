@@ -75,6 +75,13 @@ export interface IncomingMessageSummary {
   snippet?: string;
   receivedAt: Date;
   hasAttachments: boolean;
+  seen?: boolean;
+  flagged?: boolean;
+}
+
+export interface MessageFlagChange {
+  seen?: boolean;
+  flagged?: boolean;
 }
 
 export interface IncomingMessageContent {

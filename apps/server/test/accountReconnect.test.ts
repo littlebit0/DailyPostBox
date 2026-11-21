@@ -42,6 +42,7 @@ async function setup(account: MailAccount) {
         throw authenticationFailure("Authentication failed.");
       }
     },
+    setMessageFlags: async () => undefined,
     startAccountSync: async () => {
       calls.push("start");
     },

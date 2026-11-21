@@ -1,7 +1,8 @@
 import type {
   IncomingMessageContent,
   IncomingMessageSummary,
-  MailAccount
+  MailAccount,
+  MessageFlagChange
 } from "../domain/types.js";
 
 export interface MailReceiver {
@@ -16,6 +17,12 @@ export interface MailReceiver {
     mailbox: string,
     providerMessageId: string
   ): Promise<IncomingMessageContent>;
+  setFlags?(
+    account: MailAccount,
+    mailbox: string,
+    providerMessageId: string,
+    change: MessageFlagChange
+  ): Promise<void>;
   watch?(
     account: MailAccount,
     mailbox: string,

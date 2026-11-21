@@ -7,6 +7,7 @@ import type {
   IncomingMessageContent,
   IncomingMessageSummary,
   MailAccount,
+  MessageFlagChange,
   MailProtocol,
   OutgoingMessageDraft,
   ProviderId
@@ -83,6 +84,11 @@ export async function registerRoutes(
       account: MailAccount,
       message: IncomingMessageSummary
     ) => Promise<IncomingMessageContent>;
+    setMessageFlags: (
+      account: MailAccount,
+      message: IncomingMessageSummary,
+      change: MessageFlagChange
+    ) => Promise<void>;
     startAccountSync: (account: MailAccount) => Promise<void>;
     resumeAccountSync: (account: MailAccount) => Promise<void>;
     stopAccountSync: (accountId: string) => Promise<void>;
@@ -270,7 +276,8 @@ export async function registerRoutes(
       .map((message) => ({
         ...message,
         id: message.providerMessageId,
-        receivedAt: message.receivedAt.toISOString()
+        receivedAt: message.receivedAt.toISOString(),
+        ...flagState(message)
       }));
   });
 
@@ -300,10 +307,46 @@ export async function registerRoutes(
       ...message,
       id: message.providerMessageId,
       receivedAt: message.receivedAt.toISOString(),
+      ...flagState(message),
       body: content.text,
       bodyTruncated: content.truncated,
       bodyLinks: content.links
     };
+  });
+
+  app.post("/accounts/:accountId/messages/:messageId/flags", async (request, reply) => {
+    const params = z.object({
+      accountId: z.string(),
+      messageId: z.string()
+    }).parse(request.params);
+    const change = z.object({
+      seen: z.boolean().optional(),
+      flagged: z.boolean().optional()
+    }).refine((value) => value.seen !== undefined || value.flagged !== undefined, {
+      message: "seen or flagged is required."
+    }).parse(request.body);
+    const account = await deps.accounts.getAccount(params.accountId);
+
+    if (!account || account.userId !== demoUserId) {
+      return reply.code(404).send({ error: "Account not found" });
+    }
+    const messages = await deps.accounts.listInbox(demoUserId);
+    const message = messages.find(
+      (item) => item.accountId === params.accountId &&
+        item.providerMessageId === params.messageId
+    );
+    if (!message) {
+      return reply.code(404).send({ error: "Message not found" });
+    }
+
+    // Server first: the local copy only changes once the mail server accepted it.
+    await deps.setMessageFlags(account, message, change);
+    await deps.accounts.updateMessageFlags(
+      params.accountId,
+      params.messageId,
+      change
+    );
+    return flagState({ ...message, ...change });
   });
 
   app.get("/mail/inbox", async () => {
@@ -311,7 +354,8 @@ export async function registerRoutes(
     return messages.map((message) => ({
       ...message,
       id: message.providerMessageId,
-      receivedAt: message.receivedAt.toISOString()
+      receivedAt: message.receivedAt.toISOString(),
+      ...flagState(message)
     }));
   });
 
@@ -332,6 +376,7 @@ export async function registerRoutes(
       ...message,
       id: message.providerMessageId,
       receivedAt: message.receivedAt.toISOString(),
+      ...flagState(message),
       body: content.text,
       bodyTruncated: content.truncated,
       bodyLinks: content.links
@@ -380,4 +425,8 @@ function credentialFailureMessage(account: MailAccount, error: unknown): string 
   }
   if (serverReply) parts.push(`(${serverReply})`);
   return parts.join(" ");
+}
+
+function flagState(message: IncomingMessageSummary) {
+  return { seen: message.seen ?? false, flagged: message.flagged ?? false };
 }

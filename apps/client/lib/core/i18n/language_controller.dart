@@ -46,6 +46,13 @@ class AppStrings {
   String get message => _ko ? '메일' : 'Message';
   String get reply => _ko ? '답장' : 'Reply';
   String get archive => _ko ? '보관' : 'Archive';
+  String get markUnread => _ko ? '읽지 않음으로 표시' : 'Mark as unread';
+  String get markRead => _ko ? '읽음으로 표시' : 'Mark as read';
+  String get addStar => _ko ? '별표 표시' : 'Add star';
+  String get removeStar => _ko ? '별표 해제' : 'Remove star';
+  String get flagUpdateFailed => _ko
+      ? '메일 상태를 서버에 반영하지 못했습니다.'
+      : 'Could not update the message on the server.';
   String get back => _ko ? '뒤로' : 'Back';
   String get from => _ko ? '보낸 사람' : 'From';
   String get to => _ko ? '받는 사람' : 'To';

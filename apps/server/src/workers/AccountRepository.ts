@@ -1,6 +1,6 @@
 import type { MailAccount } from "../domain/types.js";
 import type { PushTarget } from "../notifications/PushNotifier.js";
-import type { IncomingMessageSummary } from "../domain/types.js";
+import type { IncomingMessageSummary, MessageFlagChange } from "../domain/types.js";
 
 export interface AccountRepository {
   listActiveAccounts(): Promise<MailAccount[]>;
@@ -14,6 +14,11 @@ export interface AccountRepository {
   listInbox(userId: string): Promise<IncomingMessageSummary[]>;
   getMessage(userId: string, messageId: string): Promise<IncomingMessageSummary | undefined>;
   saveIncomingMessage(message: IncomingMessageSummary): Promise<boolean>;
+  updateMessageFlags(
+    accountId: string,
+    providerMessageId: string,
+    change: MessageFlagChange
+  ): Promise<void>;
 }
 
 export class InMemoryAccountRepository implements AccountRepository {
@@ -101,5 +106,15 @@ export class InMemoryAccountRepository implements AccountRepository {
     const isNew = !this.messages.has(key);
     this.messages.set(key, message);
     return isNew;
+  }
+
+  async updateMessageFlags(
+    accountId: string,
+    providerMessageId: string,
+    change: MessageFlagChange
+  ): Promise<void> {
+    const key = `${accountId}:${providerMessageId}`;
+    const message = this.messages.get(key);
+    if (message) this.messages.set(key, { ...message, ...change });
   }
 }
