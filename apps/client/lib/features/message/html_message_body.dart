@@ -69,10 +69,15 @@ class _HtmlMessageBodyState extends State<HtmlMessageBody> {
       recognizers: _recognizers,
     );
     const base = TextStyle(color: Colors.black87, fontSize: 15, height: 1.45);
-    _content = Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: renderer.children(body.nodes, base, Colors.white),
-    );
+    try {
+      _content = Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: renderer.children(body.nodes, base, Colors.white),
+      );
+    } on _WorkBudgetExceeded {
+      _disposeRecognizers();
+      _content = Text(body.text ?? '');
+    }
   }
 
   @override
@@ -98,6 +103,15 @@ const maxHtmlElements = 5000;
 /// Largest colspan/rowspan honored, and rows x columns budget per table.
 const maxHtmlSpan = 50;
 const maxHtmlTableSlots = 10000;
+
+/// Style attribute caps (same as the server) and total render work budget.
+const maxHtmlStyleLength = 1024;
+const maxHtmlStyleDeclarations = 32;
+const maxHtmlWork = 100000;
+
+class _WorkBudgetExceeded implements Exception {
+  const _WorkBudgetExceeded();
+}
 
 int _countElements(dom.Node root) {
   var count = 0;
@@ -145,6 +159,35 @@ class _Renderer {
   final void Function(Uri uri) onLink;
   final List<TapGestureRecognizer> recognizers;
 
+  final _declCache = <dom.Element, List<(String, String)>>{};
+  final _whiteSpaceCache = <dom.Element, String>{};
+  int _work = 0;
+
+  /// Counts work units; past [maxHtmlWork] the caller falls back to text.
+  void _tick() {
+    if (++_work > maxHtmlWork) throw const _WorkBudgetExceeded();
+  }
+
+  /// Style declarations of an element, parsed once and capped in size.
+  List<(String, String)> _decls(dom.Element el) => _declCache[el] ??= () {
+        final raw = el.attributes['style'] ?? '';
+        final out = <(String, String)>[];
+        final parts = raw
+            .substring(0, math.min(raw.length, maxHtmlStyleLength))
+            .split(';');
+        for (final declaration in parts) {
+          _tick();
+          if (out.length >= maxHtmlStyleDeclarations) break;
+          final index = declaration.indexOf(':');
+          if (index < 0) continue;
+          out.add((
+            declaration.substring(0, index).trim().toLowerCase(),
+            declaration.substring(index + 1).trim().toLowerCase(),
+          ));
+        }
+        return out;
+      }();
+
   /// [bg] is the background actually painted behind the content: the nearest
   /// widget/decoration color passed down, overridden for text by an inline
   /// `TextStyle.backgroundColor`.
@@ -175,6 +218,7 @@ class _Renderer {
     }
 
     for (final node in nodes) {
+      _tick();
       if (node is dom.Element && node.localName == 'a' && _hasBlock(node)) {
         // Keep block structure inside a link and hand the tap down to it.
         flush();
@@ -490,13 +534,8 @@ class _Renderer {
   /// `bgcolor` attribute or inline `background-color` of a table element.
   Color? _background(dom.Element el) {
     Color? color = _color(el.attributes['bgcolor']);
-    for (final declaration in (el.attributes['style'] ?? '').split(';')) {
-      final index = declaration.indexOf(':');
-      if (index < 0) continue;
-      if (declaration.substring(0, index).trim().toLowerCase() ==
-          'background-color') {
-        color = _color(declaration.substring(index + 1)) ?? color;
-      }
+    for (final (prop, value) in _decls(el)) {
+      if (prop == 'background-color') color = _color(value) ?? color;
     }
     return color;
   }
@@ -601,27 +640,27 @@ class _Renderer {
     }
   }
 
-  /// Collapses whitespace unless an ancestor is `<pre>` or `white-space: pre*`.
-  String _collapse(dom.Text node) {
-    var keepAll = false;
-    var keepBreaks = false;
-    for (dom.Element? e = node.parent; e != null; e = e.parent) {
-      var mode = e.localName == 'pre' ? 'pre' : null;
-      for (final declaration in (e.attributes['style'] ?? '').split(';')) {
-        final index = declaration.indexOf(':');
-        if (index > 0 &&
-            declaration.substring(0, index).trim().toLowerCase() ==
-                'white-space') {
-          mode = declaration.substring(index + 1).trim().toLowerCase();
+  /// Whitespace mode of an element, inherited and computed once per element.
+  String _whiteSpace(dom.Element el) => _whiteSpaceCache[el] ??= () {
+        var mode = el.localName == 'pre' ? 'pre' : null;
+        for (final (prop, value) in _decls(el)) {
+          if (prop == 'white-space') mode = value;
         }
-      }
-      if (mode == null) continue;
-      keepAll = mode == 'pre' || mode == 'pre-wrap' || mode == 'break-spaces';
-      keepBreaks = mode == 'pre-line';
-      break;
+        final parent = el.parent;
+        return mode ?? (parent == null ? 'normal' : _whiteSpace(parent));
+      }();
+
+  /// Collapses whitespace unless the element is `<pre>` or `white-space: pre*`.
+  String _collapse(dom.Text node) {
+    _tick();
+    final parent = node.parent;
+    final mode = parent == null ? 'normal' : _whiteSpace(parent);
+    if (mode == 'pre' || mode == 'pre-wrap' || mode == 'break-spaces') {
+      return node.text;
     }
-    if (keepAll) return node.text;
-    if (keepBreaks) return node.text.replaceAll(RegExp(r'[ \t\r\f]+'), ' ');
+    if (mode == 'pre-line') {
+      return node.text.replaceAll(RegExp(r'[ \t\r\f]+'), ' ');
+    }
     return node.text.replaceAll(RegExp(r'\s+'), ' ');
   }
 
@@ -723,11 +762,7 @@ class _Renderer {
         if (color != null) style = style.copyWith(color: color);
     }
 
-    for (final declaration in (el.attributes['style'] ?? '').split(';')) {
-      final index = declaration.indexOf(':');
-      if (index < 0) continue;
-      final prop = declaration.substring(0, index).trim().toLowerCase();
-      final value = declaration.substring(index + 1).trim().toLowerCase();
+    for (final (prop, value) in _decls(el)) {
       switch (prop) {
         case 'color':
           final color = _color(value);
@@ -769,11 +804,8 @@ class _Renderer {
   TextAlign? _align(dom.Element el) {
     var value = el.attributes['align']?.toLowerCase();
     if (el.localName == 'center') value = 'center';
-    for (final declaration in (el.attributes['style'] ?? '').split(';')) {
-      final parts = declaration.split(':');
-      if (parts.length == 2 && parts[0].trim().toLowerCase() == 'text-align') {
-        value = parts[1].trim().toLowerCase();
-      }
+    for (final (prop, v) in _decls(el)) {
+      if (prop == 'text-align') value = v;
     }
     return switch (value) {
       'center' => TextAlign.center,

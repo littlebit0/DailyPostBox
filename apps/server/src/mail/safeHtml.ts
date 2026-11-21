@@ -185,9 +185,13 @@ function safeHref(value: string): string | null {
   }
 }
 
+const maxStyleLength = 1024;
+const maxStyleDeclarations = 32;
+
 function sanitizeStyle(style: string): string {
   const kept: string[] = [];
-  for (const declaration of style.split(";")) {
+  // Cap work per attribute: the client walks every declaration.
+  for (const declaration of style.slice(0, maxStyleLength).split(";", maxStyleDeclarations)) {
     const index = declaration.indexOf(":");
     if (index < 0) continue;
     const prop = declaration.slice(0, index).trim().toLowerCase();

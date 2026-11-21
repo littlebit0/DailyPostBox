@@ -153,3 +153,10 @@ test("drops non-numeric or absurd width/height", () => {
   assert.doesNotMatch(r.html, /Infinity|99999999|NaN/);
   assert.match(r.html, /width="120"/);
 });
+
+test("style attributes are capped in length and declaration count", () => {
+  const { html } = clean(`<div style="${"color:red;".repeat(180000)}"><i>x</i></div>`);
+  const style = /style="([^"]*)"/.exec(html)?.[1] ?? "";
+  assert.ok(style.length <= 1024);
+  assert.ok(style.split(";").length <= 32);
+});

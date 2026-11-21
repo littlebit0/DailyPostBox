@@ -510,6 +510,32 @@ void main() {
     expect(leafStyle(tester, 'plain')!.color, const Color(0xFF000000));
   });
 
+  testWidgets('huge style attribute on an ancestor renders quickly', (
+    tester,
+  ) async {
+    final html =
+        '<div style="${'color:red;' * 180000}">${'<i>x</i>' * 4999}</div>';
+    final watch = Stopwatch()..start();
+    await pump(tester, html);
+    expect(watch.elapsedMilliseconds, lessThan(5000));
+    expect(find.byType(HtmlMessageBody), findsOneWidget);
+  });
+
+  testWidgets('style declarations beyond the cap are ignored', (tester) async {
+    await pump(
+      tester,
+      '<p style="${'x:1;' * 32}color:#ff0000">late</p><p style="color:#ff0000">ok</p>',
+    );
+    expect(textColor(tester, 'late'), isNot(const Color(0xFFFF0000)));
+    expect(textColor(tester, 'ok'), const Color(0xFFFF0000));
+  });
+
+  testWidgets('work over budget falls back to plain text', (tester) async {
+    final html = '<p style="${'color:#333;' * 32}">x</p>' * 4000;
+    await pump(tester, html);
+    expect(find.text('x' * 4000), findsOneWidget);
+  });
+
   test('readableTextColor keeps contrasting colors', () {
     expect(readableTextColor(Colors.black87, Colors.white), Colors.black87);
     expect(readableTextColor(Colors.white, Colors.white), Colors.black87);
