@@ -58,7 +58,8 @@ async function setup(account: MailAccount) {
     sender: {} as never,
     fetchMessageContent: async () => {
       throw new Error("unused");
-    }
+    },
+    downloadAttachment: async () => null
   });
   new OAuthAccountFlow(deps).register(app);
   return { app, accounts, calls };

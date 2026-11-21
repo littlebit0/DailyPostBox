@@ -136,6 +136,12 @@ class AppStrings {
       : 'The new password is checked before saving. Stored mail and settings are kept.';
   String get reconnectSucceeded =>
       _ko ? '다시 연결했습니다. 메일을 가져오는 중입니다.' : 'Reconnected. Fetching mail now.';
+  String get attachments => _ko ? '첨부파일' : 'Attachments';
+  String get saveAttachment => _ko ? '저장' : 'Save';
+  String attachmentSaved(String path) =>
+      _ko ? '$path에 저장했습니다' : 'Saved to $path';
+  String get attachmentSaveFailed =>
+      _ko ? '첨부파일을 저장하지 못했습니다' : 'Could not save the attachment';
   String get messageLoadFailedTitle =>
       _ko ? '메일 본문을 불러오지 못했습니다' : 'Could not open this message';
   String syncFailure(String? code, String? error) {

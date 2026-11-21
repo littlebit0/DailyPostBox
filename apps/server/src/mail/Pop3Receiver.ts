@@ -1,4 +1,5 @@
 import type {
+  AttachmentDownload,
   IncomingMessageContent,
   IncomingMessageSummary,
   MailAccount
@@ -35,6 +36,15 @@ export class Pop3Receiver implements MailReceiver {
     _mailbox: string,
     _providerMessageId: string
   ): Promise<IncomingMessageContent> {
-    return { text: "", truncated: false, links: [] };
+    return { text: "", truncated: false, links: [], attachments: [] };
+  }
+
+  async downloadAttachment(
+    _account: MailAccount,
+    _mailbox: string,
+    _providerMessageId: string,
+    _part: string
+  ): Promise<AttachmentDownload | null> {
+    return null;
   }
 }

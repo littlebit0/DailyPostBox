@@ -81,6 +81,22 @@ export interface IncomingMessageContent {
   text: string;
   truncated: boolean;
   links: IncomingMessageLink[];
+  attachments: IncomingMessageAttachment[];
+}
+
+export interface IncomingMessageAttachment {
+  part: string;
+  filename: string;
+  contentType: string;
+  /** Encoded size reported by IMAP, so slightly larger than the file. */
+  size: number;
+}
+
+export interface AttachmentDownload {
+  filename: string;
+  contentType: string;
+  stream: NodeJS.ReadableStream;
+  close: () => Promise<void>;
 }
 
 export interface IncomingMessageLink {
