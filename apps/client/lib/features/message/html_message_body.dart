@@ -113,6 +113,9 @@ const maxHtmlStyleLength = 1024;
 const maxHtmlStyleDeclarations = 32;
 const maxHtmlWork = 100000;
 
+/// Tap recognizers allowed per message.
+const maxHtmlRecognizers = 2000;
+
 /// Remote images rendered per message; extras show alt text only.
 const maxHtmlImages = 20;
 
@@ -279,13 +282,14 @@ class _Renderer {
   /// Detects URLs once over the joined text of an inline run. Anchors, images
   /// and `<br>` count as separators so they never join a URL.
   void _scanRun(List<dom.Node> run) {
-    final texts = <(dom.Text, String)>[];
+    final texts = <(dom.Text, String, int)>[];
     final buffer = StringBuffer();
     void walk(dom.Node node) {
       _tick();
       if (node is dom.Text) {
         final collapsed = _collapse(node);
-        texts.add((node, collapsed));
+        // Separators below shift offsets, so record the real buffer start.
+        texts.add((node, collapsed, buffer.length));
         buffer.write(collapsed);
       } else if (node is dom.Element) {
         if (const {'a', 'img', 'br'}.contains(node.localName)) {
@@ -297,28 +301,37 @@ class _Renderer {
     }
 
     run.forEach(walk);
-    final joined = buffer.toString();
-    final urls = findMessageUrls(joined);
-    final taps = [
-      for (final url in urls)
-        TapGestureRecognizer()..onTap = () => onLink(url.uri),
-    ];
-    recognizers.addAll(taps);
-    var offset = 0;
-    for (final (text, collapsed) in texts) {
+    final urls = findMessageUrls(buffer.toString());
+    _tick(urls.length);
+    final taps = List<TapGestureRecognizer?>.filled(urls.length, null);
+    // URLs are sorted and disjoint, as are the text nodes, so one cursor maps
+    // every range in linear time.
+    var first = 0;
+    for (final (text, collapsed, offset) in texts) {
       final end = offset + collapsed.length;
+      while (first < urls.length && urls[first].end <= offset) {
+        first++;
+      }
       final ranges = <(int, int, TapGestureRecognizer)>[];
-      for (var i = 0; i < urls.length; i++) {
+      for (var i = first; i < urls.length && urls[i].start < end; i++) {
+        _tick();
         final url = urls[i];
-        if (url.end <= offset || url.start >= end) continue;
+        final tap = taps[i] ??= () {
+          _tick();
+          if (recognizers.length >= maxHtmlRecognizers) {
+            throw const _WorkBudgetExceeded();
+          }
+          final created = TapGestureRecognizer()..onTap = () => onLink(url.uri);
+          recognizers.add(created);
+          return created;
+        }();
         ranges.add((
           (url.start - offset).clamp(0, collapsed.length),
           (url.end - offset).clamp(0, collapsed.length),
-          taps[i],
+          tap,
         ));
       }
       _runText[text] = (collapsed, ranges);
-      offset = end;
     }
   }
 
