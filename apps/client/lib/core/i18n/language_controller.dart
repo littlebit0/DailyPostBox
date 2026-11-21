@@ -45,7 +45,6 @@ class AppStrings {
   String get send => _ko ? '보내기' : 'Send';
   String get message => _ko ? '메일' : 'Message';
   String get reply => _ko ? '답장' : 'Reply';
-  String get archive => _ko ? '보관' : 'Archive';
   String get back => _ko ? '뒤로' : 'Back';
   String get from => _ko ? '보낸 사람' : 'From';
   String get to => _ko ? '받는 사람' : 'To';
@@ -204,10 +203,6 @@ class AppStrings {
         'password' => _ko ? '비밀번호' : 'Password',
         _ => mode,
       };
-  String get pushNotifications => _ko ? '푸시 알림' : 'Push notifications';
-  String get pushNotificationsDescription => _ko
-      ? '새 IMAP 메일은 서버 푸시를 통해 즉시 전달됩니다.'
-      : 'New IMAP messages are delivered immediately through server push.';
   String get registerThisDevice => _ko ? '이 기기 등록' : 'Register this device';
   String get registerThisDeviceDescription => _ko
       ? '플랫폼 푸시 토큰을 메일 서버에 등록합니다.'
