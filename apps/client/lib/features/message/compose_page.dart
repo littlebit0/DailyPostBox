@@ -138,6 +138,7 @@ class _ComposePageState extends ConsumerState<ComposePage> {
     final strings = ref.read(appStringsProvider);
     final delay = ref.read(undoSendDelayProvider);
     final messenger = ScaffoldMessenger.of(context);
+    final started = DateTime.now();
     final id = await client.sendMail(
       accountId: accountId,
       to: _toController.text.split(',').map((item) => item.trim()).toList(),
@@ -146,10 +147,14 @@ class _ComposePageState extends ConsumerState<ComposePage> {
       delaySeconds: delay,
     );
 
-    if (delay > 0) {
+    // Server countdown starts at enqueue: show immediately (not behind older snackbars)
+    // and expire against the real send deadline.
+    final remaining = Duration(seconds: delay) - DateTime.now().difference(started);
+    if (delay > 0 && remaining > Duration.zero) {
+      messenger.clearSnackBars();
       messenger.showSnackBar(SnackBar(
         content: Text(strings.mailSending),
-        duration: Duration(seconds: delay),
+        duration: remaining,
         action: SnackBarAction(
           label: strings.undoSend,
           onPressed: () async {

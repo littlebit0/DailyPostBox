@@ -10,6 +10,7 @@ export type SendStatus = "pending" | "sent" | "failed" | "cancelled";
 interface Entry {
   status: SendStatus;
   timer?: NodeJS.Timeout;
+  sending?: Promise<void>;
   run: () => Promise<void>;
 }
 
@@ -27,22 +28,31 @@ export class SendQueue {
     const id = randomUUID();
     const entry: Entry = {
       status: "pending",
-      run: async () => {
-        if (entry.status !== "pending") return;
+      run: () => {
+        // flush() during an in-flight send must await the same promise, never send twice.
+        if (entry.sending) return entry.sending;
+        if (entry.status !== "pending") return Promise.resolve();
         clearTimeout(entry.timer);
         entry.status = "sent";
-        try {
-          await this.sender.send(account, draft);
-        } catch (error) {
-          entry.status = "failed";
-          this.onError(error);
-        }
-        setTimeout(() => this.entries.delete(id), this.retainMs).unref();
+        entry.sending = (async () => {
+          try {
+            await this.sender.send(account, draft);
+          } catch (error) {
+            entry.status = "failed";
+            this.onError(error);
+          }
+          this.expire(id);
+        })();
+        return entry.sending;
       }
     };
     entry.timer = setTimeout(() => void entry.run(), delaySeconds * 1000);
     this.entries.set(id, entry);
     return id;
+  }
+
+  private expire(id: string): void {
+    setTimeout(() => this.entries.delete(id), this.retainMs).unref();
   }
 
   /** Returns undefined for unknown id, otherwise the status after the attempt. */
@@ -52,6 +62,7 @@ export class SendQueue {
     if (entry.status === "pending") {
       clearTimeout(entry.timer);
       entry.status = "cancelled";
+      this.expire(id);
     }
     return entry.status;
   }
