@@ -103,6 +103,11 @@ export class MailSyncWorker {
     const notify = account.lastSyncedAt !== undefined &&
       account.incomingProtocol === "imap" &&
       !supportsImapIdle(account);
+    // An account that opted out of previous mail keeps only mail received
+    // after it was added, even when a later sync looks at older messages.
+    const skipHistory = account.initialSync?.includePreviousMessages === false;
+    const isWanted = (message: IncomingMessageSummary) =>
+      !skipHistory || message.receivedAt >= account.createdAt;
     account.syncStatus = "syncing";
     account.syncError = undefined;
     account.syncErrorCode = undefined;
@@ -117,7 +122,7 @@ export class MailSyncWorker {
             limit,
             async (messages) => {
               await Promise.all(
-                messages.map((message) =>
+                messages.filter(isWanted).map((message) =>
                   this.handleIncoming(account, message, notify)
                 )
               );

@@ -406,3 +406,51 @@ test("an account stopped during its first sync starts no polling", async () => {
     await syncWorker.stop();
   }
 });
+
+test("polling keeps the opt-out from importing previous mail", async () => {
+  const repository = new InMemoryAccountRepository();
+  const mailAccount = customAccount();
+  mailAccount.lastSyncedAt = undefined;
+  mailAccount.initialSync = { includePreviousMessages: false, limit: 100 };
+  mailAccount.createdAt = new Date("2026-11-22T00:00:00Z");
+  await repository.addAccount(mailAccount);
+  const message = (uid: string, receivedAt: string): IncomingMessageSummary => ({
+    accountId: mailAccount.id,
+    providerMessageId: uid,
+    mailbox: "INBOX",
+    from: "a@example.com",
+    subject: uid,
+    receivedAt: new Date(receivedAt),
+    hasAttachments: false
+  });
+  const imap = {
+    watch: async () => async () => undefined,
+    fetchLatestBatches: async (
+      _account: MailAccount,
+      _mailbox: string,
+      _limit: unknown,
+      onBatch: (messages: IncomingMessageSummary[]) => Promise<void>
+    ) => {
+      await onBatch([
+        message("old", "2026-11-01T00:00:00Z"),
+        message("new", "2026-11-22T01:00:00Z")
+      ]);
+    }
+  };
+  const syncWorker = new MailSyncWorker(
+    repository,
+    imap as unknown as ImapReceiver,
+    {} as Pop3Receiver,
+    { notifyNewMessage: async () => undefined },
+    { mailbox: "INBOX", pop3PollIntervalMs: 60_000, imapReconnectBaseDelayMs: 1, imapReconnectMaxDelayMs: 1 }
+  );
+
+  try {
+    await syncWorker.syncAccount(mailAccount);
+    await syncWorker.syncAccount(mailAccount);
+    const saved = (await repository.listInbox("demo-user")).map((item) => item.subject);
+    assert.deepEqual(saved, ["new"]);
+  } finally {
+    await syncWorker.stop();
+  }
+});
