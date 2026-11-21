@@ -302,6 +302,7 @@ export class ImapReceiver implements MailReceiver {
     for await (const message of client.fetch(uids, {
       envelope: true,
       flags: true,
+      internalDate: true,
       uid: true
     }, { uid: true })) {
       const summary = toIncomingMessage(account, mailbox, message);
@@ -343,6 +344,7 @@ function toIncomingMessage(
     from: envelope.from?.map((item) => item.address).filter(Boolean).join(", ") ?? "",
     subject: envelope.subject ?? "",
     receivedAt: envelope.date instanceof Date ? envelope.date : new Date(),
+    arrivedAt: message.internalDate instanceof Date ? message.internalDate : undefined,
     hasAttachments: false
   };
 }

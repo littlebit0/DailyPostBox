@@ -414,13 +414,14 @@ test("polling keeps the opt-out from importing previous mail", async () => {
   mailAccount.initialSync = { includePreviousMessages: false, limit: 100 };
   mailAccount.createdAt = new Date("2026-11-22T00:00:00Z");
   await repository.addAccount(mailAccount);
-  const message = (uid: string, receivedAt: string): IncomingMessageSummary => ({
+  const message = (uid: string, sentAt: string, arrivedAt: string): IncomingMessageSummary => ({
     accountId: mailAccount.id,
     providerMessageId: uid,
     mailbox: "INBOX",
     from: "a@example.com",
     subject: uid,
-    receivedAt: new Date(receivedAt),
+    receivedAt: new Date(sentAt),
+    arrivedAt: new Date(arrivedAt),
     hasAttachments: false
   });
   const imap = {
@@ -432,8 +433,10 @@ test("polling keeps the opt-out from importing previous mail", async () => {
       onBatch: (messages: IncomingMessageSummary[]) => Promise<void>
     ) => {
       await onBatch([
-        message("old", "2026-11-01T00:00:00Z"),
-        message("new", "2026-11-22T01:00:00Z")
+        message("old", "2026-11-01T00:00:00Z", "2026-11-01T00:00:05Z"),
+        // Sent before the account was added but delivered after it.
+        message("delayed", "2026-11-21T23:50:00Z", "2026-11-22T00:30:00Z"),
+        message("new", "2026-11-22T01:00:00Z", "2026-11-22T01:00:05Z")
       ]);
     }
   };
@@ -449,7 +452,7 @@ test("polling keeps the opt-out from importing previous mail", async () => {
     await syncWorker.syncAccount(mailAccount);
     await syncWorker.syncAccount(mailAccount);
     const saved = (await repository.listInbox("demo-user")).map((item) => item.subject);
-    assert.deepEqual(saved, ["new"]);
+    assert.deepEqual(saved, ["new", "delayed"]);
   } finally {
     await syncWorker.stop();
   }

@@ -103,11 +103,13 @@ export class MailSyncWorker {
     const notify = account.lastSyncedAt !== undefined &&
       account.incomingProtocol === "imap" &&
       !supportsImapIdle(account);
-    // An account that opted out of previous mail keeps only mail received
-    // after it was added, even when a later sync looks at older messages.
+    // An account that opted out of previous mail keeps only mail that
+    // reached the server after it was added. The server's arrival time is
+    // used, not the sender's Date header, so delayed new mail is kept.
     const skipHistory = account.initialSync?.includePreviousMessages === false;
     const isWanted = (message: IncomingMessageSummary) =>
-      !skipHistory || message.receivedAt >= account.createdAt;
+      !skipHistory || message.arrivedAt === undefined ||
+      message.arrivedAt >= account.createdAt;
     account.syncStatus = "syncing";
     account.syncError = undefined;
     account.syncErrorCode = undefined;
