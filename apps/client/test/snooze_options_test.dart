@@ -21,4 +21,18 @@ void main() {
       DateTime(2026, 11, 30, 9),
     );
   });
+
+  testWidgets('wake refresh fires after wakeAt', (tester) async {
+    var calls = 0;
+    final now = DateTime(2026, 11, 25, 12);
+    scheduleSnoozeWakeRefresh(
+      now.add(const Duration(hours: 1)),
+      () => calls++,
+      now: now,
+    );
+    await tester.pump(const Duration(hours: 1));
+    expect(calls, 0);
+    await tester.pump(const Duration(seconds: 3));
+    expect(calls, 1);
+  });
 }

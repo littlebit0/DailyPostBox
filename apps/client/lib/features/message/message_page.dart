@@ -174,8 +174,10 @@ extension on MessagePage {
 
     final messenger = ScaffoldMessenger.of(context);
     final router = GoRouter.of(context);
+    // The container outlives this page, so it is safe to use after the await.
+    final container = ProviderScope.containerOf(context);
     try {
-      await ref
+      await container
           .read(mailApiClientProvider)
           .snoozeMessage(
             accountId: accountId,
@@ -186,11 +188,17 @@ extension on MessagePage {
       messenger.showSnackBar(SnackBar(content: Text(strings.snoozeFailed)));
       return;
     }
-    ref.invalidate(accountMessagesProvider(accountId));
-    router.go(
-      '/accounts/$accountId/mail',
-      extra: const {'disableTransition': true},
+    container.invalidate(accountMessagesProvider(accountId));
+    scheduleSnoozeWakeRefresh(
+      wakeAt,
+      () => container.invalidate(accountMessagesProvider(accountId)),
     );
+    if (context.mounted) {
+      router.go(
+        '/accounts/$accountId/mail',
+        extra: const {'disableTransition': true},
+      );
+    }
     final label =
         '${wakeAt.month}/${wakeAt.day} ${wakeAt.hour.toString().padLeft(2, '0')}:${wakeAt.minute.toString().padLeft(2, '0')}';
     messenger.showSnackBar(SnackBar(content: Text(strings.snoozed(label))));

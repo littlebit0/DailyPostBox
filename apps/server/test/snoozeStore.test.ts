@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -94,4 +94,17 @@ test("snoozes longer than the timer limit are re-armed", async () => {
   assert.equal(woken.length, 0);
   await clock.advance(days - (2 ** 31 - 1));
   assert.equal(woken.length, 1);
+});
+
+test("a failed write does not block later writes", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "snooze-"));
+  const blocker = join(dir, "sub");
+  await writeFile(blocker, "x"); // mkdir of the data folder fails while this file exists
+  const clock = new FakeClock();
+  const store = new SnoozeStore(join(blocker, "snoozes.json"), () => undefined, clock);
+  await assert.rejects(store.snooze("a", "m1", new Date(clock.time + hour)));
+  await rm(blocker);
+  await store.snooze("a", "m2", new Date(clock.time + hour));
+  assert.equal(JSON.parse(await readFile(join(blocker, "snoozes.json"), "utf8")).length, 2);
+  store.stop();
 });

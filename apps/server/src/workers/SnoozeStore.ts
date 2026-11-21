@@ -149,7 +149,8 @@ export class SnoozeStore {
   private persist(): Promise<void> {
     const filePath = this.filePath;
     if (!filePath) return Promise.resolve();
-    this.writeChain = this.writeChain.then(async () => {
+    // Recover a previously rejected chain so one failed write does not block later ones.
+    this.writeChain = this.writeChain.catch(() => undefined).then(async () => {
       await mkdir(dirname(filePath), { recursive: true, mode: 0o700 });
       const temporaryPath = `${filePath}.tmp`;
       await writeFile(temporaryPath, JSON.stringify([...this.entries.values()]), { mode: 0o600 });
