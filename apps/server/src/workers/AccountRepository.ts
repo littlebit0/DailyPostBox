@@ -12,7 +12,6 @@ export interface AccountRepository {
   savePushTarget(target: PushTarget): Promise<void>;
   deletePushTarget(target: PushTarget): Promise<void>;
   listInbox(userId: string): Promise<IncomingMessageSummary[]>;
-  getMessage(userId: string, messageId: string): Promise<IncomingMessageSummary | undefined>;
   saveIncomingMessage(message: IncomingMessageSummary): Promise<boolean>;
 }
 
@@ -86,14 +85,6 @@ export class InMemoryAccountRepository implements AccountRepository {
     return [...this.messages.values()]
       .filter((message) => accountIds.has(message.accountId))
       .sort((a, b) => b.receivedAt.getTime() - a.receivedAt.getTime());
-  }
-
-  async getMessage(
-    userId: string,
-    messageId: string
-  ): Promise<IncomingMessageSummary | undefined> {
-    const inbox = await this.listInbox(userId);
-    return inbox.find((message) => message.providerMessageId === messageId);
   }
 
   async saveIncomingMessage(message: IncomingMessageSummary): Promise<boolean> {

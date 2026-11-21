@@ -108,14 +108,6 @@ export class LocalFileAccountRepository implements AccountRepository {
       .sort((a, b) => b.receivedAt.getTime() - a.receivedAt.getTime());
   }
 
-  async getMessage(
-    userId: string,
-    messageId: string
-  ): Promise<IncomingMessageSummary | undefined> {
-    const inbox = await this.listInbox(userId);
-    return inbox.find((message) => message.providerMessageId === messageId);
-  }
-
   async saveIncomingMessage(message: IncomingMessageSummary): Promise<boolean> {
     await this.ensureLoaded();
     const key = messageKey(message);
