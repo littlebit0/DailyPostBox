@@ -180,6 +180,17 @@ class MailApiClient {
     await _dio.delete('/accounts/$accountId');
   }
 
+  Future<void> snoozeMessage({
+    required String accountId,
+    required String messageId,
+    required DateTime wakeAt,
+  }) async {
+    await _dio.post(
+      '/accounts/$accountId/messages/${Uri.encodeComponent(messageId)}/snooze',
+      data: {'wakeAt': wakeAt.toUtc().toIso8601String()},
+    );
+  }
+
   Future<void> registerPushToken({
     required String platform,
     required String token,
