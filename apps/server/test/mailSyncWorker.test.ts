@@ -320,3 +320,89 @@ test("a custom server that declares IDLE support is watched", async () => {
     await syncWorker.stop();
   }
 });
+
+test("polled IMAP mail notifies only after the first import", async () => {
+  const repository = new InMemoryAccountRepository();
+  const mailAccount = customAccount();
+  mailAccount.lastSyncedAt = undefined;
+  await repository.addAccount(mailAccount);
+  await repository.savePushTarget({ userId: "demo-user", platform: "macos", deviceToken: "token" });
+  let fetches = 0;
+  const notified: string[] = [];
+  const imap = {
+    watch: async () => async () => undefined,
+    fetchLatestBatches: async (
+      _account: MailAccount,
+      _mailbox: string,
+      _limit: unknown,
+      onBatch: (messages: IncomingMessageSummary[]) => Promise<void>
+    ) => {
+      fetches += 1;
+      await onBatch([{
+        accountId: mailAccount.id,
+        providerMessageId: String(fetches),
+        mailbox: "INBOX",
+        from: "a@example.com",
+        subject: `message ${fetches}`,
+        receivedAt: new Date(),
+        hasAttachments: false
+      }]);
+    }
+  };
+  const syncWorker = new MailSyncWorker(
+    repository,
+    imap as unknown as ImapReceiver,
+    {} as Pop3Receiver,
+    {
+      notifyNewMessage: async (_targets, message) => {
+        notified.push(message.providerMessageId);
+      }
+    },
+    { mailbox: "INBOX", pop3PollIntervalMs: 60_000, imapReconnectBaseDelayMs: 1, imapReconnectMaxDelayMs: 1 }
+  );
+
+  try {
+    await syncWorker.syncAccount(mailAccount);
+    await syncWorker.syncAccount(mailAccount);
+    assert.deepEqual(notified, ["2"]);
+  } finally {
+    await syncWorker.stop();
+  }
+});
+
+test("an account stopped during its first sync starts no polling", async () => {
+  const repository = new InMemoryAccountRepository();
+  const mailAccount = customAccount();
+  await repository.addAccount(mailAccount);
+  let release!: () => void;
+  const firstSync = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let fetches = 0;
+  const imap = {
+    watch: async () => async () => undefined,
+    fetchLatestBatches: async () => {
+      fetches += 1;
+      if (fetches === 1) await firstSync;
+    }
+  };
+  const syncWorker = new MailSyncWorker(
+    repository,
+    imap as unknown as ImapReceiver,
+    {} as Pop3Receiver,
+    {} as PushNotifier,
+    { mailbox: "INBOX", pop3PollIntervalMs: 5, imapReconnectBaseDelayMs: 1, imapReconnectMaxDelayMs: 1 }
+  );
+
+  try {
+    const start = syncWorker.startAccount(mailAccount);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await syncWorker.stopAccount(mailAccount.id);
+    release();
+    await start;
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.equal(fetches, 1);
+  } finally {
+    await syncWorker.stop();
+  }
+});

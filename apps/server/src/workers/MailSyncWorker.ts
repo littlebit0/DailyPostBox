@@ -23,6 +23,9 @@ export class MailSyncWorker {
   // stopAccount drops the token so a sync still running with replaced
   // credentials cannot overwrite the status of the restarted sync.
   private readonly syncTokens = new Map<string, object>();
+  // Bumped by stopAccount so a start still awaiting its first sync does not
+  // install a polling timer for a stopped or deleted account.
+  private readonly stopCounts = new Map<string, number>();
 
   constructor(
     private readonly accounts: AccountRepository,
@@ -52,8 +55,10 @@ export class MailSyncWorker {
       return;
     }
 
+    const stopCount = this.stopCounts.get(account.id) ?? 0;
     await this.syncAccount(account).catch(() => undefined);
-    if (this.pollingTimers.has(account.id)) {
+    if (this.pollingTimers.has(account.id) ||
+      (this.stopCounts.get(account.id) ?? 0) !== stopCount) {
       return;
     }
 
@@ -93,6 +98,11 @@ export class MailSyncWorker {
   private async performSync(account: MailAccount, token: object): Promise<void> {
     const isCurrent = () => this.syncTokens.get(account.id) === token;
     const limit = this.initialSyncLimit(account);
+    // Polled accounts have no IDLE watcher to notify them, so new mail found
+    // after the first import is announced here; imported history is not.
+    const notify = account.lastSyncedAt !== undefined &&
+      account.incomingProtocol === "imap" &&
+      !supportsImapIdle(account);
     account.syncStatus = "syncing";
     account.syncError = undefined;
     account.syncErrorCode = undefined;
@@ -108,7 +118,7 @@ export class MailSyncWorker {
             async (messages) => {
               await Promise.all(
                 messages.map((message) =>
-                  this.handleIncoming(account, message, false)
+                  this.handleIncoming(account, message, notify)
                 )
               );
             }
@@ -150,6 +160,7 @@ export class MailSyncWorker {
   }
 
   async stopAccount(accountId: string): Promise<void> {
+    this.stopCounts.set(accountId, (this.stopCounts.get(accountId) ?? 0) + 1);
     this.syncPromises.delete(accountId);
     this.syncTokens.delete(accountId);
 
