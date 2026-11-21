@@ -1,5 +1,9 @@
 import { ImapFlow } from "imapflow";
-import type { FetchMessageObject, MessageStructureObject } from "imapflow";
+import type {
+  FetchMessageObject,
+  MessageStructureObject,
+  SearchObject
+} from "imapflow";
 import { simpleParser } from "mailparser";
 import type { OAuthTokenManager } from "../auth/OAuthTokenManager.js";
 import type {
@@ -101,6 +105,38 @@ export class ImapReceiver implements MailReceiver {
         await onBatch(batch);
       }
     }
+  }
+
+  // Searches the server, so messages that were never imported are found too.
+  async search(
+    account: MailAccount,
+    query: SearchObject,
+    limit = 50
+  ): Promise<IncomingMessageSummary[]> {
+    return this.withConnectedClient(account, async (client) => {
+      await client.mailboxOpen("INBOX", { readOnly: true });
+      const found = (await client.search(query, { uid: true })) || [];
+      const newest = found.sort((a, b) => b - a).slice(0, limit);
+      if (newest.length === 0) return [];
+      const summaries = await this.fetchUids(client, account, "INBOX", newest);
+      return summaries.sort(
+        (a, b) => b.receivedAt.getTime() - a.receivedAt.getTime()
+      );
+    });
+  }
+
+  async fetchSummary(
+    account: MailAccount,
+    mailbox: string,
+    providerMessageId: string
+  ): Promise<IncomingMessageSummary | null> {
+    const uid = Number(providerMessageId);
+    if (!Number.isInteger(uid) || uid <= 0) return null;
+    return this.withConnectedClient(account, async (client) => {
+      await client.mailboxOpen(mailbox, { readOnly: true });
+      const [summary] = await this.fetchUids(client, account, mailbox, [uid]);
+      return summary ?? null;
+    });
   }
 
   async fetchMessageContent(

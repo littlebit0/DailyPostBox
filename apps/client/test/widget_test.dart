@@ -96,6 +96,65 @@ void main() {
     expect(find.text(account.emailAddress), findsWidgets);
   });
 
+  testWidgets('clears search results when switching to another account',
+      (WidgetTester tester) async {
+    const first = MailAccountSummary(
+      id: 'account-a',
+      providerId: 'gmail',
+      emailAddress: 'first@example.com',
+      incomingProtocol: 'imap',
+      authMode: 'oauth2',
+      syncStatus: 'idle',
+      syncError: null,
+      initialSync: InitialSyncOption.recommended,
+      lastSyncedAtLabel: 'now',
+    );
+    const second = MailAccountSummary(
+      id: 'account-b',
+      providerId: 'gmail',
+      emailAddress: 'second@example.com',
+      incomingProtocol: 'imap',
+      authMode: 'oauth2',
+      syncStatus: 'idle',
+      syncError: null,
+      initialSync: InitialSyncOption.recommended,
+      lastSyncedAtLabel: 'now',
+    );
+    final api = _SearchApi();
+    await tester.binding.setSurfaceSize(const Size(1200, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          mailApiClientProvider.overrideWithValue(api),
+          accountsProvider.overrideWith((ref) async => const [first, second]),
+          providersProvider.overrideWith((ref) async => const []),
+          accountMessagesProvider.overrideWith((ref, accountId) async => const []),
+        ],
+        child: const DailyPostBoxApp(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text(first.emailAddress).first);
+    await tester.pumpAndSettle();
+    final searchField = find.descendant(
+      of: find.byType(Scaffold).last,
+      matching: find.byType(TextField),
+    );
+    await tester.enterText(searchField.first, 'invoice');
+    await tester.testTextInput.receiveAction(TextInputAction.search);
+    await tester.pumpAndSettle();
+    expect(find.text(_SearchApi.resultSubject), findsOneWidget);
+
+    await tester.tap(find.text(second.emailAddress).first);
+    await tester.pumpAndSettle();
+
+    expect(find.text(_SearchApi.resultSubject), findsNothing);
+    expect(find.text('invoice'), findsNothing);
+  });
+
   testWidgets('shows a progressive loading state during account sync',
       (WidgetTester tester) async {
     const account = MailAccountSummary(
@@ -328,7 +387,10 @@ void main() {
     final loadsBeforeReconnect = messageLoads;
     await tester.tap(find.widgetWithText(TextButton, '다시 연결'));
     await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextField), 'new-app-password');
+    await tester.enterText(
+        find.descendant(
+            of: find.byType(AlertDialog), matching: find.byType(TextField)),
+        'new-app-password');
     await tester.tap(find.widgetWithText(FilledButton, '다시 연결'));
     await tester.pumpAndSettle();
 
@@ -504,6 +566,29 @@ void main() {
       Rect.fromLTRB(0, 24, 36, 44),
     ]);
   });
+}
+
+class _SearchApi extends MailApiClient {
+  _SearchApi() : super(baseUrl: 'http://127.0.0.1:1');
+
+  static const resultSubject = '첫 계정 검색 결과';
+
+  @override
+  Future<List<MailSummary>> searchAccountMessages(
+    String accountId,
+    String query,
+  ) async {
+    return [
+      const MailSummary(
+        id: 'uid-1',
+        sender: 'billing@example.com',
+        subject: resultSubject,
+        snippet: '',
+        receivedAtLabel: 'now',
+        unread: false,
+      ),
+    ];
+  }
 }
 
 class _CredentialRecordingApi extends MailApiClient {
