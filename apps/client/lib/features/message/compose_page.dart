@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../core/i18n/language_controller.dart';
 import '../../services/mail_api_client.dart';
 import '../../widgets/app_shell.dart';
+import '../accounts/accounts_page.dart' show friendlyError;
 
 final composeAccountsProvider = FutureProvider<List<MailAccountSummary>>((ref) {
   return ref.watch(mailApiClientProvider).fetchAccounts();
@@ -27,6 +28,7 @@ class _ComposePageState extends ConsumerState<ComposePage> {
   final _subjectController = TextEditingController();
   final _bodyController = TextEditingController();
   String? _accountId;
+  bool _sending = false;
 
   @override
   void initState() {
@@ -64,8 +66,13 @@ class _ComposePageState extends ConsumerState<ComposePage> {
           actions: [
             IconButton(
               tooltip: strings.send,
-              onPressed: _send,
-              icon: const Icon(Icons.send_outlined),
+              onPressed: _sending ? null : _send,
+              icon: _sending
+                  ? const SizedBox.square(
+                      dimension: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.send_outlined),
             ),
           ],
         ),
@@ -132,14 +139,36 @@ class _ComposePageState extends ConsumerState<ComposePage> {
 
   Future<void> _send() async {
     final accountId = _accountId;
-    if (accountId == null) return;
+    if (accountId == null || _sending) return;
+    final strings = ref.read(appStringsProvider);
+    final messenger = ScaffoldMessenger.of(context);
+    void report(String message) =>
+        messenger.showSnackBar(SnackBar(content: Text(message)));
 
-    await ref.read(mailApiClientProvider).sendMail(
-          accountId: accountId,
-          to: _toController.text.split(',').map((item) => item.trim()).toList(),
-          subject: _subjectController.text,
-          body: _bodyController.text,
-        );
+    final to = _toController.text
+        .split(',')
+        .map((item) => item.trim())
+        .where((item) => item.isNotEmpty)
+        .toList();
+    if (to.isEmpty) {
+      report(strings.recipientRequired);
+      return;
+    }
+
+    setState(() => _sending = true);
+    try {
+      await ref.read(mailApiClientProvider).sendMail(
+            accountId: accountId,
+            to: to,
+            subject: _subjectController.text,
+            body: _bodyController.text,
+          );
+    } catch (error) {
+      // The draft stays on screen so the user can fix it and retry.
+      if (mounted) setState(() => _sending = false);
+      report(strings.sendFailed(friendlyError(error, strings)));
+      return;
+    }
 
     if (mounted) context.go('/accounts/$accountId/mail');
   }
