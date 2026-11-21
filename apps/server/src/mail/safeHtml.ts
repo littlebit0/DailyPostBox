@@ -99,6 +99,13 @@ function serializeElement(el: Element, state: State, depth: number): string {
   const name = el.name.toLowerCase();
   if (droppedTags.has(name)) return "";
   if (name === "img") return serializeImage(el, state);
+  if (name === "body") {
+    // body itself is unwrapped, but its background must survive or light text
+    // on it would render on the client's white surface.
+    const bg = bodyBackground(el.attribs);
+    const inner = serializeNodes(el.children, state, depth + 1);
+    return bg ? `<div style="background-color:${escapeAttr(bg)}">${inner}</div>` : inner;
+  }
   if (!allowedTags.has(name)) return serializeNodes(el.children, state, depth + 1);
 
   const attrs = serializeAttributes(name, el.attribs);
@@ -140,6 +147,16 @@ function serializeAttributes(tag: string, attribs: Record<string, string>): stri
     }
   }
   return out;
+}
+
+function bodyBackground(attribs: Record<string, string>): string | null {
+  let color: string | null = null;
+  const attr = (attribs.bgcolor ?? "").trim();
+  if (attr && attr.length <= 200 && safeAttrValue.test(attr)) color = attr;
+  for (const declaration of sanitizeStyle(attribs.style ?? "").split(";")) {
+    if (declaration.startsWith("background-color:")) color = declaration.slice("background-color:".length);
+  }
+  return color;
 }
 
 function safeHref(value: string): string | null {

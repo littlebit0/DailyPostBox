@@ -221,7 +221,18 @@ class _Renderer {
           child: Divider(height: 1),
         );
       case 'table':
-        return _table(el, style, recognizer);
+        final caption = el.children.where((c) => c.localName == 'caption');
+        final table = _table(el, style, recognizer);
+        if (caption.isEmpty) return table;
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            for (final c in caption)
+              _column(c, _styled(c, style), _align(c) ?? TextAlign.center,
+                  recognizer),
+            table,
+          ],
+        );
       case 'ul':
       case 'ol':
         var index = 0;
@@ -260,9 +271,12 @@ class _Renderer {
       default:
         final spacing =
             (tag == 'p' || (tag?.startsWith('h') ?? false)) ? 6.0 : 0.0;
-        return Padding(
-          padding: EdgeInsets.symmetric(vertical: spacing),
-          child: _column(el, style, align, recognizer),
+        return ColoredBox(
+          color: _background(el) ?? Colors.transparent,
+          child: Padding(
+            padding: EdgeInsets.symmetric(vertical: spacing),
+            child: _column(el, style, align, recognizer),
+          ),
         );
     }
   }
@@ -364,7 +378,8 @@ class _Renderer {
   }
 
   int _span(dom.Element cell, String attribute) =>
-      (int.tryParse(cell.attributes[attribute] ?? '') ?? 1).clamp(1, maxHtmlSpan);
+      (int.tryParse(cell.attributes[attribute] ?? '') ?? 1)
+          .clamp(1, maxHtmlSpan);
 
   /// `bgcolor` attribute or inline `background-color` of a table element.
   Color? _background(dom.Element el) {
@@ -398,7 +413,30 @@ class _Renderer {
   }) {
     if (node is dom.Text) {
       final text = _collapse(node);
-      if (text.isNotEmpty) {
+      if (text.isNotEmpty && recognizer == null) {
+        // Bare URLs outside an anchor stay tappable, as in the plain-text view.
+        for (final segment in parseMessageBody(body: text, links: const [])) {
+          final uri = segment.uri;
+          if (uri == null) {
+            out.add(TextSpan(text: segment.text));
+            continue;
+          }
+          final tap = TapGestureRecognizer()..onTap = () => onLink(uri);
+          recognizers.add(tap);
+          out.add(
+            TextSpan(
+              text: segment.text,
+              recognizer: tap,
+              mouseCursor: SystemMouseCursors.click,
+              style: style.copyWith(
+                color: linkColor,
+                decoration: TextDecoration.underline,
+                decorationColor: linkColor,
+              ),
+            ),
+          );
+        }
+      } else if (text.isNotEmpty) {
         // Recognizers only fire on the innermost span, so every text leaf of
         // a link carries its own.
         out.add(

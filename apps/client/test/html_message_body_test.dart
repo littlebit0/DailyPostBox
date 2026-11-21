@@ -153,7 +153,8 @@ void main() {
     expect(opened, Uri.parse('https://example.com/go'));
   });
 
-  testWidgets('data uri image is not decoded, alt text is shown', (tester) async {
+  testWidgets('data uri image is not decoded, alt text is shown',
+      (tester) async {
     await pump(
       tester,
       '<p><img src="data:image/png;base64,iVBORw0KGgo=" alt="pic"></p>',
@@ -276,5 +277,52 @@ void main() {
 
     await pump(tester, '<table><tr><td colspan="2">a</td></tr></table>');
     expect(find.byType(Table), findsOneWidget);
+  });
+
+  testWidgets('bare URLs outside anchors are tappable', (tester) async {
+    Uri? opened;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: HtmlMessageBody(
+            html: '<p>https://example.com/reset?token=abc</p>',
+            linkLauncher: (uri) async {
+              opened = uri;
+              return true;
+            },
+          ),
+        ),
+      ),
+    );
+    final link = find.textContaining('example.com', findRichText: true);
+    await tester.tapAt(tester.getTopLeft(link) + const Offset(10, 10));
+    await tester.pump();
+    expect(opened, Uri.parse('https://example.com/reset?token=abc'));
+  });
+
+  testWidgets('table caption is rendered above the table', (tester) async {
+    await pump(
+      tester,
+      '<table><caption>November bill</caption><tr><td>10,000</td></tr></table>',
+    );
+    final caption = find.text('November bill', findRichText: true);
+    expect(caption, findsOneWidget);
+    expect(
+      tester.getTopLeft(caption).dy,
+      lessThan(tester.getTopLeft(find.byType(Table)).dy),
+    );
+  });
+
+  testWidgets('div background color is painted', (tester) async {
+    await pump(
+      tester,
+      '<div style="background-color:#000000"><font color="#ffffff">x</font></div>',
+    );
+    expect(
+      find.byWidgetPredicate(
+        (w) => w is ColoredBox && w.color == const Color(0xFF000000),
+      ),
+      findsOneWidget,
+    );
   });
 }

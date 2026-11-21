@@ -222,7 +222,6 @@ List<Rect> mergeLinkUnderlineBoxes(List<TextBox> boxes) {
   return lines;
 }
 
-@visibleForTesting
 List<MessageBodySegment> parseMessageBody({
   required String body,
   required List<MessageLink> links,

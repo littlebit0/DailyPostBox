@@ -119,3 +119,11 @@ test("clamps colspan and rowspan", () => {
   assert.equal(clean('<table><tr><td colspan="99999" rowspan="0">x</td><td colspan="3">y</td></tr></table>').html,
     '<table><tr><td colspan="50" rowspan="1">x</td><td colspan="3">y</td></tr></table>');
 });
+
+test("keeps body background on a wrapper div", () => {
+  assert.equal(clean('<body bgcolor="#000000"><p>x</p></body>').html,
+    '<div style="background-color:#000000"><p>x</p></div>');
+  assert.equal(clean('<body style="background-color:#111;color:red;background:url(x)"><p>x</p></body>').html,
+    '<div style="background-color:#111"><p>x</p></div>');
+  assert.equal(clean("<body><p>x</p></body>").html, "<p>x</p>");
+});
