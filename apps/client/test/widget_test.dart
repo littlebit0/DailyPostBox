@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -553,6 +554,98 @@ void main() {
     expect(body(), '');
   });
 
+  testWidgets('compose keeps an edited signature without duplicating it', (
+    WidgetTester tester,
+  ) async {
+    MailAccountSummary account(String id, String signature) =>
+        MailAccountSummary(
+          id: id,
+          providerId: 'gmail',
+          emailAddress: '$id@example.com',
+          incomingProtocol: 'imap',
+          authMode: 'oauth2',
+          syncStatus: 'idle',
+          syncError: null,
+          initialSync: InitialSyncOption.recommended,
+          lastSyncedAtLabel: 'now',
+          signature: signature,
+        );
+    final accounts = [account('a', 'Sig A'), account('b', '')];
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          composeAccountsProvider.overrideWith((ref) async => accounts),
+        ],
+        child: const MaterialApp(home: ComposePage()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final bodyField = tester.widget<TextField>(find.byType(TextField).last);
+    bodyField.controller!.text = '\n\n-- \nSig A edited';
+
+    Future<void> pick(String email) async {
+      await tester.tap(find.byType(DropdownButtonFormField<String>));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text(email).last);
+      await tester.pumpAndSettle();
+    }
+
+    await pick('b@example.com');
+    await pick('a@example.com');
+    expect(bodyField.controller!.text, '\n\n-- \nSig A edited');
+  });
+
+  testWidgets('signature save refreshes caches after switching accounts', (
+    WidgetTester tester,
+  ) async {
+    MailAccountSummary account(String id) => MailAccountSummary(
+          id: id,
+          providerId: 'gmail',
+          emailAddress: '$id@example.com',
+          incomingProtocol: 'imap',
+          authMode: 'oauth2',
+          syncStatus: 'idle',
+          syncError: null,
+          initialSync: InitialSyncOption.recommended,
+          lastSyncedAtLabel: 'now',
+        );
+    final api = _SlowSignatureApi();
+    var accountLoads = 0;
+    await tester.binding.setSurfaceSize(const Size(1200, 1000));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          mailApiClientProvider.overrideWithValue(api),
+          accountsProvider.overrideWith((ref) async {
+            accountLoads += 1;
+            return [account('first'), account('second')];
+          }),
+          providersProvider.overrideWith((ref) async => const []),
+          accountMessagesProvider.overrideWith((ref, id) async => const []),
+        ],
+        child: const DailyPostBoxApp(),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('계정관리').first);
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).first, 'Sig');
+    await tester.tap(find.widgetWithText(FilledButton, '저장'));
+    await tester.pump();
+
+    await tester.tap(find.text('second@example.com').first);
+    await tester.pumpAndSettle();
+    final loadsBefore = accountLoads;
+    api.release.complete();
+    await tester.pumpAndSettle();
+
+    expect(api.saved, [('first', 'Sig')]);
+    expect(accountLoads, greaterThan(loadsBefore));
+    expect(tester.takeException(), isNull);
+  });
+
   test('merges word boxes into one continuous underline per line', () {
     final merged = mergeLinkUnderlineBoxes(const [
       TextBox.fromLTRBD(0, 0, 42, 20, TextDirection.ltr),
@@ -565,6 +658,22 @@ void main() {
       Rect.fromLTRB(0, 24, 36, 44),
     ]);
   });
+}
+
+class _SlowSignatureApi extends MailApiClient {
+  _SlowSignatureApi() : super(baseUrl: 'http://127.0.0.1:1');
+
+  final release = Completer<void>();
+  final saved = <(String, String)>[];
+
+  @override
+  Future<void> updateAccountSignature({
+    required String accountId,
+    required String signature,
+  }) async {
+    await release.future;
+    saved.add((accountId, signature));
+  }
 }
 
 class _CredentialRecordingApi extends MailApiClient {

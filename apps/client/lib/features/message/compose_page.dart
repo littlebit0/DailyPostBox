@@ -157,7 +157,14 @@ class _ComposePageState extends ConsumerState<ComposePage> {
   void _useSignatureOf(List<MailAccountSummary> items, String? accountId) {
     final next =
         items.where((a) => a.id == accountId).firstOrNull?.signature ?? '';
-    _bodyController.text = swapSignature(_bodyController.text, _signature, next);
+    final body = _bodyController.text;
+    // User edited the managed block: keep owning the old signature so later
+    // switches neither overwrite the edit nor append a duplicate.
+    if (_signature.isNotEmpty &&
+        !body.endsWith(_signatureSeparator + _signature)) {
+      return;
+    }
+    _bodyController.text = swapSignature(body, _signature, next);
     _signature = next;
   }
 

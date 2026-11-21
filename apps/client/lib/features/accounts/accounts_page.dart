@@ -469,6 +469,20 @@ class _AccountDetail extends ConsumerWidget {
   }
 }
 
+/// Saves a signature and refreshes caches; lives in the provider scope so it
+/// completes even if the editor widget is disposed mid-request.
+final _saveSignatureProvider = Provider<
+    Future<void> Function(String accountId, String signature)>((ref) {
+  return (accountId, signature) async {
+    await ref.read(mailApiClientProvider).updateAccountSignature(
+          accountId: accountId,
+          signature: signature,
+        );
+    ref.invalidate(accountsProvider);
+    ref.invalidate(composeAccountsProvider);
+  };
+}, name: 'saveSignature');
+
 class _SignatureEditor extends ConsumerStatefulWidget {
   const _SignatureEditor({super.key, required this.account});
 
@@ -491,16 +505,14 @@ class _SignatureEditorState extends ConsumerState<_SignatureEditor> {
   Future<void> _save() async {
     final strings = ref.read(appStringsProvider);
     final messenger = ScaffoldMessenger.maybeOf(context);
+    final save = ref.read(_saveSignatureProvider);
     setState(() => _saving = true);
     try {
-      await ref.read(mailApiClientProvider).updateAccountSignature(
-            accountId: widget.account.id,
-            signature: _controller.text,
-          );
-      ref.invalidate(accountsProvider);
-      ref.invalidate(composeAccountsProvider);
+      await save(widget.account.id, _controller.text);
+      if (!mounted) return;
       messenger?.showSnackBar(SnackBar(content: Text(strings.signatureSaved)));
     } catch (error) {
+      if (!mounted) return;
       messenger?.showSnackBar(
         SnackBar(content: Text(friendlyError(error, strings))),
       );
