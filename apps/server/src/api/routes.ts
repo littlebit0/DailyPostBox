@@ -74,6 +74,13 @@ const accountSchema = z.object({
 
 const demoUserId = "demo-user";
 
+// shortcut: no real auth yet (issue #20), so attachment downloads are
+// loopback-only unless ALLOW_REMOTE_MAIL_ACCESS=true.
+function canReadAttachments(ip: string): boolean {
+  return process.env.ALLOW_REMOTE_MAIL_ACCESS === "true" ||
+    ip === "127.0.0.1" || ip === "::1" || ip === "::ffff:127.0.0.1";
+}
+
 export async function registerRoutes(
   app: FastifyInstance,
   deps: {
@@ -316,6 +323,9 @@ export async function registerRoutes(
   app.get(
     "/accounts/:accountId/messages/:messageId/attachments/:part",
     async (request, reply) => {
+      if (!canReadAttachments(request.ip)) {
+        return reply.code(403).send({ error: "Attachments are only available locally." });
+      }
       const params = z.object({
         accountId: z.string(),
         messageId: z.string(),
