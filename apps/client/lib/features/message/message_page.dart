@@ -48,6 +48,9 @@ class _MessagePageState extends ConsumerState<MessagePage> {
   int _seenVersion = 0;
   int _flaggedVersion = 0;
 
+  // Requests run one at a time so the server applies them in tap order.
+  Future<void> _queue = Future.value();
+
   Future<void> _setFlags({bool? seen, bool? flagged}) async {
     final id = accountId;
     if (id == null) return;
@@ -64,14 +67,18 @@ class _MessagePageState extends ConsumerState<MessagePage> {
       if (flagged != null) _flagged = flagged;
     });
     try {
-      await container
-          .read(mailApiClientProvider)
-          .setMessageFlags(
-            accountId: id,
-            messageId: messageId,
-            seen: seen,
-            flagged: flagged,
-          );
+      final run = _queue.then(
+        (_) => container
+            .read(mailApiClientProvider)
+            .setMessageFlags(
+              accountId: id,
+              messageId: messageId,
+              seen: seen,
+              flagged: flagged,
+            ),
+      );
+      _queue = run.catchError((_) {});
+      await run;
       container.invalidate(accountMessagesProvider(id));
       container.invalidate(
         messageProvider((messageId: messageId, accountId: id)),

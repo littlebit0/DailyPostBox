@@ -559,11 +559,31 @@ void main() {
       await tester.tap(find.byIcon(Icons.star_border));
       await tester.pump();
       expect(find.byIcon(Icons.star), findsOneWidget);
-      api.calls[1].complete();
+      expect(api.calls, hasLength(1)); // second request waits for the first
       api.calls[0].completeError(Exception('x'));
       await tester.pump();
       await tester.pump();
+      expect(api.calls, hasLength(2));
+      api.calls[1].complete();
+      await tester.pump();
+      await tester.pump();
       expect(find.byIcon(Icons.star), findsOneWidget);
+    });
+
+    testWidgets('same-flag requests are sent in order', (tester) async {
+      final api = await pumpMessage(tester, _FlagApi());
+      api.calls[0].complete();
+      await tester.pump();
+      await tester.pump();
+      await tester.tap(find.byIcon(Icons.star_border));
+      await tester.pump();
+      await tester.tap(find.byIcon(Icons.star));
+      await tester.pump();
+      expect(api.sent, [true]); // unstar not sent until star finishes
+      api.calls[1].complete();
+      await tester.pump();
+      await tester.pump();
+      expect(api.sent, [true, false]);
     });
 
     testWidgets('success after leaving page refreshes cached detail', (
@@ -571,10 +591,15 @@ void main() {
     ) async {
       final api = await pumpMessage(tester, _FlagApi());
       final fetchesBefore = api.fetches;
-      GoRouter.of(tester.element(find.byType(MessagePage))).go('/other');
+      final router = GoRouter.of(tester.element(find.byType(MessagePage)));
+      router.go('/other');
       await tester.pump();
       await tester.pump();
       api.calls[0].complete();
+      await tester.pump();
+      await tester.pump();
+      // Cache is only dropped; it refetches when the detail page reopens.
+      router.go('/m');
       await tester.pump();
       await tester.pump();
       expect(api.fetches, greaterThan(fetchesBefore));
@@ -588,6 +613,7 @@ class _FlagApi extends MailApiClient {
 
   final calls = <Completer<void>>[];
   var fetches = 0;
+  final sent = <bool>[]; // flagged values in send order
 
   @override
   Future<MessageDetail> fetchAccountMessage({
@@ -614,6 +640,7 @@ class _FlagApi extends MailApiClient {
   }) {
     final c = Completer<void>();
     calls.add(c);
+    if (flagged != null) sent.add(flagged);
     return c.future;
   }
 }
