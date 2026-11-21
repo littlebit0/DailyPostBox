@@ -87,3 +87,35 @@ test("the first recorded UIDVALIDITY keeps existing mail", async () => {
   assert.deepEqual(result.subjects, ["new numbering", "old numbering"]);
   assert.equal(result.uidValidity, "100");
 });
+
+test("a connection retry after the reset keeps the initial import limit", async () => {
+  const repository = new InMemoryAccountRepository();
+  const stored = account("100");
+  await repository.addAccount(stored);
+  const limits: unknown[] = [];
+  const imap = {
+    fetchLatestBatches: async (
+      _account: MailAccount,
+      _mailbox: string,
+      limit: number | "all",
+      onBatch: (messages: IncomingMessageSummary[]) => Promise<void>,
+      onMailboxOpened: (uidValidity: string) => Promise<number | "all" | undefined>
+    ) => {
+      // Like ImapReceiver's retry: reconcile again on the new connection.
+      limits.push((await onMailboxOpened("200")) ?? limit);
+      limits.push((await onMailboxOpened("200")) ?? limit);
+      await onBatch([message("1", "new numbering")]);
+    }
+  };
+  const worker = new MailSyncWorker(
+    repository,
+    imap as unknown as ImapReceiver,
+    {} as Pop3Receiver,
+    {} as PushNotifier,
+    { mailbox: "INBOX", pop3PollIntervalMs: 60_000, imapReconnectBaseDelayMs: 1, imapReconnectMaxDelayMs: 1 }
+  );
+  await worker.syncAccount(stored);
+  await worker.stop();
+
+  assert.deepEqual(limits, [100, 100]);
+});

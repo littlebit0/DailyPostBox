@@ -267,21 +267,22 @@ export class MailSyncWorker {
 
   // Saved UIDs point at other messages once the mailbox's UIDVALIDITY
   // changes, so the account's mail is dropped and imported again with the
-  // account's initial import choice. Returns that limit, if changed.
+  // account's initial import choice. The limit is derived from the account
+  // on every call, so a connection retry after the reset keeps that choice.
   private async reconcileUidValidity(
     account: MailAccount,
     current: string
-  ): Promise<number | "all" | undefined> {
-    if (account.uidValidity === current) return undefined;
-    const changed = account.uidValidity !== undefined;
-    if (changed) {
-      console.warn("imap:uidvalidity-changed", { accountId: account.id });
-      await this.accounts.deleteMessages(account.id);
-      account.lastSyncedAt = undefined;
+  ): Promise<number | "all"> {
+    if (account.uidValidity !== current) {
+      if (account.uidValidity !== undefined) {
+        console.warn("imap:uidvalidity-changed", { accountId: account.id });
+        await this.accounts.deleteMessages(account.id);
+        account.lastSyncedAt = undefined;
+      }
+      account.uidValidity = current;
+      await this.accounts.updateAccount(account);
     }
-    account.uidValidity = current;
-    await this.accounts.updateAccount(account);
-    return changed ? this.initialSyncLimit(account) : undefined;
+    return this.initialSyncLimit(account);
   }
 
   private initialSyncLimit(account: MailAccount): number | "all" | 0 {
