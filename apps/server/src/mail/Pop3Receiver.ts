@@ -35,6 +35,11 @@ export class Pop3Receiver implements MailReceiver {
     _mailbox: string,
     _providerMessageId: string
   ): Promise<IncomingMessageContent> {
-    return { text: "", truncated: false, links: [] };
+    return {
+      text: "",
+      truncated: false,
+      links: [],
+      security: { signed: null, encrypted: null, verified: false }
+    };
   }
 }

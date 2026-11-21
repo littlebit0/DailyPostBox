@@ -81,6 +81,13 @@ export interface IncomingMessageContent {
   text: string;
   truncated: boolean;
   links: IncomingMessageLink[];
+  security: MessageSecurity;
+}
+
+export interface MessageSecurity {
+  signed: "smime" | "openpgp" | null;
+  encrypted: "smime" | "openpgp" | null;
+  verified: boolean;
 }
 
 export interface IncomingMessageLink {

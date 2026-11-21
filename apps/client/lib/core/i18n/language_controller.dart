@@ -136,6 +136,12 @@ class AppStrings {
       : 'The new password is checked before saving. Stored mail and settings are kept.';
   String get reconnectSucceeded =>
       _ko ? '다시 연결했습니다. 메일을 가져오는 중입니다.' : 'Reconnected. Fetching mail now.';
+  String get signedMailStatus => _ko
+      ? '서명된 메일 · 서명 검증은 아직 지원하지 않습니다'
+      : 'Signed message · signature verification is not supported yet';
+  String get encryptedMailStatus => _ko
+      ? '암호화된 메일 · 복호화는 아직 지원하지 않습니다'
+      : 'Encrypted message · decryption is not supported yet';
   String get messageLoadFailedTitle =>
       _ko ? '메일 본문을 불러오지 못했습니다' : 'Could not open this message';
   String syncFailure(String? code, String? error) {

@@ -1,6 +1,7 @@
 import { ImapFlow } from "imapflow";
 import type { FetchMessageObject, MessageStructureObject } from "imapflow";
 import { simpleParser } from "mailparser";
+import { detectMessageSecurity } from "./messageSecurity.js";
 import type { OAuthTokenManager } from "../auth/OAuthTokenManager.js";
 import type {
   IncomingMessageContent,
@@ -122,6 +123,7 @@ export class ImapReceiver implements MailReceiver {
         throw new Error("Message body was not found on the IMAP server.");
       }
 
+      const security = detectMessageSecurity(message.bodyStructure);
       const bodyParts = selectBodyParts(message.bodyStructure);
       let htmlFallback: IncomingMessageContent | null = null;
       let htmlLinks: IncomingMessageLink[] = [];
@@ -141,7 +143,7 @@ export class ImapReceiver implements MailReceiver {
 
         if (bodyPart.type.toLowerCase() !== "text/html") {
           const text = cleanMessageText(decoded);
-          if (text) return { text, truncated, links: htmlLinks };
+          if (text) return { text, truncated, links: htmlLinks, security };
           continue;
         }
 
@@ -167,13 +169,14 @@ export class ImapReceiver implements MailReceiver {
           htmlFallback = {
             text,
             truncated,
-            links: htmlLinks
+            links: htmlLinks,
+            security
           };
         }
       }
 
-      if (htmlFallback) return { ...htmlFallback, links: htmlLinks };
-      return { text: "", truncated: false, links: [] };
+      if (htmlFallback) return { ...htmlFallback, links: htmlLinks, security };
+      return { text: "", truncated: false, links: [], security };
     } finally {
       await client.logout().catch(() => undefined);
     }
