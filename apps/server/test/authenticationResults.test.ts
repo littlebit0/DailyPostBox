@@ -57,3 +57,24 @@ test("outlook header without authserv-id (Microsoft documented example)", () => 
   assert.deepEqual(parseAuthenticationFailures(h, "outlook"), ["dmarc", "spf", "dkim"]);
   assert.deepEqual(parseAuthenticationFailures(h, "gmail"), []);
 });
+
+test("quoted smtp.mailfrom cannot inject a fake dmarc=pass", () => {
+  const h = gmail(
+    'spf=fail smtp.mailfrom="x; dmarc=pass"@evil.test; dkim=fail header.i=@evil.test; dmarc=fail header.from=evil.test'
+  );
+  assert.deepEqual(parseAuthenticationFailures(h, "gmail"), ["dmarc", "spf", "dkim"]);
+});
+
+test("semicolon inside a (nested) comment does not split clauses", () => {
+  const h = gmail("spf=fail (a; dmarc=pass (b; c)) smtp.mailfrom=a@x.test; dmarc=fail header.from=x.test");
+  assert.deepEqual(parseAuthenticationFailures(h, "gmail"), ["dmarc", "spf"]);
+});
+
+test("conflicting results for one method: fail wins", () => {
+  const h = gmail("dkim=pass header.i=@a.test; dkim=fail header.i=@b.test; dmarc=fail header.from=x.test");
+  assert.deepEqual(parseAuthenticationFailures(h, "gmail"), ["dmarc", "dkim"]);
+  assert.deepEqual(
+    parseAuthenticationFailures(gmail("dmarc=pass header.from=a.test; dmarc=fail header.from=b.test"), "gmail"),
+    ["dmarc"]
+  );
+});

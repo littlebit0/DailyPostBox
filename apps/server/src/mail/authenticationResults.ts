@@ -10,6 +10,43 @@ const trustedAuthservIds: Partial<Record<ProviderId, (id: string) => boolean>> =
 };
 
 /**
+ * Splits on `;` only outside quoted strings (backslash escapes) and nested
+ * parenthesised comments, so a quoted value cannot inject a fake clause.
+ * Comments are dropped; quoted strings are kept verbatim.
+ */
+function splitClauses(value: string): string[] {
+  const clauses: string[] = [];
+  let current = "";
+  let depth = 0;
+  let quoted = false;
+  for (let i = 0; i < value.length; i++) {
+    const ch = value[i];
+    if (quoted) {
+      current += ch;
+      if (ch === "\\" && i + 1 < value.length) current += value[++i];
+      else if (ch === '"') quoted = false;
+    } else if (depth > 0) {
+      if (ch === "\\") i++;
+      else if (ch === "(") depth++;
+      else if (ch === ")") depth--;
+    } else if (ch === '"') {
+      quoted = true;
+      current += ch;
+    } else if (ch === "(") {
+      depth = 1;
+      current += " ";
+    } else if (ch === ";") {
+      clauses.push(current);
+      current = "";
+    } else {
+      current += ch;
+    }
+  }
+  clauses.push(current);
+  return clauses;
+}
+
+/**
  * Reads raw header text and returns failures reported by the provider's own
  * server. Only the topmost Authentication-Results header is considered: the
  * receiving server prepends its own, so lower ones may be sender-forged.
@@ -27,11 +64,7 @@ export function parseAuthenticationFailures(
     .find((item) => /^authentication-results\s*:/i.test(item));
   if (!line) return [];
 
-  const value = line
-    .replace(/^[^:]*:/, "")
-    .replace(/\([^)]*\)/g, " ")
-    .trim();
-  const [head, ...rest] = value.split(";");
+  const [head, ...rest] = splitClauses(line.replace(/^[^:]*:/, ""));
   const authservId = head.trim().split(/\s+/)[0]?.toLowerCase();
   // Outlook's documented format omits the authserv-id (starts with `spf=fail ...`), so the topmost header is trusted without one.
   const outlookNoId =
@@ -53,12 +86,12 @@ export function parseAuthenticationFailures(
   const has = (method: string, result: string) =>
     results.get(method)?.includes(result) ?? false;
 
-  // A passing DMARC means the message is aligned; stray SPF/DKIM failures are noise.
-  if (has("dmarc", "pass")) return [];
+  // A passing DMARC means the message is aligned; stray SPF/DKIM failures are noise. Fail wins over a conflicting pass.
+  if (has("dmarc", "pass") && !has("dmarc", "fail")) return [];
 
   const failures: AuthenticationFailure[] = [];
   if (has("dmarc", "fail")) failures.push("dmarc");
   if (has("spf", "fail")) failures.push("spf");
-  if (has("dkim", "fail") && !has("dkim", "pass")) failures.push("dkim");
+  if (has("dkim", "fail")) failures.push("dkim");
   return failures;
 }
