@@ -75,6 +75,7 @@ export interface IncomingMessageSummary {
   snippet?: string;
   receivedAt: Date;
   hasAttachments: boolean;
+  category?: "person" | "notification" | "newsletter";
 }
 
 export interface IncomingMessageContent {

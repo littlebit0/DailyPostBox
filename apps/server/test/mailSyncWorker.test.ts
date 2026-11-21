@@ -1,11 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { IncomingMessageSummary, MailAccount } from "../src/domain/types.js";
 import type { ImapReceiver } from "../src/mail/ImapReceiver.js";
 import type { Pop3Receiver } from "../src/mail/Pop3Receiver.js";
 import type { PushNotifier } from "../src/notifications/PushNotifier.js";
 import { authenticationFailure } from "../src/mail/authenticationFailure.js";
 import { InMemoryAccountRepository } from "../src/workers/AccountRepository.js";
+import { LocalFileAccountRepository } from "../src/workers/LocalFileAccountRepository.js";
 import { MailSyncWorker } from "../src/workers/MailSyncWorker.js";
 
 function account(): MailAccount {
@@ -24,7 +28,7 @@ function account(): MailAccount {
   };
 }
 
-function worker(repository: InMemoryAccountRepository, imap: object) {
+function worker(repository: InMemoryAccountRepository | LocalFileAccountRepository, imap: object) {
   return new MailSyncWorker(
     repository,
     imap as ImapReceiver,
@@ -218,4 +222,90 @@ test("a failing push does not disturb mail handling", async () => {
   } finally {
     await syncWorker.stop();
   }
+});
+
+test("backfills categories for stored messages once, in bounded batches", async () => {
+  const repository = new InMemoryAccountRepository();
+  const mailAccount = account();
+  await repository.addAccount(mailAccount);
+  const stored = (uid: number): IncomingMessageSummary => ({
+    accountId: mailAccount.id,
+    providerMessageId: String(uid),
+    mailbox: "INBOX",
+    from: "a@example.com",
+    subject: "old",
+    receivedAt: new Date(uid * 1000),
+    hasAttachments: false
+  });
+  for (let uid = 1; uid <= 520; uid += 1) {
+    await repository.saveIncomingMessage(stored(uid));
+  }
+  const requests: number[][] = [];
+  const imap = {
+    fetchLatestBatches: async () => undefined,
+    fetchSummariesByUid: async (_a: MailAccount, _m: string, uids: number[]) => {
+      requests.push(uids);
+      // uid 1 is gone from the server; even uids are newsletters.
+      return uids.filter((uid) => uid !== 1).map((uid) => ({
+        ...stored(uid),
+        category: uid % 2 === 0 ? "newsletter" as const : "person" as const
+      }));
+    }
+  };
+  const syncWorker = worker(repository, imap);
+
+  await syncWorker.syncAccount(mailAccount);
+  assert.equal(requests.length, 10);
+  assert.ok(requests.every((r) => r.length === 50));
+  const byUid = async () => new Map(
+    (await repository.listInbox(mailAccount.userId)).map((m) => [m.providerMessageId, m])
+  );
+  // Newest first: uids 21..520 are done, the oldest 20 wait for the next sync.
+  assert.equal((await byUid()).get("100")?.category, "newsletter");
+  assert.equal((await byUid()).get("101")?.category, "person");
+  assert.equal((await byUid()).get("2")?.category, undefined);
+
+  // Next sync handles the remaining 20 once, then nothing is refetched.
+  await syncWorker.syncAccount(mailAccount);
+  assert.equal((await byUid()).get("2")?.category, "newsletter");
+  assert.equal((await byUid()).get("1")?.category, "person");
+  assert.equal(requests.length, 11);
+  assert.equal(requests[10].length, 20);
+  await syncWorker.syncAccount(mailAccount);
+  assert.equal(requests.length, 11);
+});
+
+test("category backfill writes the state file once per batch", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "backfill-"));
+  const repository = new LocalFileAccountRepository(join(dir, "state.json"));
+  const mailAccount = account();
+  await repository.addAccount(mailAccount);
+  const stored = (uid: number): IncomingMessageSummary => ({
+    accountId: mailAccount.id,
+    providerMessageId: String(uid),
+    mailbox: "INBOX",
+    from: "a@example.com",
+    subject: "old",
+    receivedAt: new Date(uid * 1000),
+    hasAttachments: false
+  });
+  for (let uid = 1; uid <= 100; uid += 1) {
+    await repository.saveIncomingMessage(stored(uid));
+  }
+  const internals = repository as unknown as { flush: () => Promise<void> };
+  const originalFlush = internals.flush.bind(repository);
+  let flushes = 0;
+  internals.flush = () => {
+    flushes += 1;
+    return originalFlush();
+  };
+  const imap = {
+    fetchLatestBatches: async () => undefined,
+    fetchSummariesByUid: async (_a: MailAccount, _m: string, uids: number[]) =>
+      uids.map((uid) => ({ ...stored(uid), category: "newsletter" as const }))
+  };
+
+  await worker(repository, imap).syncAccount(mailAccount);
+  // 2 batches of 50, plus a few sync status writes; per-message saves gave 100+.
+  assert.ok(flushes <= 6, `flushes=${flushes}`);
 });
