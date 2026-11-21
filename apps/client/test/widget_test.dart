@@ -504,6 +504,24 @@ void main() {
       Rect.fromLTRB(0, 24, 36, 44),
     ]);
   });
+
+  test('groups mail by thread id and keeps unthreaded mail', () {
+    MailSummary mail(String id, String? thread) => MailSummary(
+          id: id,
+          sender: '',
+          subject: '',
+          snippet: '',
+          receivedAtLabel: '',
+          unread: true,
+          threadId: thread,
+        );
+
+    final grouped = groupByThread(
+      [mail('1', 'a'), mail('2', 'b'), mail('3', 'a'), mail('4', null)],
+    );
+
+    expect(grouped.map((item) => item.id), ['1', '2', '4']);
+  });
 }
 
 class _CredentialRecordingApi extends MailApiClient {

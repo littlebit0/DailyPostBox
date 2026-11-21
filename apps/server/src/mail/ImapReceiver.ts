@@ -18,6 +18,7 @@ import {
 } from "./imapSequenceRanges.js";
 import { isAuthenticationFailure } from "./authenticationFailure.js";
 import { extractMessageLinks } from "./messageLinks.js";
+import { parseMessageIds } from "./threading.js";
 
 export class ImapReceiver implements MailReceiver {
   private static readonly maxBodyBytes = 2 * 1024 * 1024;
@@ -299,7 +300,9 @@ export class ImapReceiver implements MailReceiver {
     for await (const message of client.fetch(uids, {
       envelope: true,
       flags: true,
-      uid: true
+      uid: true,
+      threadId: true,
+      headers: ["references"]
     }, { uid: true })) {
       const summary = toIncomingMessage(account, mailbox, message);
       if (summary) batch.push(summary);
@@ -340,7 +343,11 @@ function toIncomingMessage(
     from: envelope.from?.map((item) => item.address).filter(Boolean).join(", ") ?? "",
     subject: envelope.subject ?? "",
     receivedAt: envelope.date instanceof Date ? envelope.date : new Date(),
-    hasAttachments: false
+    hasAttachments: false,
+    messageId: envelope.messageId,
+    inReplyTo: envelope.inReplyTo,
+    references: parseMessageIds(message.headers?.toString("utf8")),
+    gmailThreadId: message.threadId
   };
 }
 

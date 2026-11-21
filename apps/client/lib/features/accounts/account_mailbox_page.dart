@@ -138,6 +138,7 @@ class _MailboxContentState extends ConsumerState<_MailboxContent> {
   Widget build(BuildContext context) {
     final account = widget.account;
     final messages = ref.watch(accountMessagesProvider(account.id));
+    final threaded = ref.watch(threadViewProvider);
     final strings = ref.watch(appStringsProvider);
 
     return Column(
@@ -191,7 +192,8 @@ class _MailboxContentState extends ConsumerState<_MailboxContent> {
           ),
         Expanded(
           child: messages.when(
-            data: (items) {
+            data: (all) {
+              final items = threaded ? groupByThread(all) : all;
               if (items.isEmpty) {
                 return Center(
                   child: Column(
@@ -250,9 +252,16 @@ class _MailboxContentState extends ConsumerState<_MailboxContent> {
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                     ),
-                    trailing: Text(message.receivedAtLabel),
+                    trailing: Text(
+                      threaded && message.threadCount > 1
+                          ? '${strings.threadMessageCount(message.threadCount)}\n${message.receivedAtLabel}'
+                          : message.receivedAtLabel,
+                      textAlign: TextAlign.end,
+                    ),
                     onTap: () => context.go(
-                      '/accounts/${account.id}/messages/${Uri.encodeComponent(message.id)}',
+                      threaded && message.threadCount > 1
+                          ? '/accounts/${account.id}/threads/${Uri.encodeComponent(message.threadId!)}'
+                          : '/accounts/${account.id}/messages/${Uri.encodeComponent(message.id)}',
                       extra: const {'disableTransition': true},
                     ),
                   );

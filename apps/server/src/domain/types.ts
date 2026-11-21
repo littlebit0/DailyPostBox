@@ -75,6 +75,10 @@ export interface IncomingMessageSummary {
   snippet?: string;
   receivedAt: Date;
   hasAttachments: boolean;
+  messageId?: string;
+  inReplyTo?: string;
+  references?: string[];
+  gmailThreadId?: string;
 }
 
 export interface IncomingMessageContent {
