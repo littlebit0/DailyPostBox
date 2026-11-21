@@ -1,4 +1,4 @@
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyRequest } from "fastify";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { SearchObject } from "imapflow";
@@ -80,10 +80,15 @@ const accountSchema = z.object({
 const demoUserId = "demo-user";
 
 // shortcut: no real auth yet (issue #20), so mail search and the IMAP
-// fallback are loopback-only unless ALLOW_REMOTE_MAIL_SEARCH=true.
-function canReadUnstoredMail(ip: string): boolean {
-  return process.env.ALLOW_REMOTE_MAIL_SEARCH === "true" ||
-    ip === "127.0.0.1" || ip === "::1" || ip === "::ffff:127.0.0.1";
+// fallback require a loopback peer, a loopback Host (blocks DNS rebinding) and
+// no Origin header (browsers send one, the native client does not), unless
+// ALLOW_REMOTE_MAIL_SEARCH=true.
+function canReadUnstoredMail(request: FastifyRequest): boolean {
+  if (process.env.ALLOW_REMOTE_MAIL_SEARCH === "true") return true;
+  const host = (request.headers.host ?? "").replace(/:\d+$/, "").toLowerCase();
+  return ["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(request.ip) &&
+    ["127.0.0.1", "localhost", "[::1]"].includes(host) &&
+    request.headers.origin === undefined;
 }
 
 export async function registerRoutes(
@@ -296,7 +301,7 @@ export async function registerRoutes(
   });
 
   app.get("/accounts/:id/search", async (request, reply) => {
-    if (!canReadUnstoredMail(request.ip)) {
+    if (!canReadUnstoredMail(request)) {
       return reply.code(403).send({ error: "Search is only available locally." });
     }
     const params = z.object({ id: z.string() }).parse(request.params);
@@ -344,7 +349,7 @@ export async function registerRoutes(
     const message = messages.find(
       (item) => item.accountId === params.accountId &&
         item.providerMessageId === params.messageId
-    ) ?? (account.incomingProtocol === "imap" && canReadUnstoredMail(request.ip)
+    ) ?? (account.incomingProtocol === "imap" && canReadUnstoredMail(request)
       ? await deps.fetchMessageSummary(account, params.messageId)
       : null);
     if (!message) {
