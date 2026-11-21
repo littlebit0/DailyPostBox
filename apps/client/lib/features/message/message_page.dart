@@ -5,9 +5,14 @@ import 'package:go_router/go_router.dart';
 import '../../core/i18n/language_controller.dart';
 import '../../services/mail_api_client.dart';
 import '../../widgets/app_shell.dart';
+import 'html_message_body.dart';
 import 'linked_message_body.dart';
 
-typedef MessageRequest = ({String messageId, String? accountId});
+typedef MessageRequest = ({
+  String messageId,
+  String? accountId,
+  bool remoteImages,
+});
 
 final messageProvider =
     FutureProvider.family<MessageDetail, MessageRequest>((ref, request) {
@@ -17,12 +22,16 @@ final messageProvider =
     return api.fetchAccountMessage(
       accountId: accountId,
       messageId: request.messageId,
+      remoteImages: request.remoteImages,
     );
   }
-  return api.fetchMessage(request.messageId);
+  return api.fetchMessage(
+    request.messageId,
+    remoteImages: request.remoteImages,
+  );
 });
 
-class MessagePage extends ConsumerWidget {
+class MessagePage extends ConsumerStatefulWidget {
   const MessagePage({
     super.key,
     required this.messageId,
@@ -33,9 +42,22 @@ class MessagePage extends ConsumerWidget {
   final String? accountId;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<MessagePage> createState() => _MessagePageState();
+}
+
+class _MessagePageState extends ConsumerState<MessagePage> {
+  // Per-view only: remote images are never remembered across messages.
+  bool _showRemoteImages = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final accountId = widget.accountId;
     final message = ref.watch(
-      messageProvider((messageId: messageId, accountId: accountId)),
+      messageProvider((
+        messageId: widget.messageId,
+        accountId: accountId,
+        remoteImages: _showRemoteImages,
+      )),
     );
     final strings = ref.watch(appStringsProvider);
     final mailboxPath =
@@ -80,7 +102,15 @@ class MessagePage extends ConsumerWidget {
                 Text('${strings.from}: ${item.sender}'),
                 Text(item.receivedAtLabel),
                 const Divider(height: 32),
-                LinkedMessageBody(body: item.body, links: item.links),
+                if (item.remoteImageCount > 0 && !_showRemoteImages)
+                  _RemoteImageBanner(
+                    count: item.remoteImageCount,
+                    onShow: () => setState(() => _showRemoteImages = true),
+                  ),
+                if (item.html.isNotEmpty)
+                  HtmlMessageBody(html: item.html)
+                else
+                  LinkedMessageBody(body: item.body, links: item.links),
               ],
             ),
             loading: () => const Center(child: CircularProgressIndicator()),
@@ -99,6 +129,29 @@ class MessagePage extends ConsumerWidget {
     return AppShell(
       selectedDestinationId: AppShell.accountDestinationId(selectedAccountId),
       child: content,
+    );
+  }
+}
+
+class _RemoteImageBanner extends ConsumerWidget {
+  const _RemoteImageBanner({required this.count, required this.onShow});
+
+  final int count;
+  final VoidCallback onShow;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final strings = ref.watch(appStringsProvider);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Row(
+        children: [
+          const Icon(Icons.shield_outlined, size: 18),
+          const SizedBox(width: 8),
+          Expanded(child: Text(strings.remoteImagesBlocked(count))),
+          TextButton(onPressed: onShow, child: Text(strings.showImagesOnce)),
+        ],
+      ),
     );
   }
 }

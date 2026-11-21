@@ -81,6 +81,8 @@ export interface IncomingMessageContent {
   text: string;
   truncated: boolean;
   links: IncomingMessageLink[];
+  /** Raw HTML alternative. Must go through sanitizeHtml before leaving the server. */
+  html?: string;
 }
 
 export interface IncomingMessageLink {

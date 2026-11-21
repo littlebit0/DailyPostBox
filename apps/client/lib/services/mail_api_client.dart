@@ -77,18 +77,25 @@ class MailApiClient {
         .toList();
   }
 
-  Future<MessageDetail> fetchMessage(String messageId) async {
-    final response =
-        await _dio.get<Map<String, dynamic>>('/mail/messages/$messageId');
+  Future<MessageDetail> fetchMessage(
+    String messageId, {
+    bool remoteImages = false,
+  }) async {
+    final response = await _dio.get<Map<String, dynamic>>(
+      '/mail/messages/$messageId',
+      queryParameters: remoteImages ? {'remoteImages': 'allow'} : null,
+    );
     return MessageDetail.fromJson(response.data ?? {});
   }
 
   Future<MessageDetail> fetchAccountMessage({
     required String accountId,
     required String messageId,
+    bool remoteImages = false,
   }) async {
     final response = await _dio.get<Map<String, dynamic>>(
       '/accounts/$accountId/messages/$messageId',
+      queryParameters: remoteImages ? {'remoteImages': 'allow'} : null,
     );
     return MessageDetail.fromJson(response.data ?? {});
   }
@@ -288,12 +295,16 @@ class MessageDetail {
     required this.body,
     required this.links,
     required this.receivedAtLabel,
+    this.html = '',
+    this.remoteImageCount = 0,
   });
 
   final String id;
   final String sender;
   final String subject;
   final String body;
+  final String html;
+  final int remoteImageCount;
   final List<MessageLink> links;
   final String receivedAtLabel;
 
@@ -303,6 +314,8 @@ class MessageDetail {
       sender: json['from'] as String? ?? '',
       subject: json['subject'] as String? ?? '',
       body: json['body'] as String? ?? '',
+      html: json['html'] as String? ?? '',
+      remoteImageCount: json['remoteImageCount'] as int? ?? 0,
       links: (json['bodyLinks'] as List<dynamic>? ?? const [])
           .whereType<Map<String, dynamic>>()
           .map(MessageLink.fromJson)
