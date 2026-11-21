@@ -5,10 +5,37 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:daily_postbox/features/accounts/accounts_page.dart';
 import 'package:daily_postbox/features/message/linked_message_body.dart';
+import 'package:daily_postbox/features/message/message_page.dart';
 import 'package:daily_postbox/main.dart';
 import 'package:daily_postbox/services/mail_api_client.dart';
 
 void main() {
+  testWidgets('shows signed and encrypted status on message page',
+      (WidgetTester tester) async {
+    final detail = MessageDetail.fromJson({
+      'id': '1',
+      'subject': 's',
+      'body': 'b',
+      'security': {
+        'signed': 'openpgp',
+        'encrypted': 'smime',
+        'verified': false
+      },
+    });
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          messageProvider.overrideWith((ref, request) async => detail),
+        ],
+        child: const MaterialApp(home: MessagePage(messageId: '1')),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.textContaining('서명된 메일'), findsOneWidget);
+    expect(find.textContaining('암호화된 메일'), findsOneWidget);
+  });
+
   testWidgets('renders mail app shell', (WidgetTester tester) async {
     await tester.pumpWidget(
       ProviderScope(

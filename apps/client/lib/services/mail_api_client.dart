@@ -288,6 +288,8 @@ class MessageDetail {
     required this.body,
     required this.links,
     required this.receivedAtLabel,
+    this.signed = false,
+    this.encrypted = false,
   });
 
   final String id;
@@ -296,6 +298,8 @@ class MessageDetail {
   final String body;
   final List<MessageLink> links;
   final String receivedAtLabel;
+  final bool signed;
+  final bool encrypted;
 
   factory MessageDetail.fromJson(Map<String, dynamic> json) {
     return MessageDetail(
@@ -308,6 +312,8 @@ class MessageDetail {
           .map(MessageLink.fromJson)
           .toList(growable: false),
       receivedAtLabel: _formatReceivedAt(json['receivedAt'] as String?),
+      signed: (json['security'] as Map?)?['signed'] != null,
+      encrypted: (json['security'] as Map?)?['encrypted'] != null,
     );
   }
 }

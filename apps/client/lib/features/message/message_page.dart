@@ -9,8 +9,10 @@ import 'linked_message_body.dart';
 
 typedef MessageRequest = ({String messageId, String? accountId});
 
-final messageProvider =
-    FutureProvider.family<MessageDetail, MessageRequest>((ref, request) {
+final messageProvider = FutureProvider.family<MessageDetail, MessageRequest>((
+  ref,
+  request,
+) {
   final api = ref.watch(mailApiClientProvider);
   final accountId = request.accountId;
   if (accountId != null) {
@@ -23,11 +25,7 @@ final messageProvider =
 });
 
 class MessagePage extends ConsumerWidget {
-  const MessagePage({
-    super.key,
-    required this.messageId,
-    this.accountId,
-  });
+  const MessagePage({super.key, required this.messageId, this.accountId});
 
   final String messageId;
   final String? accountId;
@@ -38,8 +36,9 @@ class MessagePage extends ConsumerWidget {
       messageProvider((messageId: messageId, accountId: accountId)),
     );
     final strings = ref.watch(appStringsProvider);
-    final mailboxPath =
-        accountId == null ? '/accounts' : '/accounts/$accountId/mail';
+    final mailboxPath = accountId == null
+        ? '/accounts'
+        : '/accounts/$accountId/mail';
 
     final content = Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -79,14 +78,23 @@ class MessagePage extends ConsumerWidget {
                 const SizedBox(height: 12),
                 Text('${strings.from}: ${item.sender}'),
                 Text(item.receivedAtLabel),
+                if (item.signed)
+                  _SecurityStatus(
+                    Icons.verified_outlined,
+                    strings.signedMailStatus,
+                  ),
+                if (item.encrypted)
+                  _SecurityStatus(
+                    Icons.lock_outline,
+                    strings.encryptedMailStatus,
+                  ),
                 const Divider(height: 32),
                 LinkedMessageBody(body: item.body, links: item.links),
               ],
             ),
             loading: () => const Center(child: CircularProgressIndicator()),
-            error: (error, stackTrace) => Center(
-              child: Text(strings.messageLoadFailedTitle),
-            ),
+            error: (error, stackTrace) =>
+                Center(child: Text(strings.messageLoadFailedTitle)),
           ),
         ),
       ],
@@ -99,6 +107,27 @@ class MessagePage extends ConsumerWidget {
     return AppShell(
       selectedDestinationId: AppShell.accountDestinationId(selectedAccountId),
       child: content,
+    );
+  }
+}
+
+class _SecurityStatus extends StatelessWidget {
+  const _SecurityStatus(this.icon, this.label);
+
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Row(
+        children: [
+          Icon(icon, size: 18),
+          const SizedBox(width: 8),
+          Expanded(child: Text(label)),
+        ],
+      ),
     );
   }
 }
