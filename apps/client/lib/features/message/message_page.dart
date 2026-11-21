@@ -44,7 +44,11 @@ class _MessagePageState extends ConsumerState<MessagePage> {
   String get messageId => widget.messageId;
   String? get accountId => widget.accountId;
 
-  // Bumped per request so a failed request only rolls back fields no newer request touched.
+  // Last server-confirmed values (null = as loaded); failures roll back to these.
+  bool? _confirmedSeen;
+  bool? _confirmedFlagged;
+
+  // Bumped per request so a failure only rolls back when no newer request for the field is pending.
   int _seenVersion = 0;
   int _flaggedVersion = 0;
 
@@ -56,8 +60,6 @@ class _MessagePageState extends ConsumerState<MessagePage> {
     if (id == null) return;
     // The container outlives this widget, so invalidation still works after dispose.
     final container = ProviderScope.containerOf(context, listen: false);
-    final previousSeen = _seen;
-    final previousFlagged = _flagged;
     final seenVersion = seen != null ? ++_seenVersion : _seenVersion;
     final flaggedVersion = flagged != null
         ? ++_flaggedVersion
@@ -79,6 +81,8 @@ class _MessagePageState extends ConsumerState<MessagePage> {
       );
       _queue = run.catchError((_) {});
       await run;
+      if (seen != null) _confirmedSeen = seen;
+      if (flagged != null) _confirmedFlagged = flagged;
       container.invalidate(accountMessagesProvider(id));
       container.invalidate(
         messageProvider((messageId: messageId, accountId: id)),
@@ -86,9 +90,9 @@ class _MessagePageState extends ConsumerState<MessagePage> {
     } catch (_) {
       if (!mounted) return;
       setState(() {
-        if (seen != null && seenVersion == _seenVersion) _seen = previousSeen;
+        if (seen != null && seenVersion == _seenVersion) _seen = _confirmedSeen;
         if (flagged != null && flaggedVersion == _flaggedVersion) {
-          _flagged = previousFlagged;
+          _flagged = _confirmedFlagged;
         }
       });
       ScaffoldMessenger.maybeOf(context)?.showSnackBar(

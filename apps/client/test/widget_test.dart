@@ -570,6 +570,47 @@ void main() {
       expect(find.byIcon(Icons.star), findsOneWidget);
     });
 
+    testWidgets('consecutive failures restore the confirmed state', (
+      tester,
+    ) async {
+      final api = await pumpMessage(tester, _FlagApi());
+      api.calls[0].complete();
+      await tester.pump();
+      await tester.pump();
+      await tester.tap(find.byIcon(Icons.star_border));
+      await tester.pump();
+      await tester.tap(find.byIcon(Icons.star));
+      await tester.pump();
+      api.calls[1].completeError(Exception('x'));
+      await tester.pump();
+      await tester.pump();
+      api.calls[2].completeError(Exception('x'));
+      await tester.pump();
+      await tester.pump();
+      expect(find.byIcon(Icons.star_border), findsOneWidget);
+      expect(find.byIcon(Icons.star), findsNothing);
+    });
+
+    testWidgets('failure after confirmed star restores starred', (
+      tester,
+    ) async {
+      final api = await pumpMessage(tester, _FlagApi());
+      api.calls[0].complete();
+      await tester.pump();
+      await tester.pump();
+      await tester.tap(find.byIcon(Icons.star_border));
+      await tester.pump();
+      await tester.tap(find.byIcon(Icons.star));
+      await tester.pump();
+      api.calls[1].complete();
+      await tester.pump();
+      await tester.pump();
+      api.calls[2].completeError(Exception('x'));
+      await tester.pump();
+      await tester.pump();
+      expect(find.byIcon(Icons.star), findsOneWidget);
+    });
+
     testWidgets('same-flag requests are sent in order', (tester) async {
       final api = await pumpMessage(tester, _FlagApi());
       api.calls[0].complete();
