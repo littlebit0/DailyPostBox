@@ -294,6 +294,7 @@ class MessageDetail {
     required this.body,
     required this.links,
     required this.receivedAtLabel,
+    this.receivedAt,
     this.accountId,
     this.messageId,
     this.references = const [],
@@ -314,6 +315,7 @@ class MessageDetail {
   final String body;
   final List<MessageLink> links;
   final String receivedAtLabel;
+  final DateTime? receivedAt;
 
   factory MessageDetail.fromJson(Map<String, dynamic> json) {
     return MessageDetail(
@@ -326,6 +328,8 @@ class MessageDetail {
           .map(MessageLink.fromJson)
           .toList(growable: false),
       receivedAtLabel: _formatReceivedAt(json['receivedAt'] as String?),
+      receivedAt:
+          DateTime.tryParse(json['receivedAt'] as String? ?? '')?.toLocal(),
       accountId: json['accountId'] as String?,
       messageId: json['messageId'] as String?,
       references: _strings(json['references']),

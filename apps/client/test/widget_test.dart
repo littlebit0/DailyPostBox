@@ -2,6 +2,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:intl/date_symbol_data_local.dart';
 
 import 'package:daily_postbox/features/accounts/accounts_page.dart';
 import 'package:daily_postbox/features/message/linked_message_body.dart';
@@ -15,6 +16,26 @@ void main() {
     expect(replySubject('Hello'), 'Re: Hello');
     expect(replySubject('Re: Hello'), 'Re: Hello');
     expect(replySubject('RE: Hello'), 'RE: Hello');
+  });
+
+  test('ReplyDraft quote header uses absolute local date-time', () async {
+    await initializeDateFormatting();
+    final iso = DateTime(2026, 11, 20, 17, 12).toIso8601String();
+    final message = MessageDetail.fromJson({
+      'id': '1',
+      'from': 'a@x.com',
+      'body': 'hi',
+      'receivedAt': iso,
+    });
+    expect(
+      ReplyDraft.from(message, AppStrings(AppLanguage.korean), all: false).body,
+      contains('2026-11-20 (금) 17:12 a@x.com 님이 작성:'),
+    );
+    expect(
+      ReplyDraft.from(message, AppStrings(AppLanguage.english), all: false)
+          .body,
+      contains('On Fri, Nov 20, 2026 at 17:12, a@x.com wrote:'),
+    );
   });
 
   test('ReplyDraft quotes the original and keeps thread ids', () {

@@ -25,11 +25,14 @@ class ReplyDraft {
     required bool all,
   }) {
     final quoted = message.body.split('\n').map((line) => '> $line').join('\n');
+    final receivedAt = message.receivedAt;
+    final quoteTime =
+        receivedAt == null ? message.receivedAtLabel : strings.quoteDate(receivedAt);
     return ReplyDraft(
       to: all ? message.replyAllTo : message.replyTo,
       cc: all ? message.replyAllCc : const [],
       subject: replySubject(message.subject),
-      body: '\n\n${strings.quoteHeader(message.receivedAtLabel, message.sender)}'
+      body: '\n\n${strings.quoteHeader(quoteTime, message.sender)}'
           '\n$quoted',
       inReplyTo: message.messageId,
       references: message.references,
