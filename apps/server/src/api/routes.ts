@@ -12,6 +12,7 @@ import type {
   ProviderId
 } from "../domain/types.js";
 import type { AccountRepository } from "../workers/AccountRepository.js";
+import type { RevokeResult } from "../auth/OAuthTokenRevoker.js";
 import { providerRegistry } from "../providers/providerRegistry.js";
 import {
   applySyncFailure,
@@ -76,6 +77,7 @@ const demoUserId = "demo-user";
 export async function registerRoutes(
   app: FastifyInstance,
   deps: {
+    revokeOAuthTokens?: (account: MailAccount) => Promise<RevokeResult>;
     sender: MailSender;
     accounts: AccountRepository;
     validateAccount: (account: MailAccount) => Promise<void>;
@@ -161,9 +163,13 @@ export async function registerRoutes(
 
   app.delete("/accounts/:id", async (request, reply) => {
     const params = z.object({ id: z.string() }).parse(request.params);
+    const account = await deps.accounts.getAccount(params.id);
     await deps.stopAccountSync(params.id);
+    const revoke = account && deps.revokeOAuthTokens
+      ? await deps.revokeOAuthTokens(account)
+      : "skipped";
     await deps.accounts.deleteAccount(params.id);
-    return reply.code(204).send();
+    return { revoke };
   });
 
   app.post("/accounts/:id/validate", async (request, reply) => {

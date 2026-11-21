@@ -187,8 +187,11 @@ class AppStrings {
   String get confirmDeleteAccount =>
       _ko ? '이 계정을 삭제할까요?' : 'Delete this account?';
   String get deleteAccountDescription => _ko
-      ? '이 앱에 저장된 계정과 동기화된 메일 목록이 삭제됩니다.'
-      : 'This removes the account and synced mail list from this app.';
+      ? '서버에 저장된 계정 자격 증명과 동기화된 메일 목록이 삭제되고, Google 계정은 앱 접근도 해제합니다.'
+      : 'This removes the stored credentials and synced mail list from the server, and revokes app access for Google accounts.';
+  String get revokeNotCompleted => _ko
+      ? '계정은 삭제했지만 제공자의 앱 접근 해제는 끝내지 못했습니다. 제공자의 보안 설정에서 DailyPostBox 접근을 직접 해제하세요.'
+      : 'The account was deleted, but app access at the provider could not be revoked. Remove DailyPostBox in the provider security settings.';
   String get cancel => _ko ? '취소' : 'Cancel';
   String get statusIdle => _ko ? '대기' : 'Idle';
   String get statusValidating => _ko ? '검증 중' : 'Validating';
