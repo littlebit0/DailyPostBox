@@ -8,19 +8,26 @@ export function extractAttachments(
   const found: IncomingMessageAttachment[] = [];
 
   const visit = (node: MessageStructureObject): void => {
-    for (const child of node.childNodes ?? []) visit(child);
-    if (node.childNodes?.length || !node.part) return;
-
     const filename =
       node.dispositionParameters?.filename ?? node.parameters?.name;
-    if (node.disposition?.toLowerCase() !== "attachment" && !filename) return;
+    const isAttachment =
+      node.disposition?.toLowerCase() === "attachment" || Boolean(filename);
+    const type = node.type.toLowerCase();
+    const hasChildren = Boolean(node.childNodes?.length);
 
-    found.push({
-      part: node.part,
-      filename: filename || `attachment-${node.part}`,
-      contentType: node.type.toLowerCase(),
-      size: node.size ?? 0
-    });
+    // An attached message carries child parts, but the message itself is the attachment.
+    if (node.part && isAttachment && (!hasChildren || type === "message/rfc822")) {
+      found.push({
+        part: node.part,
+        filename:
+          filename ||
+          `attachment-${node.part}${type === "message/rfc822" ? ".eml" : ""}`,
+        contentType: type,
+        size: node.size ?? 0
+      });
+      return;
+    }
+    for (const child of node.childNodes ?? []) visit(child);
   };
 
   visit(root);

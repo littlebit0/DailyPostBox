@@ -101,16 +101,17 @@ class MailApiClient {
     required String part,
     required String savePath,
   }) async {
+    // Write to a temp file so a failed download never touches an existing file.
+    final temp = File('$savePath.part');
     try {
       await _dio.download(
         '/accounts/$accountId/messages/$messageId/attachments/$part',
-        savePath,
+        temp.path,
         options: Options(receiveTimeout: const Duration(minutes: 2)),
       );
+      await temp.rename(savePath);
     } catch (_) {
-      // Do not leave a truncated file at the location the user picked.
-      final partial = File(savePath);
-      if (partial.existsSync()) partial.deleteSync();
+      if (temp.existsSync()) temp.deleteSync();
       rethrow;
     }
   }

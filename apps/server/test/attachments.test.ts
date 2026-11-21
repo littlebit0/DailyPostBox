@@ -38,6 +38,28 @@ test("extracts attachment parts and skips body parts", () => {
   ]);
 });
 
+test("exposes an attached message itself instead of its inner parts", () => {
+  const result = extractAttachments({
+    type: "multipart/mixed",
+    childNodes: [
+      { part: "1", type: "text/plain" },
+      {
+        part: "2",
+        type: "message/rfc822",
+        size: 500,
+        disposition: "attachment",
+        dispositionParameters: { filename: "forwarded.eml" },
+        childNodes: [
+          { part: "2.1", type: "application/pdf", disposition: "attachment" }
+        ]
+      }
+    ]
+  });
+  assert.deepEqual(result, [
+    { part: "2", filename: "forwarded.eml", contentType: "message/rfc822", size: 500 }
+  ]);
+});
+
 test("attachment route streams the part with an encoded filename", async () => {
   const { default: Fastify } = await import("fastify");
   const { Readable } = await import("node:stream");

@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -9,6 +11,21 @@ import 'package:daily_postbox/main.dart';
 import 'package:daily_postbox/services/mail_api_client.dart';
 
 void main() {
+  test('failed attachment download keeps the existing destination file',
+      () async {
+    final dir = Directory.systemTemp.createTempSync('dl');
+    addTearDown(() => dir.deleteSync(recursive: true));
+    final target = File('${dir.path}/a.txt')..writeAsStringSync('keep');
+    final client = MailApiClient(baseUrl: 'http://127.0.0.1:1');
+    await expectLater(
+      client.downloadAttachment(
+          accountId: 'a', messageId: 'm', part: '1', savePath: target.path),
+      throwsA(isA<DioException>()),
+    );
+    expect(target.readAsStringSync(), 'keep');
+    expect(File('${target.path}.part').existsSync(), isFalse);
+  });
+
   testWidgets('renders mail app shell', (WidgetTester tester) async {
     await tester.pumpWidget(
       ProviderScope(
