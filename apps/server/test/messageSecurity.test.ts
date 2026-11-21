@@ -52,3 +52,38 @@ test("detects OpenPGP encrypted and nested signed", () => {
   });
   assert.equal(nested.signed, "openpgp");
 });
+
+test("ignores security of attached parts", () => {
+  const mixed = detectMessageSecurity({
+    type: "multipart/mixed",
+    childNodes: [
+      text,
+      { type: "application/pkcs7-mime", parameters: { "smime-type": "signed-data" }, disposition: "attachment" },
+      { type: "application/pkcs7-mime", parameters: { "smime-type": "enveloped-data" }, disposition: "ATTACHMENT" },
+      { type: "application/pkcs7-signature", disposition: "attachment", dispositionParameters: { filename: "smime.p7s" } },
+      { type: "application/pgp-signature", disposition: "attachment", dispositionParameters: { filename: "sig.asc" } },
+      {
+        type: "message/rfc822",
+        disposition: "attachment",
+        childNodes: [{ type: "multipart/signed", parameters: { protocol: "application/pgp-signature" } }]
+      }
+    ]
+  });
+  assert.deepEqual(mixed, { signed: null, encrypted: null, verified: false });
+});
+
+test("treats only enveloped S/MIME types as encrypted", () => {
+  const smime = (parameters: { [key: string]: string }) =>
+    detectMessageSecurity({ type: "application/pkcs7-mime", parameters });
+  assert.equal(smime({ "smime-type": "authEnveloped-data" }).encrypted, "smime");
+  assert.equal(smime({ name: "smime.p7m" }).encrypted, "smime");
+  for (const smimeType of ["compressed-data", "certs-only"]) {
+    assert.deepEqual(smime({ "smime-type": smimeType, name: "smime.p7m" }), {
+      signed: null, encrypted: null, verified: false
+    });
+  }
+  assert.equal(smime({ name: "smime.p7c" }).encrypted, null);
+  const signed = smime({ "smime-type": "signed-data", name: "smime.p7m" });
+  assert.equal(signed.signed, "smime");
+  assert.equal(signed.encrypted, null);
+});
