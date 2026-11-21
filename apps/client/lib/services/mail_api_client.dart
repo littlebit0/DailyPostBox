@@ -101,18 +101,19 @@ class MailApiClient {
     required String part,
     required String savePath,
   }) async {
-    // Write to a temp file so a failed download never touches an existing file.
-    final temp = File('$savePath.part');
+    // Download into a unique app-accessible temp dir (the sandbox may deny
+    // writes next to the selected file); touch the destination only on success.
+    final tempDir = await Directory.systemTemp.createTemp('attachment_');
     try {
+      final temp = File('${tempDir.path}/download');
       await _dio.download(
         '/accounts/$accountId/messages/$messageId/attachments/$part',
         temp.path,
         options: Options(receiveTimeout: const Duration(minutes: 2)),
       );
-      await temp.rename(savePath);
-    } catch (_) {
-      if (temp.existsSync()) temp.deleteSync();
-      rethrow;
+      await temp.copy(savePath);
+    } finally {
+      await tempDir.delete(recursive: true);
     }
   }
 

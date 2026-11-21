@@ -26,6 +26,27 @@ void main() {
     expect(File('${target.path}.part').existsSync(), isFalse);
   });
 
+  test('successful attachment download writes destination, leaves no temp',
+      () async {
+    HttpOverrides.global = null; // test binding stubs HTTP with 400
+    final server = await HttpServer.bind('127.0.0.1', 0);
+    addTearDown(() => server.close(force: true));
+    server.listen((req) {
+      req.response.add([1, 2, 3]);
+      req.response.close();
+    });
+    final dir = Directory.systemTemp.createTempSync('dl');
+    addTearDown(() => dir.deleteSync(recursive: true));
+    final target = File('${dir.path}/a.bin')..writeAsStringSync('old');
+    final sibling = File('${dir.path}/a.bin.part')..writeAsStringSync('other');
+    final client = MailApiClient(baseUrl: 'http://127.0.0.1:${server.port}');
+    await client.downloadAttachment(
+        accountId: 'a', messageId: 'm', part: '1', savePath: target.path);
+    expect(target.readAsBytesSync(), [1, 2, 3]);
+    expect(sibling.readAsStringSync(), 'other');
+    expect(dir.listSync().length, 2);
+  });
+
   testWidgets('renders mail app shell', (WidgetTester tester) async {
     await tester.pumpWidget(
       ProviderScope(
