@@ -176,6 +176,60 @@ void main() {
     expect(find.text('둘째 메일'), findsNothing);
   });
 
+  testWidgets('keeps the j/k selected mailbox row visible', (
+    WidgetTester tester,
+  ) async {
+    const account = MailAccountSummary(
+      id: 'account-1',
+      providerId: 'gmail',
+      emailAddress: 'mailbox@example.com',
+      incomingProtocol: 'imap',
+      authMode: 'oauth2',
+      syncStatus: 'idle',
+      syncError: null,
+      initialSync: InitialSyncOption.recommended,
+      lastSyncedAtLabel: 'now',
+    );
+    final messages = [
+      for (var i = 0; i < 30; i++)
+        MailSummary(
+          id: 'm$i',
+          sender: 'a@example.com',
+          subject: '메일 $i',
+          snippet: '',
+          receivedAtLabel: 'now',
+          unread: true,
+        ),
+    ];
+    await tester.binding.setSurfaceSize(const Size(1200, 600));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          accountsProvider.overrideWith((ref) async => const [account]),
+          providersProvider.overrideWith((ref) async => const []),
+          accountMessagesProvider.overrideWith(
+            (ref, accountId) async => messages,
+          ),
+        ],
+        child: const DailyPostBoxApp(),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text(account.emailAddress).first);
+    await tester.pumpAndSettle();
+
+    for (var i = 0; i < 15; i++) {
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.keyJ, character: 'j');
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.keyJ);
+      await tester.pumpAndSettle();
+    }
+    final rect = tester.getRect(find.widgetWithText(ListTile, '메일 14'));
+    expect(rect.top, greaterThanOrEqualTo(0));
+    expect(rect.bottom, lessThanOrEqualTo(600));
+  });
+
   testWidgets('shows a progressive loading state during account sync',
       (WidgetTester tester) async {
     const account = MailAccountSummary(

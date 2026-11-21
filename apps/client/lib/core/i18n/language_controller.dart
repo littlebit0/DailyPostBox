@@ -47,6 +47,8 @@ class AppStrings {
       _ko ? '이전 메일 선택' : 'Select previous message';
   String get shortcutOpenMessage => _ko ? '선택한 메일 열기' : 'Open selected message';
   String get mailMenu => _ko ? '메일' : 'Mail';
+  String get editMenu => _ko ? '편집' : 'Edit';
+  String get windowMenu => _ko ? '윈도우' : 'Window';
   String get close => _ko ? '닫기' : 'Close';
   String get send => _ko ? '보내기' : 'Send';
   String get message => _ko ? '메일' : 'Message';

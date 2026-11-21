@@ -97,6 +97,7 @@ class _MailboxContentState extends ConsumerState<_MailboxContent> {
   Timer? _refreshTimer;
   bool _refreshing = false;
   String? _selectedId;
+  final _rowKeys = <String, GlobalKey>{};
 
   bool get _isSyncing =>
       const {'syncing', 'validating'}.contains(widget.account.syncStatus);
@@ -179,7 +180,12 @@ class _MailboxContentState extends ConsumerState<_MailboxContent> {
     final next = current == -1
         ? (delta > 0 ? 0 : items.length - 1)
         : (current + delta).clamp(0, items.length - 1);
-    setState(() => _selectedId = items[next].id);
+    final id = items[next].id;
+    setState(() => _selectedId = id);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final rowContext = _rowKeys[id]?.currentContext;
+      if (rowContext != null) Scrollable.ensureVisible(rowContext);
+    });
   }
 
   void _openMessage(String messageId) => context.go(
@@ -263,12 +269,29 @@ class _MailboxContentState extends ConsumerState<_MailboxContent> {
     if (defaultTargetPlatform != TargetPlatform.macOS) return body;
     return PlatformMenuBar(
       menus: [
+        const PlatformMenu(
+          label: 'DailyPostBox',
+          menus: [
+            PlatformProvidedMenuItem(type: PlatformProvidedMenuItemType.about),
+            PlatformProvidedMenuItem(
+              type: PlatformProvidedMenuItemType.servicesSubmenu,
+            ),
+            PlatformProvidedMenuItem(type: PlatformProvidedMenuItemType.hide),
+            PlatformProvidedMenuItem(
+              type: PlatformProvidedMenuItemType.hideOtherApplications,
+            ),
+            PlatformProvidedMenuItem(
+              type: PlatformProvidedMenuItemType.showAllApplications,
+            ),
+            PlatformProvidedMenuItem(type: PlatformProvidedMenuItemType.quit),
+          ],
+        ),
         PlatformMenu(
           label: strings.mailMenu,
           menus: [
             PlatformMenuItem(
               label: strings.compose,
-              shortcut: const CharacterActivator('c'),
+              // shortcut: 단일 키 네이티브 가속키는 입력창에서도 발동하므로 쓰지 않음.
               onSelected: _compose,
             ),
             PlatformMenuItem(
@@ -286,6 +309,31 @@ class _MailboxContentState extends ConsumerState<_MailboxContent> {
             PlatformMenuItem(
               label: strings.shortcutHelp,
               onSelected: _showHelp,
+            ),
+          ],
+        ),
+        PlatformMenu(
+          label: strings.editMenu,
+          menus: const [
+            PlatformProvidedMenuItem(
+              type: PlatformProvidedMenuItemType.startSpeaking,
+            ),
+            PlatformProvidedMenuItem(
+              type: PlatformProvidedMenuItemType.stopSpeaking,
+            ),
+          ],
+        ),
+        PlatformMenu(
+          label: strings.windowMenu,
+          menus: const [
+            PlatformProvidedMenuItem(
+              type: PlatformProvidedMenuItemType.minimizeWindow,
+            ),
+            PlatformProvidedMenuItem(
+              type: PlatformProvidedMenuItemType.zoomWindow,
+            ),
+            PlatformProvidedMenuItem(
+              type: PlatformProvidedMenuItemType.toggleFullScreen,
             ),
           ],
         ),
@@ -395,6 +443,7 @@ class _MailboxContentState extends ConsumerState<_MailboxContent> {
                 itemBuilder: (context, index) {
                   final message = items[index];
                   return ListTile(
+                    key: _rowKeys.putIfAbsent(message.id, GlobalKey.new),
                     selected: message.id == _selectedId,
                     minLeadingWidth: 28,
                     leading: Icon(
