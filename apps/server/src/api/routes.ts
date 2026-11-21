@@ -79,6 +79,13 @@ const accountSchema = z.object({
 
 const demoUserId = "demo-user";
 
+// shortcut: no real auth yet (issue #20), so mail search and the IMAP
+// fallback are loopback-only unless ALLOW_REMOTE_MAIL_SEARCH=true.
+function canReadUnstoredMail(ip: string): boolean {
+  return process.env.ALLOW_REMOTE_MAIL_SEARCH === "true" ||
+    ip === "127.0.0.1" || ip === "::1" || ip === "::ffff:127.0.0.1";
+}
+
 export async function registerRoutes(
   app: FastifyInstance,
   deps: {
@@ -289,6 +296,9 @@ export async function registerRoutes(
   });
 
   app.get("/accounts/:id/search", async (request, reply) => {
+    if (!canReadUnstoredMail(request.ip)) {
+      return reply.code(403).send({ error: "Search is only available locally." });
+    }
     const params = z.object({ id: z.string() }).parse(request.params);
     const { q } = z.object({ q: z.string().max(500) }).parse(request.query);
     const account = await deps.accounts.getAccount(params.id);
@@ -334,7 +344,7 @@ export async function registerRoutes(
     const message = messages.find(
       (item) => item.accountId === params.accountId &&
         item.providerMessageId === params.messageId
-    ) ?? (account.incomingProtocol === "imap"
+    ) ?? (account.incomingProtocol === "imap" && canReadUnstoredMail(request.ip)
       ? await deps.fetchMessageSummary(account, params.messageId)
       : null);
     if (!message) {
