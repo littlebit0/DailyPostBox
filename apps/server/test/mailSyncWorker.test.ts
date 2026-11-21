@@ -219,3 +219,312 @@ test("a failing push does not disturb mail handling", async () => {
     await syncWorker.stop();
   }
 });
+
+function customAccount(supportsIdle?: boolean): MailAccount {
+  return {
+    ...account(),
+    id: "custom-account",
+    providerId: "custom",
+    connectionOverride: {
+      incoming: { host: "imap.example.com", port: 993, secure: true, supportsIdle }
+    }
+  };
+}
+
+test("polls an IMAP server without IDLE instead of reconnecting forever", async () => {
+  const repository = new InMemoryAccountRepository();
+  const mailAccount = customAccount();
+  await repository.addAccount(mailAccount);
+  let watchCalls = 0;
+  let syncs = 0;
+  const imap = {
+    watch: async () => {
+      watchCalls += 1;
+      return async () => undefined;
+    },
+    fetchLatestBatches: async () => {
+      syncs += 1;
+    }
+  };
+  const syncWorker = new MailSyncWorker(
+    repository,
+    imap as unknown as ImapReceiver,
+    {} as Pop3Receiver,
+    {} as PushNotifier,
+    { mailbox: "INBOX", pop3PollIntervalMs: 5, imapReconnectBaseDelayMs: 1, imapReconnectMaxDelayMs: 1 }
+  );
+
+  try {
+    await syncWorker.startAccount(mailAccount);
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    assert.equal(watchCalls, 0);
+    assert.ok(syncs > 2, `expected repeated polls, got ${syncs}`);
+
+    // resume leaves the running poll alone.
+    const before = syncs;
+    await syncWorker.resumeAccount(mailAccount);
+    assert.ok(syncs - before <= 1);
+  } finally {
+    await syncWorker.stop();
+  }
+});
+
+test("stops polling once the server rejects the credentials", async () => {
+  const repository = new InMemoryAccountRepository();
+  const mailAccount = customAccount();
+  await repository.addAccount(mailAccount);
+  let syncs = 0;
+  const imap = {
+    watch: async () => async () => undefined,
+    fetchLatestBatches: async () => {
+      syncs += 1;
+      if (syncs >= 2) throw authenticationFailure("Authentication failed.");
+    }
+  };
+  const syncWorker = new MailSyncWorker(
+    repository,
+    imap as unknown as ImapReceiver,
+    {} as Pop3Receiver,
+    {} as PushNotifier,
+    { mailbox: "INBOX", pop3PollIntervalMs: 5, imapReconnectBaseDelayMs: 1, imapReconnectMaxDelayMs: 1 }
+  );
+
+  try {
+    await syncWorker.startAccount(mailAccount);
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    assert.equal(syncs, 2);
+    assert.equal(mailAccount.syncErrorCode, "authentication");
+  } finally {
+    await syncWorker.stop();
+  }
+});
+
+test("a custom server that declares IDLE support is watched", async () => {
+  const repository = new InMemoryAccountRepository();
+  const mailAccount = customAccount(true);
+  await repository.addAccount(mailAccount);
+  let watchCalls = 0;
+  const imap = {
+    watch: async () => {
+      watchCalls += 1;
+      return async () => undefined;
+    },
+    fetchLatestBatches: async () => undefined
+  };
+  const syncWorker = worker(repository, imap);
+
+  try {
+    await syncWorker.startAccount(mailAccount);
+    assert.equal(watchCalls, 1);
+  } finally {
+    await syncWorker.stop();
+  }
+});
+
+test("polled IMAP mail notifies only after the first import", async () => {
+  const repository = new InMemoryAccountRepository();
+  const mailAccount = customAccount();
+  mailAccount.lastSyncedAt = undefined;
+  await repository.addAccount(mailAccount);
+  await repository.savePushTarget({ userId: "demo-user", platform: "macos", deviceToken: "token" });
+  let fetches = 0;
+  const notified: string[] = [];
+  const imap = {
+    watch: async () => async () => undefined,
+    fetchLatestBatches: async (
+      _account: MailAccount,
+      _mailbox: string,
+      _limit: unknown,
+      onBatch: (messages: IncomingMessageSummary[]) => Promise<void>
+    ) => {
+      fetches += 1;
+      await onBatch([{
+        accountId: mailAccount.id,
+        providerMessageId: String(fetches),
+        mailbox: "INBOX",
+        from: "a@example.com",
+        subject: `message ${fetches}`,
+        receivedAt: new Date(),
+        hasAttachments: false
+      }]);
+    }
+  };
+  const syncWorker = new MailSyncWorker(
+    repository,
+    imap as unknown as ImapReceiver,
+    {} as Pop3Receiver,
+    {
+      notifyNewMessage: async (_targets, message) => {
+        notified.push(message.providerMessageId);
+      }
+    },
+    { mailbox: "INBOX", pop3PollIntervalMs: 60_000, imapReconnectBaseDelayMs: 1, imapReconnectMaxDelayMs: 1 }
+  );
+
+  try {
+    await syncWorker.syncAccount(mailAccount);
+    await syncWorker.syncAccount(mailAccount);
+    assert.deepEqual(notified, ["2"]);
+  } finally {
+    await syncWorker.stop();
+  }
+});
+
+test("an account stopped during its first sync starts no polling", async () => {
+  const repository = new InMemoryAccountRepository();
+  const mailAccount = customAccount();
+  await repository.addAccount(mailAccount);
+  let release!: () => void;
+  const firstSync = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let fetches = 0;
+  const imap = {
+    watch: async () => async () => undefined,
+    fetchLatestBatches: async () => {
+      fetches += 1;
+      if (fetches === 1) await firstSync;
+    }
+  };
+  const syncWorker = new MailSyncWorker(
+    repository,
+    imap as unknown as ImapReceiver,
+    {} as Pop3Receiver,
+    {} as PushNotifier,
+    { mailbox: "INBOX", pop3PollIntervalMs: 5, imapReconnectBaseDelayMs: 1, imapReconnectMaxDelayMs: 1 }
+  );
+
+  try {
+    const start = syncWorker.startAccount(mailAccount);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await syncWorker.stopAccount(mailAccount.id);
+    release();
+    await start;
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.equal(fetches, 1);
+  } finally {
+    await syncWorker.stop();
+  }
+});
+
+test("polling keeps the opt-out from importing previous mail", async () => {
+  const repository = new InMemoryAccountRepository();
+  const mailAccount = customAccount();
+  mailAccount.lastSyncedAt = undefined;
+  mailAccount.initialSync = { includePreviousMessages: false, limit: 100 };
+  mailAccount.createdAt = new Date("2026-11-22T00:00:00Z");
+  await repository.addAccount(mailAccount);
+  const message = (uid: string, sentAt: string, arrivedAt: string): IncomingMessageSummary => ({
+    accountId: mailAccount.id,
+    providerMessageId: uid,
+    mailbox: "INBOX",
+    from: "a@example.com",
+    subject: uid,
+    receivedAt: new Date(sentAt),
+    arrivedAt: new Date(arrivedAt),
+    hasAttachments: false
+  });
+  const imap = {
+    watch: async () => async () => undefined,
+    fetchLatestBatches: async (
+      _account: MailAccount,
+      _mailbox: string,
+      _limit: unknown,
+      onBatch: (messages: IncomingMessageSummary[]) => Promise<void>
+    ) => {
+      await onBatch([
+        message("old", "2026-11-01T00:00:00Z", "2026-11-01T00:00:05Z"),
+        // Sent before the account was added but delivered after it.
+        message("delayed", "2026-11-21T23:50:00Z", "2026-11-22T00:30:00Z"),
+        message("new", "2026-11-22T01:00:00Z", "2026-11-22T01:00:05Z")
+      ]);
+    }
+  };
+  const syncWorker = new MailSyncWorker(
+    repository,
+    imap as unknown as ImapReceiver,
+    {} as Pop3Receiver,
+    { notifyNewMessage: async () => undefined },
+    { mailbox: "INBOX", pop3PollIntervalMs: 60_000, imapReconnectBaseDelayMs: 1, imapReconnectMaxDelayMs: 1 }
+  );
+
+  try {
+    await syncWorker.syncAccount(mailAccount);
+    await syncWorker.syncAccount(mailAccount);
+    const saved = (await repository.listInbox("demo-user")).map((item) => item.subject);
+    assert.deepEqual(saved, ["new", "delayed"]);
+  } finally {
+    await syncWorker.stop();
+  }
+});
+
+test("stopping unknown accounts keeps no per-account state", async () => {
+  const repository = new InMemoryAccountRepository();
+  const syncWorker = worker(repository, {});
+  for (let index = 0; index < 100; index += 1) {
+    await syncWorker.stopAccount(`unknown-${index}`);
+  }
+  const pending = (syncWorker as unknown as { pendingStarts: Map<string, object> }).pendingStarts;
+  assert.equal(pending.size, 0);
+  await syncWorker.stop();
+});
+
+test("history first reached by a later poll sends no notification", async () => {
+  const repository = new InMemoryAccountRepository();
+  const mailAccount = customAccount();
+  mailAccount.lastSyncedAt = undefined;
+  mailAccount.initialSync = { includePreviousMessages: true, limit: 1 };
+  mailAccount.createdAt = new Date("2026-11-22T00:00:00Z");
+  await repository.addAccount(mailAccount);
+  await repository.savePushTarget({ userId: "demo-user", platform: "macos", deviceToken: "token" });
+  const message = (uid: string, arrivedAt: string): IncomingMessageSummary => ({
+    accountId: mailAccount.id,
+    providerMessageId: uid,
+    mailbox: "INBOX",
+    from: "a@example.com",
+    subject: uid,
+    receivedAt: new Date(arrivedAt),
+    arrivedAt: new Date(arrivedAt),
+    hasAttachments: false
+  });
+  let fetches = 0;
+  const notified: string[] = [];
+  const imap = {
+    watch: async () => async () => undefined,
+    fetchLatestBatches: async (
+      _account: MailAccount,
+      _mailbox: string,
+      _limit: unknown,
+      onBatch: (messages: IncomingMessageSummary[]) => Promise<void>
+    ) => {
+      fetches += 1;
+      await onBatch(fetches === 1
+        ? [message("3", "2026-11-21T10:00:00Z")]
+        : [
+            message("1", "2026-11-20T10:00:00Z"),
+            message("2", "2026-11-21T09:00:00Z"),
+            message("3", "2026-11-21T10:00:00Z"),
+            message("4", "2026-11-22T01:00:00Z")
+          ]);
+    }
+  };
+  const syncWorker = new MailSyncWorker(
+    repository,
+    imap as unknown as ImapReceiver,
+    {} as Pop3Receiver,
+    {
+      notifyNewMessage: async (_targets, item) => {
+        notified.push(item.providerMessageId);
+      }
+    },
+    { mailbox: "INBOX", pop3PollIntervalMs: 60_000, imapReconnectBaseDelayMs: 1, imapReconnectMaxDelayMs: 1 }
+  );
+
+  try {
+    await syncWorker.syncAccount(mailAccount);
+    await syncWorker.syncAccount(mailAccount);
+    assert.deepEqual(notified, ["4"]);
+  } finally {
+    await syncWorker.stop();
+  }
+});
