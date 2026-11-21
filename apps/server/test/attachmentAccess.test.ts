@@ -62,6 +62,18 @@ test("remote callers get 403 and nothing is fetched", async () => {
   assert.equal(downloads(), 0);
 });
 
+test("Origin header or non-loopback Host gets 403 even from loopback", async () => {
+  const { app, downloads } = await build();
+  const remoteAddress = "127.0.0.1";
+  const origin = await app.inject({ url, remoteAddress, headers: { origin: "https://evil.example" } });
+  assert.equal(origin.statusCode, 403);
+  const host = await app.inject({ url, remoteAddress, headers: { host: "evil.example" } });
+  assert.equal(host.statusCode, 403);
+  assert.equal(downloads(), 0);
+  const ok = await app.inject({ url, remoteAddress, headers: { host: "[::1]:8080" } });
+  assert.equal(ok.statusCode, 200);
+});
+
 test("ALLOW_REMOTE_MAIL_ACCESS=true opts remote callers in", async () => {
   process.env.ALLOW_REMOTE_MAIL_ACCESS = "true";
   try {
