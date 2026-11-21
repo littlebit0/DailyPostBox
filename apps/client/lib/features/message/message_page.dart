@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../core/i18n/language_controller.dart';
 import '../../services/mail_api_client.dart';
 import '../../widgets/app_shell.dart';
+import 'attachment_list.dart';
 import 'linked_message_body.dart';
 
 typedef MessageRequest = ({String messageId, String? accountId});
@@ -81,6 +82,12 @@ class MessagePage extends ConsumerWidget {
                 Text(item.receivedAtLabel),
                 const Divider(height: 32),
                 LinkedMessageBody(body: item.body, links: item.links),
+                if (item.attachments.isNotEmpty && accountId != null)
+                  AttachmentList(
+                    accountId: accountId!,
+                    messageId: messageId,
+                    attachments: item.attachments,
+                  ),
               ],
             ),
             loading: () => const Center(child: CircularProgressIndicator()),

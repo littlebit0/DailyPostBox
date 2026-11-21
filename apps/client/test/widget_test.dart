@@ -437,6 +437,23 @@ void main() {
     );
   });
 
+  test('parses attachments and formats their size', () {
+    final detail = MessageDetail.fromJson({
+      'attachments': [
+        {
+          'part': '2',
+          'filename': '보고서.pdf',
+          'contentType': 'application/pdf',
+          'size': 1536,
+        },
+      ],
+    });
+
+    expect(detail.attachments.single.filename, '보고서.pdf');
+    expect(formatAttachmentSize(detail.attachments.single.size), '1.5 KB');
+    expect(formatAttachmentSize(20 * 1024 * 1024), '20 MB');
+  });
+
   test('replaces a long mail link with its anchor title', () {
     const url = 'https://example.com/very/long/path?tracking=123';
     final segments = parseMessageBody(

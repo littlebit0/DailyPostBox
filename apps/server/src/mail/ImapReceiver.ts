@@ -3,6 +3,8 @@ import type { FetchMessageObject, MessageStructureObject } from "imapflow";
 import { simpleParser } from "mailparser";
 import type { OAuthTokenManager } from "../auth/OAuthTokenManager.js";
 import type {
+  AttachmentDownload,
+  IncomingMessageAttachment,
   IncomingMessageContent,
   IncomingMessageLink,
   IncomingMessageSummary,
@@ -17,6 +19,7 @@ import {
   newestFirstUidBatches
 } from "./imapSequenceRanges.js";
 import { isAuthenticationFailure } from "./authenticationFailure.js";
+import { extractAttachments } from "./attachments.js";
 import { extractMessageLinks } from "./messageLinks.js";
 
 export class ImapReceiver implements MailReceiver {
@@ -122,6 +125,7 @@ export class ImapReceiver implements MailReceiver {
         throw new Error("Message body was not found on the IMAP server.");
       }
 
+      const attachments = extractAttachments(message.bodyStructure);
       const bodyParts = selectBodyParts(message.bodyStructure);
       let htmlFallback: IncomingMessageContent | null = null;
       let htmlLinks: IncomingMessageLink[] = [];
@@ -141,7 +145,7 @@ export class ImapReceiver implements MailReceiver {
 
         if (bodyPart.type.toLowerCase() !== "text/html") {
           const text = cleanMessageText(decoded);
-          if (text) return { text, truncated, links: htmlLinks };
+          if (text) return { text, truncated, links: htmlLinks, attachments };
           continue;
         }
 
@@ -167,15 +171,63 @@ export class ImapReceiver implements MailReceiver {
           htmlFallback = {
             text,
             truncated,
-            links: htmlLinks
+            links: htmlLinks,
+            attachments
           };
         }
       }
 
-      if (htmlFallback) return { ...htmlFallback, links: htmlLinks };
-      return { text: "", truncated: false, links: [] };
+      if (htmlFallback) {
+        return { ...htmlFallback, links: htmlLinks, attachments };
+      }
+      return { text: "", truncated: false, links: [], attachments };
     } finally {
       await client.logout().catch(() => undefined);
+    }
+  }
+
+  async downloadAttachment(
+    account: MailAccount,
+    mailbox: string,
+    providerMessageId: string,
+    part: string
+  ): Promise<AttachmentDownload | null> {
+    const client = await this.createClient(account);
+    await client.connect();
+    const close = async () => {
+      await client.logout().catch(() => undefined);
+    };
+
+    try {
+      await client.mailboxOpen(mailbox, { readOnly: true });
+      const message = await client.fetchOne(
+        providerMessageId,
+        { bodyStructure: true },
+        { uid: true }
+      );
+      const attachment: IncomingMessageAttachment | undefined = message &&
+        message.bodyStructure
+        ? extractAttachments(message.bodyStructure).find(
+            (item) => item.part === part
+          )
+        : undefined;
+      if (!attachment) {
+        await close();
+        return null;
+      }
+
+      const download = await client.download(providerMessageId, part, {
+        uid: true
+      });
+      return {
+        filename: attachment.filename,
+        contentType: attachment.contentType,
+        stream: download.content,
+        close
+      };
+    } catch (error) {
+      await close();
+      throw error;
     }
   }
 
