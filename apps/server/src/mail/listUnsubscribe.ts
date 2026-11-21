@@ -47,12 +47,20 @@ function parseMailto(value: string): ListUnsubscribe["mailto"] {
   }
   if (!emailPattern.test(address)) return undefined;
 
-  const params = new URLSearchParams(query);
-  return {
-    address,
-    subject: params.get("subject") ?? undefined,
-    body: params.get("body") ?? undefined
+  // mailto (RFC 6068) uses plain percent-decoding: "+" is literal, unlike URLSearchParams.
+  const header = (name: string): string | undefined => {
+    for (const pair of query.split("&")) {
+      const eq = pair.indexOf("=");
+      if (eq < 0 || pair.slice(0, eq).toLowerCase() !== name) continue;
+      try {
+        return decodeURIComponent(pair.slice(eq + 1));
+      } catch {
+        return undefined;
+      }
+    }
+    return undefined;
   };
+  return { address, subject: header("subject"), body: header("body") };
 }
 
 // Reads a header value out of a raw RFC 5322 header block, unfolding lines.

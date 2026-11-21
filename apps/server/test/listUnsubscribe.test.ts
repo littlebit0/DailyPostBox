@@ -37,3 +37,11 @@ test("reads folded headers", () => {
   );
   assert.equal(readHeader(raw, "X-Missing"), undefined);
 });
+
+test("keeps literal plus signs in mailto subject and body", () => {
+  const parsed = parseListUnsubscribe(
+    "<mailto:leave@example.test?subject=a+b&body=user+tag@example.test%2Bx>"
+  );
+  assert.equal(parsed?.mailto?.subject, "a+b");
+  assert.equal(parsed?.mailto?.body, "user+tag@example.test+x");
+});
