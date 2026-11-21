@@ -45,6 +45,10 @@ class AppStrings {
   String get send => _ko ? '보내기' : 'Send';
   String get message => _ko ? '메일' : 'Message';
   String get reply => _ko ? '답장' : 'Reply';
+  String get replyAll => _ko ? '전체 답장' : 'Reply all';
+  String get cc => _ko ? '참조' : 'Cc';
+  String quoteHeader(String date, String sender) =>
+      _ko ? '$date $sender 님이 작성:' : 'On $date, $sender wrote:';
   String get archive => _ko ? '보관' : 'Archive';
   String get back => _ko ? '뒤로' : 'Back';
   String get from => _ko ? '보낸 사람' : 'From';

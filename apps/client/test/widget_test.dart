@@ -5,10 +5,40 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:daily_postbox/features/accounts/accounts_page.dart';
 import 'package:daily_postbox/features/message/linked_message_body.dart';
+import 'package:daily_postbox/core/i18n/language_controller.dart';
+import 'package:daily_postbox/features/message/reply_draft.dart';
 import 'package:daily_postbox/main.dart';
 import 'package:daily_postbox/services/mail_api_client.dart';
 
 void main() {
+  test('replySubject adds Re: once', () {
+    expect(replySubject('Hello'), 'Re: Hello');
+    expect(replySubject('Re: Hello'), 'Re: Hello');
+    expect(replySubject('RE: Hello'), 'RE: Hello');
+  });
+
+  test('ReplyDraft quotes the original and keeps thread ids', () {
+    final message = MessageDetail.fromJson({
+      'id': '1',
+      'from': 'a@x.com',
+      'subject': 'Hi',
+      'body': 'line1\nline2',
+      'messageId': '<m1@x>',
+      'references': ['<r0@x>'],
+      'replyTo': ['a@x.com'],
+      'replyAllTo': ['a@x.com', 'b@x.com'],
+      'replyAllCc': ['c@x.com'],
+    });
+    final strings = AppStrings(AppLanguage.english);
+    final all = ReplyDraft.from(message, strings, all: true);
+    expect(all.to, ['a@x.com', 'b@x.com']);
+    expect(all.cc, ['c@x.com']);
+    expect(all.subject, 'Re: Hi');
+    expect(all.body, contains('> line1\n> line2'));
+    expect(all.inReplyTo, '<m1@x>');
+    expect(ReplyDraft.from(message, strings, all: false).cc, isEmpty);
+  });
+
   testWidgets('renders mail app shell', (WidgetTester tester) async {
     await tester.pumpWidget(
       ProviderScope(
