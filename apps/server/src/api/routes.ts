@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { MailSender } from "../mail/MailSender.js";
 import {
   SendQueue,
+  SendQueueFullError,
   defaultUndoDelaySeconds,
   undoDelaySeconds
 } from "../mail/SendQueue.js";
@@ -354,7 +355,8 @@ export async function registerRoutes(
     };
   });
 
-  app.post("/mail/send", async (request, reply) => {
+  // 10 MiB: explicit cap on the send body (Fastify default is 1 MiB).
+  app.post("/mail/send", { bodyLimit: 10 * 1024 * 1024 }, async (request, reply) => {
     const { delaySeconds, ...parsed } = sendSchema.parse(request.body);
     const draft = parsed as OutgoingMessageDraft;
     const account = await deps.accounts.getAccount(draft.accountId);
@@ -363,7 +365,15 @@ export async function registerRoutes(
       return reply.code(404).send({ error: "Account not found" });
     }
 
-    const id = sendQueue.enqueue(account, draft, delaySeconds);
+    let id: string;
+    try {
+      id = sendQueue.enqueue(account, draft, delaySeconds);
+    } catch (error) {
+      if (error instanceof SendQueueFullError) {
+        return reply.code(429).send({ error: "Too many pending sends" });
+      }
+      throw error;
+    }
     return reply.code(202).send({ id, delaySeconds });
   });
 

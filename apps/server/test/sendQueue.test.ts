@@ -98,3 +98,42 @@ test("cancelled entries are removed after retention", async () => {
   await new Promise((r) => setTimeout(r, 40));
   assert.equal(queue.cancel(id), undefined);
 });
+
+test("enqueue over per-account or total limit is rejected with 429", async () => {
+  const sender = { send: async () => undefined };
+  const queue = new SendQueue(sender as never, undefined, 60_000, { maxPendingPerAccount: 2, maxEntries: 3 });
+  const app = Fastify();
+  const accounts = new InMemoryAccountRepository();
+  const now = new Date();
+  for (const id of ["a", "b"]) {
+    await accounts.addAccount({ id, userId: "u", providerId: "naver", emailAddress: `${id}@example.com`,
+      authMode: "app-password", incomingProtocol: "imap", encryptedSecretRef: "x", syncStatus: "idle",
+      createdAt: now, updatedAt: now } as MailAccount);
+  }
+  await registerRoutes(app, { accounts, sender: sender as never, sendQueue: queue } as never);
+  const post = (accountId: string) =>
+    app.inject({ method: "POST", url: "/mail/send", payload: { accountId, to: ["x@example.com"], subject: "s", delaySeconds: 30 } });
+  assert.equal((await post("a")).statusCode, 202);
+  assert.equal((await post("a")).statusCode, 202);
+  assert.equal((await post("a")).statusCode, 429);
+  assert.equal((await post("b")).statusCode, 202);
+  assert.equal((await post("b")).statusCode, 429);
+  await queue.flush();
+});
+
+test("concurrent SMTP sends are capped and waiting entries still go out", async () => {
+  let running = 0;
+  let peak = 0;
+  const sender = {
+    send: async () => {
+      peak = Math.max(peak, ++running);
+      await new Promise((r) => setTimeout(r, 20));
+      running--;
+    }
+  };
+  const queue = new SendQueue(sender as never, undefined, 60_000, { maxConcurrentSends: 2 });
+  for (let i = 0; i < 5; i++) queue.enqueue({ id: "a" } as MailAccount, {} as never, 0);
+  await queue.flush();
+  assert.equal(peak, 2);
+  assert.equal(running, 0);
+});
