@@ -22,6 +22,19 @@ final messageProvider =
   return api.fetchMessage(request.messageId);
 });
 
+/// Opens the composer addressed to the sender with a "Re:" subject.
+String replyLocation({String? accountId, required MessageDetail message}) {
+  final subject = message.subject;
+  return Uri(
+    path: accountId == null ? '/compose' : '/accounts/$accountId/compose',
+    queryParameters: {
+      'to': message.sender,
+      'subject':
+          subject.toLowerCase().startsWith('re:') ? subject : 'Re: $subject',
+    },
+  ).toString();
+}
+
 class MessagePage extends ConsumerWidget {
   const MessagePage({
     super.key,
@@ -57,13 +70,13 @@ class MessagePage extends ConsumerWidget {
           actions: [
             IconButton(
               tooltip: strings.reply,
-              onPressed: () {},
+              onPressed: switch (message.asData?.value) {
+                final item? => () => context.go(
+                      replyLocation(accountId: accountId, message: item),
+                    ),
+                null => null,
+              },
               icon: const Icon(Icons.reply),
-            ),
-            IconButton(
-              tooltip: strings.archive,
-              onPressed: () {},
-              icon: const Icon(Icons.archive_outlined),
             ),
           ],
         ),

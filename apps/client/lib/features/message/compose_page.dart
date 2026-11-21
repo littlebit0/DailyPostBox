@@ -14,17 +14,22 @@ class ComposePage extends ConsumerStatefulWidget {
   const ComposePage({
     super.key,
     this.initialAccountId,
+    this.initialTo,
+    this.initialSubject,
   });
 
   final String? initialAccountId;
+  final String? initialTo;
+  final String? initialSubject;
 
   @override
   ConsumerState<ComposePage> createState() => _ComposePageState();
 }
 
 class _ComposePageState extends ConsumerState<ComposePage> {
-  final _toController = TextEditingController();
-  final _subjectController = TextEditingController();
+  late final _toController = TextEditingController(text: widget.initialTo);
+  late final _subjectController =
+      TextEditingController(text: widget.initialSubject);
   final _bodyController = TextEditingController();
   String? _accountId;
 
