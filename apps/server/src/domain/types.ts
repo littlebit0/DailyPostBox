@@ -49,6 +49,8 @@ export interface MailAccount {
     limit: number | "all";
   };
   lastSyncedAt?: Date;
+  // Missing means on, so accounts stored before this field keep notifying.
+  notificationsEnabled?: boolean;
   connectionOverride?: {
     incoming?: {
       host: string;
