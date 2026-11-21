@@ -355,10 +355,17 @@ class CalendarInvite {
   /// server could resolve the sender's zone.
   String get timeLabel {
     final from = _inviteTime(start, allDay);
-    final to = end == null ? null : _inviteTime(end!, allDay);
+    final to = end == null ? null : _inviteTime(_inclusiveEnd(end!), allDay);
     if (to == null || to == from) return from;
     final sameDay = !allDay && from.substring(0, 10) == to.substring(0, 10);
     return '$from ~ ${sameDay ? to.substring(11) : to}';
+  }
+
+  /// All-day DTEND is exclusive (RFC 5545 §3.6.1), so show the day before it.
+  String _inclusiveEnd(String value) {
+    final date = allDay ? DateTime.tryParse(value) : null;
+    if (date == null) return value;
+    return DateTime(date.year, date.month, date.day - 1).toIso8601String();
   }
 }
 

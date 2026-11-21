@@ -39,7 +39,8 @@ export function parseCalendarInvite(ics: string): CalendarInvite | null {
   const start = parseDateTime(dtstart);
   if (!start) return null;
   const dtend = find("DTEND");
-  const end = dtend ? parseDateTime(dtend) : null;
+  const duration = find("DURATION");
+  const end = dtend ? parseDateTime(dtend) : duration ? endFromDuration(dtstart, duration.value) : null;
 
   const organizer = find("ORGANIZER");
   const organizerName = organizer?.params.CN;
@@ -114,6 +115,30 @@ function parseDateTime(prop: Prop): { value: string; allDay: boolean } | null {
   return { value: utc ?? local, allDay: false };
 }
 
+/** RFC 5545 §3.3.6: day/week parts are nominal (wall clock), hour/minute/second parts are exact. */
+function endFromDuration(dtstart: Prop, duration: string): { value: string; allDay: boolean } | null {
+  const match = /^([+-])?P(?:(\d+)W)?(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$/.exec(
+    duration.trim().toUpperCase()
+  );
+  if (!match || !/\d/.test(match[0])) return null;
+  const [, sign, w, d, h, mi, s] = match.map((part) => part ?? "0");
+  const dir = sign === "-" ? -1 : 1;
+  const days = dir * (Number(w) * 7 + Number(d));
+  const exactMs = dir * (Number(h) * 3600 + Number(mi) * 60 + Number(s)) * 1000;
+
+  const raw = /^(\d{4})(\d{2})(\d{2})(.*)$/.exec(dtstart.value.trim());
+  if (!raw) return null;
+  const shifted = new Date(Date.UTC(Number(raw[1]), Number(raw[2]) - 1, Number(raw[3]) + days));
+  const date = shifted.toISOString().slice(0, 10).replace(/-/g, "");
+  const nominal = parseDateTime({ ...dtstart, value: `${date}${raw[4]}` });
+  if (!nominal || nominal.allDay || exactMs === 0) return nominal;
+
+  const utc = nominal.value.endsWith("Z");
+  const instant = new Date(Date.parse(utc ? nominal.value : `${nominal.value}Z`) + exactMs);
+  const iso = instant.toISOString().replace(".000Z", "Z");
+  return { value: utc ? iso : iso.slice(0, -1), allDay: false };
+}
+
 function zonedToUtc(local: string, timeZone: string): string | null {
   try {
     const asUtc = Date.parse(`${local}Z`);
@@ -133,9 +158,13 @@ function zonedToUtc(local: string, timeZone: string): string | null {
       );
       return Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second) - instant;
     };
-    // Two passes settle the offset across DST boundaries.
-    const first = asUtc - offsetAt(asUtc);
-    return new Date(asUtc - offsetAt(first)).toISOString().replace(".000Z", "Z");
+    // RFC 5545 §3.3.5: in an overlap take the first occurrence; in a gap use the offset
+    // before the gap. Assumes at most one transition within a day of the given time.
+    const before = asUtc - offsetAt(asUtc - 86_400_000);
+    const after = asUtc - offsetAt(asUtc + 86_400_000);
+    const valid = [before, after].filter((instant) => offsetAt(instant) === asUtc - instant);
+    const instant = valid.length > 0 ? Math.min(...valid) : before;
+    return new Date(instant).toISOString().replace(".000Z", "Z");
   } catch {
     return null;
   }

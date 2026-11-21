@@ -59,6 +59,23 @@ void main() {
       allDay: true,
     );
     expect(allDay.timeLabel, '2026-12-25');
+
+    // All-day DTEND is exclusive (RFC 5545), so a one-day event shows one date.
+    const oneDay = CalendarInvite(
+      summary: 'Holiday',
+      start: '2026-12-25',
+      end: '2026-12-26',
+      allDay: true,
+    );
+    expect(oneDay.timeLabel, '2026-12-25');
+
+    const threeDays = CalendarInvite(
+      summary: 'Trip',
+      start: '2026-12-30',
+      end: '2027-01-02',
+      allDay: true,
+    );
+    expect(threeDays.timeLabel, '2026-12-30 ~ 2027-01-01');
   });
 
   testWidgets('renders mail app shell', (WidgetTester tester) async {

@@ -56,3 +56,32 @@ test("returns null for unusable input", () => {
   assert.equal(parseCalendarInvite(wrap("SUMMARY:no start")), null);
   assert.equal(parseCalendarInvite(wrap("DTSTART:notadate")), null);
 });
+
+test("resolves DST gaps and overlaps per RFC 5545", () => {
+  // Overlap: 02:30 occurs twice in Berlin; the first (earlier UTC) occurrence wins.
+  const overlap = parseCalendarInvite(wrap("DTSTART;TZID=Europe/Berlin:20261025T023000"));
+  assert.equal(overlap?.start, "2026-10-25T00:30:00Z");
+  // Gap: 02:30 does not exist in New York; interpret with the offset before the gap.
+  const gap = parseCalendarInvite(wrap("DTSTART;TZID=America/New_York:20260308T023000"));
+  assert.equal(gap?.start, "2026-03-08T07:30:00Z");
+});
+
+test("derives end from DURATION when DTEND is absent", () => {
+  const utc = parseCalendarInvite(wrap("DTSTART:20261201T090000Z\r\nDURATION:PT1H30M"));
+  assert.equal(utc?.end, "2026-12-01T10:30:00Z");
+
+  // Day durations are nominal: same wall-clock time across the DST change.
+  const zoned = parseCalendarInvite(
+    wrap("DTSTART;TZID=America/New_York:20261031T090000\r\nDURATION:P1DT1H")
+  );
+  assert.equal(zoned?.end, "2026-11-01T15:00:00Z");
+
+  const floating = parseCalendarInvite(wrap("DTSTART:20261201T230000\r\nDURATION:PT2H"));
+  assert.equal(floating?.end, "2026-12-02T01:00:00");
+
+  const allDay = parseCalendarInvite(wrap("DTSTART;VALUE=DATE:20261231\r\nDURATION:P1W"));
+  assert.equal(allDay?.end, "2027-01-07");
+
+  const bad = parseCalendarInvite(wrap("DTSTART:20261201T090000Z\r\nDURATION:soon"));
+  assert.equal(bad?.end, null);
+});
