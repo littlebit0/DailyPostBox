@@ -18,6 +18,7 @@ import {
 } from "./imapSequenceRanges.js";
 import { isAuthenticationFailure } from "./authenticationFailure.js";
 import { extractMessageLinks } from "./messageLinks.js";
+import { createExistsQueue } from "./existsQueue.js";
 
 export class ImapReceiver implements MailReceiver {
   private static readonly maxBodyBytes = 2 * 1024 * 1024;
@@ -193,7 +194,6 @@ export class ImapReceiver implements MailReceiver {
     const client = await this.createClient(account);
     let stopped = false;
     let disconnectReported = false;
-    let handlingExists = false;
 
     const reportDisconnect = (error: Error) => {
       if (stopped || disconnectReported) return;
@@ -215,19 +215,14 @@ export class ImapReceiver implements MailReceiver {
       throw error;
     }
 
-    client.on("exists", () => {
-      if (handlingExists || stopped) return;
-      handlingExists = true;
-
-      void this.fetchLatest(account, mailbox, 1)
-        .then((latest) => latest.at(-1))
-        .then((message) => message ? onMessage(message) : undefined)
-        .catch((error: unknown) => {
-          reportDisconnect(toError(error));
-        })
-        .finally(() => {
-          handlingExists = false;
-        });
+    const handleExists = createExistsQueue({
+      fetchNewest: (count) => this.fetchLatest(account, mailbox, count),
+      onMessage,
+      onError: (error) => reportDisconnect(toError(error)),
+      isStopped: () => stopped
+    });
+    client.on("exists", (event) => {
+      void handleExists(event);
     });
 
     return async () => {
