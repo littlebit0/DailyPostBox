@@ -34,7 +34,8 @@ function worker(repository: InMemoryAccountRepository, imap: object) {
       mailbox: "INBOX",
       pop3PollIntervalMs: 60_000,
       imapReconnectBaseDelayMs: 1,
-      imapReconnectMaxDelayMs: 1
+      imapReconnectMaxDelayMs: 1,
+      backfillYieldMs: 0
     }
   );
 }
@@ -252,11 +253,93 @@ test("backfills thread metadata for stored messages once, in bounded batches", a
   const syncWorker = worker(repository, imap);
 
   await syncWorker.syncAccount(mailAccount);
+  await syncWorker.backfillSettled(mailAccount.id);
   assert.deepEqual(requests.map((r) => r.length), [50, 50, 20]);
   const inbox = await repository.listInbox(mailAccount.userId);
   assert.equal(inbox.find((m) => m.providerMessageId === "2")?.messageId, "<m2@example.com>");
   assert.deepEqual(inbox.find((m) => m.providerMessageId === "1")?.references, []);
 
   await syncWorker.syncAccount(mailAccount);
+  await syncWorker.backfillSettled(mailAccount.id);
   assert.equal(requests.length, 3);
+});
+
+test("backfill drains 4,000 stored messages across batches without refetching", async () => {
+  const repository = new InMemoryAccountRepository();
+  const mailAccount = account();
+  await repository.addAccount(mailAccount);
+  const total = 4000;
+  for (let uid = 1; uid <= total; uid += 1) {
+    await repository.saveIncomingMessage({
+      accountId: mailAccount.id,
+      providerMessageId: String(uid),
+      mailbox: "INBOX",
+      from: "a@example.com",
+      subject: "old",
+      receivedAt: new Date(uid * 1000),
+      hasAttachments: false
+    });
+  }
+  const seen: number[] = [];
+  const imap = {
+    fetchLatestBatches: async () => undefined,
+    fetchSummariesByUid: async (_a: MailAccount, _m: string, uids: number[]) => {
+      assert.ok(uids.length <= 50);
+      seen.push(...uids);
+      return uids.map((uid) => ({
+        accountId: mailAccount.id,
+        providerMessageId: String(uid),
+        mailbox: "INBOX",
+        from: "a@example.com",
+        subject: "old",
+        receivedAt: new Date(uid * 1000),
+        hasAttachments: false,
+        messageId: `<m${uid}@example.com>`,
+        references: []
+      }));
+    }
+  };
+  const syncWorker = worker(repository, imap);
+
+  await syncWorker.syncAccount(mailAccount);
+  await syncWorker.backfillSettled(mailAccount.id);
+  assert.equal(seen.length, total);
+  assert.equal(new Set(seen).size, total);
+  const inbox = await repository.listInbox(mailAccount.userId);
+  assert.ok(inbox.every((m) => m.references !== undefined));
+
+  await syncWorker.syncAccount(mailAccount);
+  await syncWorker.backfillSettled(mailAccount.id);
+  assert.equal(seen.length, total);
+});
+
+test("backfill stops when the account is removed", async () => {
+  const repository = new InMemoryAccountRepository();
+  const mailAccount = account();
+  await repository.addAccount(mailAccount);
+  for (let uid = 1; uid <= 200; uid += 1) {
+    await repository.saveIncomingMessage({
+      accountId: mailAccount.id,
+      providerMessageId: String(uid),
+      mailbox: "INBOX",
+      from: "a@example.com",
+      subject: "old",
+      receivedAt: new Date(uid * 1000),
+      hasAttachments: false
+    });
+  }
+  let calls = 0;
+  let syncWorker: MailSyncWorker;
+  const imap = {
+    fetchLatestBatches: async () => undefined,
+    fetchSummariesByUid: async () => {
+      calls += 1;
+      await syncWorker.stopAccount(mailAccount.id);
+      return [];
+    }
+  };
+  syncWorker = worker(repository, imap);
+  await syncWorker.syncAccount(mailAccount);
+  await syncWorker.backfillSettled(mailAccount.id);
+  assert.equal(calls, 1);
 });

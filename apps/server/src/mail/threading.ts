@@ -21,22 +21,36 @@ function midThreadId(root: string): string {
   return `mid:${createHash("sha256").update(root).digest("hex").slice(0, 32)}`;
 }
 
+type Linked = Pick<IncomingMessageSummary, "messageId" | "inReplyTo" | "references">;
+
 // Without References, follows In-Reply-To through the supplied messages to the
-// chain's root so A <- B <- C land in one thread.
+// chain's root so A <- B <- C land in one thread. `memo` caches the root per
+// Message-ID (path compression), so resolving every message is O(n) overall.
 function resolveRoot(
-  message: Pick<IncomingMessageSummary, "messageId" | "inReplyTo" | "references">,
-  byId: Map<string, Pick<IncomingMessageSummary, "messageId" | "inReplyTo" | "references">>
+  message: Linked,
+  byId: Map<string, Linked>,
+  memo: Map<string, string | undefined>
 ): string | undefined {
+  const ownRoot = (m: Linked) => m.references?.[0] ?? m.inReplyTo ?? m.messageId;
+  const path: string[] = [];
   const seen = new Set<string>();
   let current = message;
-  let root = current.references?.[0] ?? current.inReplyTo ?? current.messageId;
-  while (!current.references?.length && current.inReplyTo && !seen.has(current.inReplyTo)) {
+  let root = ownRoot(current);
+  while (true) {
+    if (current.messageId) {
+      if (memo.has(current.messageId)) { root = memo.get(current.messageId); break; }
+      path.push(current.messageId);
+    }
+    if (current.references?.length || !current.inReplyTo || seen.has(current.inReplyTo)) {
+      root = ownRoot(current);
+      break;
+    }
     seen.add(current.inReplyTo);
     const parent = byId.get(current.inReplyTo);
-    if (!parent) break;
+    if (!parent) { root = ownRoot(current); break; }
     current = parent;
-    root = current.references?.[0] ?? current.inReplyTo ?? current.messageId;
   }
+  for (const id of path) memo.set(id, root);
   return root;
 }
 
@@ -68,10 +82,11 @@ export function withThreadInfo<T extends IncomingMessageSummary>(
   for (const message of messages) {
     if (message.messageId) byId.set(message.messageId, message);
   }
+  const memo = new Map<string, string | undefined>();
   const withIds = messages.map((message) => {
     let threadId = computeThreadId(message);
     if (!message.gmailThreadId) {
-      const root = resolveRoot(message, byId);
+      const root = resolveRoot(message, byId, memo);
       threadId = root ? midThreadId(root) : undefined;
     }
     return { ...message, threadId };

@@ -94,3 +94,25 @@ test("boundMessageId drops over-long values", () => {
   assert.equal(boundMessageId("<a@x>"), "<a@x>");
   assert.equal(boundMessageId(`<${"a".repeat(5000)}>`), undefined);
 });
+
+test("resolves a 10,000-message reply chain in linear time", () => {
+  const n = 10_000;
+  const messages = Array.from({ length: n }, (_, i) => ({
+    accountId: "a",
+    providerMessageId: String(i + 1),
+    mailbox: "INBOX",
+    from: "a@example.com",
+    subject: "s",
+    receivedAt: new Date(i * 1000),
+    hasAttachments: false,
+    messageId: `<m${i}@x>`,
+    inReplyTo: i === 0 ? undefined : `<m${i - 1}@x>`
+  }));
+  // Worst case order: deepest message first, then the rest.
+  messages.reverse();
+  const started = Date.now();
+  const out = withThreadInfo(messages);
+  assert.ok(Date.now() - started < 1000);
+  assert.equal(new Set(out.map((m) => m.threadId)).size, 1);
+  assert.equal(out[0]!.threadCount, n);
+});
