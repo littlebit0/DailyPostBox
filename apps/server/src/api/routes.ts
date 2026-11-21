@@ -350,6 +350,42 @@ export async function registerRoutes(
     return reply.code(202).send(result);
   });
 
+  // Sends the mailto: unsubscribe request stored from the message's own
+  // List-Unsubscribe header; the client never supplies the recipient.
+  app.post(
+    "/accounts/:accountId/messages/:messageId/unsubscribe",
+    async (request, reply) => {
+      const params = z.object({
+        accountId: z.string(),
+        messageId: z.string()
+      }).parse(request.params);
+      const account = await deps.accounts.getAccount(params.accountId);
+      if (!account || account.userId !== demoUserId) {
+        return reply.code(404).send({ error: "Account not found" });
+      }
+
+      const message = (await deps.accounts.listInbox(demoUserId)).find(
+        (item) => item.accountId === params.accountId &&
+          item.providerMessageId === params.messageId
+      );
+      if (!message) {
+        return reply.code(404).send({ error: "Message not found" });
+      }
+      const mailto = message.unsubscribe?.mailto;
+      if (!mailto) {
+        return reply.code(400).send({ error: "No mailto unsubscribe address" });
+      }
+
+      await deps.sender.send(account, {
+        accountId: account.id,
+        to: [mailto.address],
+        subject: mailto.subject ?? "unsubscribe",
+        text: mailto.body ?? "unsubscribe"
+      });
+      return reply.code(202).send({ ok: true });
+    }
+  );
+
   app.post("/devices/push-token", async (request, reply) => {
     const body = pushTokenSchema.parse(request.body);
 

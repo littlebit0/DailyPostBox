@@ -190,6 +190,15 @@ class MailApiClient {
     });
   }
 
+  Future<void> unsubscribeByMail({
+    required String accountId,
+    required String messageId,
+  }) async {
+    await _dio.post(
+      '/accounts/$accountId/messages/$messageId/unsubscribe',
+    );
+  }
+
   Future<void> sendMail({
     required String accountId,
     required List<String> to,
@@ -288,6 +297,9 @@ class MessageDetail {
     required this.body,
     required this.links,
     required this.receivedAtLabel,
+    this.accountId,
+    this.unsubscribeUrl,
+    this.unsubscribeMailto,
   });
 
   final String id;
@@ -296,9 +308,21 @@ class MessageDetail {
   final String body;
   final List<MessageLink> links;
   final String receivedAtLabel;
+  final String? accountId;
+  final String? unsubscribeUrl;
+  final String? unsubscribeMailto;
+
+  bool get canUnsubscribe =>
+      unsubscribeUrl != null ||
+      (unsubscribeMailto != null && accountId != null);
 
   factory MessageDetail.fromJson(Map<String, dynamic> json) {
+    final unsubscribe = json['unsubscribe'] as Map<String, dynamic>?;
+    final mailto = unsubscribe?['mailto'] as Map<String, dynamic>?;
     return MessageDetail(
+      accountId: json['accountId'] as String?,
+      unsubscribeUrl: unsubscribe?['url'] as String?,
+      unsubscribeMailto: mailto?['address'] as String?,
       id: json['id'] as String? ?? '',
       sender: json['from'] as String? ?? '',
       subject: json['subject'] as String? ?? '',

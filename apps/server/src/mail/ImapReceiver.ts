@@ -18,6 +18,7 @@ import {
 } from "./imapSequenceRanges.js";
 import { isAuthenticationFailure } from "./authenticationFailure.js";
 import { extractMessageLinks } from "./messageLinks.js";
+import { parseListUnsubscribe, readHeader } from "./listUnsubscribe.js";
 
 export class ImapReceiver implements MailReceiver {
   private static readonly maxBodyBytes = 2 * 1024 * 1024;
@@ -299,7 +300,8 @@ export class ImapReceiver implements MailReceiver {
     for await (const message of client.fetch(uids, {
       envelope: true,
       flags: true,
-      uid: true
+      uid: true,
+      headers: ["list-unsubscribe", "list-unsubscribe-post"]
     }, { uid: true })) {
       const summary = toIncomingMessage(account, mailbox, message);
       if (summary) batch.push(summary);
@@ -332,6 +334,7 @@ function toIncomingMessage(
 ): IncomingMessageSummary | null {
   const envelope = message.envelope;
   if (!envelope) return null;
+  const rawHeaders = message.headers?.toString("utf8") ?? "";
 
   return {
     accountId: account.id,
@@ -340,7 +343,11 @@ function toIncomingMessage(
     from: envelope.from?.map((item) => item.address).filter(Boolean).join(", ") ?? "",
     subject: envelope.subject ?? "",
     receivedAt: envelope.date instanceof Date ? envelope.date : new Date(),
-    hasAttachments: false
+    hasAttachments: false,
+    unsubscribe: parseListUnsubscribe(
+      readHeader(rawHeaders, "List-Unsubscribe"),
+      readHeader(rawHeaders, "List-Unsubscribe-Post")
+    )
   };
 }
 
