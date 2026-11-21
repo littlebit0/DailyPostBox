@@ -170,6 +170,11 @@ class _Renderer {
 
   final _declCache = <dom.Element, List<(String, String)>>{};
   final _whiteSpaceCache = <dom.Element, String>{};
+
+  /// Collapsed text and bare-URL ranges per text node, found per inline run so
+  /// a URL split across styled children stays one link.
+  final _runText =
+      <dom.Text, (String, List<(int, int, TapGestureRecognizer)>)>{};
   int _work = 0;
   int _images = 0;
 
@@ -181,23 +186,23 @@ class _Renderer {
 
   /// Style declarations of an element, parsed once and capped in size.
   List<(String, String)> _decls(dom.Element el) => _declCache[el] ??= () {
-    final raw = el.attributes['style'] ?? '';
-    final out = <(String, String)>[];
-    final parts = raw
-        .substring(0, math.min(raw.length, maxHtmlStyleLength))
-        .split(';');
-    for (final declaration in parts) {
-      _tick();
-      if (out.length >= maxHtmlStyleDeclarations) break;
-      final index = declaration.indexOf(':');
-      if (index < 0) continue;
-      out.add((
-        declaration.substring(0, index).trim().toLowerCase(),
-        declaration.substring(index + 1).trim().toLowerCase(),
-      ));
-    }
-    return out;
-  }();
+        final raw = el.attributes['style'] ?? '';
+        final out = <(String, String)>[];
+        final parts = raw
+            .substring(0, math.min(raw.length, maxHtmlStyleLength))
+            .split(';');
+        for (final declaration in parts) {
+          _tick();
+          if (out.length >= maxHtmlStyleDeclarations) break;
+          final index = declaration.indexOf(':');
+          if (index < 0) continue;
+          out.add((
+            declaration.substring(0, index).trim().toLowerCase(),
+            declaration.substring(index + 1).trim().toLowerCase(),
+          ));
+        }
+        return out;
+      }();
 
   /// [bg] is the background actually painted behind the content: the nearest
   /// widget/decoration color passed down, overridden for text by an inline
@@ -211,6 +216,22 @@ class _Renderer {
   }) {
     final widgets = <Widget>[];
     var spans = <InlineSpan>[];
+
+    if (recognizer == null) {
+      var run = <dom.Node>[];
+      for (final node in nodes) {
+        final breaks = node is dom.Element &&
+            ((node.localName == 'a' && _hasBlock(node)) ||
+                _blockTags.contains(node.localName));
+        if (breaks) {
+          _scanRun(run);
+          run = <dom.Node>[];
+        } else {
+          run.add(node);
+        }
+      }
+      _scanRun(run);
+    }
 
     void flush() {
       if (spans.isEmpty) return;
@@ -252,6 +273,52 @@ class _Renderer {
     }
     flush();
     return widgets;
+  }
+
+  /// Detects URLs once over the joined text of an inline run. Anchors, images
+  /// and `<br>` count as separators so they never join a URL.
+  void _scanRun(List<dom.Node> run) {
+    final texts = <(dom.Text, String)>[];
+    final buffer = StringBuffer();
+    void walk(dom.Node node) {
+      _tick();
+      if (node is dom.Text) {
+        final collapsed = _collapse(node);
+        texts.add((node, collapsed));
+        buffer.write(collapsed);
+      } else if (node is dom.Element) {
+        if (const {'a', 'img', 'br'}.contains(node.localName)) {
+          buffer.write('\n');
+        } else {
+          node.nodes.forEach(walk);
+        }
+      }
+    }
+
+    run.forEach(walk);
+    final joined = buffer.toString();
+    final urls = findMessageUrls(joined);
+    final taps = [
+      for (final url in urls)
+        TapGestureRecognizer()..onTap = () => onLink(url.uri),
+    ];
+    recognizers.addAll(taps);
+    var offset = 0;
+    for (final (text, collapsed) in texts) {
+      final end = offset + collapsed.length;
+      final ranges = <(int, int, TapGestureRecognizer)>[];
+      for (var i = 0; i < urls.length; i++) {
+        final url = urls[i];
+        if (url.end <= offset || url.start >= end) continue;
+        ranges.add((
+          (url.start - offset).clamp(0, collapsed.length),
+          (url.end - offset).clamp(0, collapsed.length),
+          taps[i],
+        ));
+      }
+      _runText[text] = (collapsed, ranges);
+      offset = end;
+    }
   }
 
   bool _hasBlock(dom.Element el) =>
@@ -375,9 +442,8 @@ class _Renderer {
           child: _column(el, style, bg, align, recognizer),
         );
       default:
-        final spacing = (tag == 'p' || (tag?.startsWith('h') ?? false))
-            ? 6.0
-            : 0.0;
+        final spacing =
+            (tag == 'p' || (tag?.startsWith('h') ?? false)) ? 6.0 : 0.0;
         return _paint(
           el,
           Padding(
@@ -621,33 +687,45 @@ class _Renderer {
     TapGestureRecognizer? recognizer,
   }) {
     if (node is dom.Text) {
-      final text = _collapse(node);
+      final scanned = _runText[node];
+      final text = scanned?.$1 ?? _collapse(node);
       if (text.isNotEmpty && recognizer == null) {
         // Bare URLs outside an anchor stay tappable, as in the plain-text view.
-        for (final segment in parseMessageBody(body: text, links: const [])) {
-          final uri = segment.uri;
-          if (uri == null) {
-            out.add(TextSpan(text: segment.text, style: _leaf(style, bg)));
-            continue;
-          }
-          final tap = TapGestureRecognizer()..onTap = () => onLink(uri);
-          recognizers.add(tap);
-          out.add(
-            TextSpan(
-              text: segment.text,
-              recognizer: tap,
-              mouseCursor: SystemMouseCursors.click,
-              style: _fix(
-                style.copyWith(
-                  color: linkColor,
-                  decoration: TextDecoration.underline,
-                  decorationColor: linkColor,
-                ),
-                bg,
+        var cursor = 0;
+        void plain(int end) {
+          if (end > cursor) {
+            out.add(
+              TextSpan(
+                text: text.substring(cursor, end),
+                style: _leaf(style, bg),
               ),
-            ),
-          );
+            );
+          }
         }
+
+        for (final (start, end, tap)
+            in scanned?.$2 ?? const <(int, int, TapGestureRecognizer)>[]) {
+          plain(start);
+          if (end > start) {
+            out.add(
+              TextSpan(
+                text: text.substring(start, end),
+                recognizer: tap,
+                mouseCursor: SystemMouseCursors.click,
+                style: _fix(
+                  style.copyWith(
+                    color: linkColor,
+                    decoration: TextDecoration.underline,
+                    decorationColor: linkColor,
+                  ),
+                  bg,
+                ),
+              ),
+            );
+          }
+          cursor = end;
+        }
+        plain(text.length);
       } else if (text.isNotEmpty) {
         // Recognizers only fire on the innermost span, so every text leaf of
         // a link carries its own.
@@ -705,13 +783,13 @@ class _Renderer {
 
   /// Whitespace mode of an element, inherited and computed once per element.
   String _whiteSpace(dom.Element el) => _whiteSpaceCache[el] ??= () {
-    var mode = el.localName == 'pre' ? 'pre' : null;
-    for (final (prop, value) in _decls(el)) {
-      if (prop == 'white-space') mode = value;
-    }
-    final parent = el.parent;
-    return mode ?? (parent == null ? 'normal' : _whiteSpace(parent));
-  }();
+        var mode = el.localName == 'pre' ? 'pre' : null;
+        for (final (prop, value) in _decls(el)) {
+          if (prop == 'white-space') mode = value;
+        }
+        final parent = el.parent;
+        return mode ?? (parent == null ? 'normal' : _whiteSpace(parent));
+      }();
 
   /// Collapses whitespace unless the element is `<pre>` or `white-space: pre*`.
   String _collapse(dom.Text node) {
@@ -870,8 +948,7 @@ class _Renderer {
             style = style.copyWith(backgroundColor: color);
           }
         case 'font-weight':
-          final bold =
-              value == 'bold' ||
+          final bold = value == 'bold' ||
               value == 'bolder' ||
               (int.tryParse(value) ?? 0) >= 600;
           style = style.copyWith(
