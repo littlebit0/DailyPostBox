@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../core/i18n/language_controller.dart';
 import '../../services/mail_api_client.dart';
 import '../../widgets/app_shell.dart';
+import 'recipient_field.dart';
 
 final composeAccountsProvider = FutureProvider<List<MailAccountSummary>>((ref) {
   return ref.watch(mailApiClientProvider).fetchAccounts();
@@ -23,7 +24,7 @@ class ComposePage extends ConsumerStatefulWidget {
 }
 
 class _ComposePageState extends ConsumerState<ComposePage> {
-  final _toController = TextEditingController();
+  final _toKey = GlobalKey<RecipientFieldState>();
   final _subjectController = TextEditingController();
   final _bodyController = TextEditingController();
   String? _accountId;
@@ -36,7 +37,6 @@ class _ComposePageState extends ConsumerState<ComposePage> {
 
   @override
   void dispose() {
-    _toController.dispose();
     _subjectController.dispose();
     _bodyController.dispose();
     super.dispose();
@@ -93,9 +93,12 @@ class _ComposePageState extends ConsumerState<ComposePage> {
                     onChanged: (value) => setState(() => _accountId = value),
                   ),
                   const SizedBox(height: 12),
-                  TextField(
-                    controller: _toController,
-                    decoration: InputDecoration(labelText: strings.to),
+                  RecipientField(
+                    key: _toKey,
+                    label: strings.to,
+                    errorText: strings.invalidRecipient,
+                    suggest: ref.read(mailApiClientProvider).suggestContacts,
+                    onChanged: (_) {},
                   ),
                   const SizedBox(height: 12),
                   TextField(
@@ -134,9 +137,21 @@ class _ComposePageState extends ConsumerState<ComposePage> {
     final accountId = _accountId;
     if (accountId == null) return;
 
+    final field = _toKey.currentState;
+    final to = field?.commitPending() ?? const <String>[];
+    final strings = ref.read(appStringsProvider);
+    if (to.isEmpty || field!.hasInvalid) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(to.isEmpty
+            ? strings.recipientRequired
+            : strings.invalidRecipient),
+      ));
+      return;
+    }
+
     await ref.read(mailApiClientProvider).sendMail(
           accountId: accountId,
-          to: _toController.text.split(',').map((item) => item.trim()).toList(),
+          to: to,
           subject: _subjectController.text,
           body: _bodyController.text,
         );
