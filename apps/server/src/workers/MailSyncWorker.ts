@@ -51,12 +51,9 @@ export class MailSyncWorker {
       return;
     }
 
+    // POP3 is not implemented yet: the sync records the error status and
+    // no polling timer is started.
     await this.syncAccount(account).catch(() => undefined);
-    if (this.pollingTimers.has(account.id)) {
-      return;
-    }
-
-    this.startPop3Account(account);
   }
 
   /** Starts watching or polling only when nothing is running for the account. */
@@ -234,17 +231,6 @@ export class MailSyncWorker {
     this.stopHandlers.set(account.id, stopWatching);
 
     await connect();
-  }
-
-  private startPop3Account(account: MailAccount): void {
-    const poll = async () => {
-      const messages = await this.pop3.fetchLatest(account, this.options.mailbox, 25);
-      await Promise.all(messages.map((message) => this.handleIncoming(account, message)));
-    };
-
-    void poll();
-    const timer = setInterval(() => void poll(), this.options.pop3PollIntervalMs);
-    this.pollingTimers.set(account.id, timer);
   }
 
   private async handleIncoming(
