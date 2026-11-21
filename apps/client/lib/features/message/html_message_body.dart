@@ -444,7 +444,11 @@ class _Renderer {
     }
     if (rows.isEmpty) return const SizedBox.shrink();
     final columns = rows.fold<int>(0, (m, r) {
-      final width = r.keys.fold<int>(0, (a, k) => k + 1 > a ? k + 1 : a);
+      // A cell occupies [start, start + colspan), so use its end, not start + 1.
+      final width = r.entries.fold<int>(0, (a, e) {
+        final end = e.key + _span(e.value.$1, 'colspan');
+        return end > a ? end : a;
+      });
       return width > m ? width : m;
     });
     // Every row builds `columns` children, so spans can blow up the count

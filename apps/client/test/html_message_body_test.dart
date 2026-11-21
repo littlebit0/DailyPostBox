@@ -333,6 +333,26 @@ void main() {
     expect(find.byType(Expanded), findsOneWidget);
   });
 
+  testWidgets('column count includes the last cell colspan', (tester) async {
+    await pump(
+      tester,
+      '<table><tr><td>a</td><td colspan="2">b</td></tr>'
+      '<tr><td>c</td></tr></table>',
+    );
+    double cellWidth(String text) => tester
+        .getSize(
+          find
+              .ancestor(
+                of: find.text(text, findRichText: true),
+                matching: find.byType(Expanded),
+              )
+              .first,
+        )
+        .width;
+    expect(cellWidth('a'), closeTo(cellWidth('c'), 1));
+    expect(cellWidth('a') * 3, closeTo(cellWidth('a') + cellWidth('b'), 1));
+  });
+
   testWidgets('bare URLs outside anchors are tappable', (tester) async {
     Uri? opened;
     await tester.pumpWidget(
