@@ -41,6 +41,14 @@ class AppStrings {
   String get settings => _ko ? '설정' : 'Settings';
   String get compose => _ko ? '메일 쓰기' : 'Compose';
   String get refresh => _ko ? '새로고침' : 'Refresh';
+  String get shortcutHelp => _ko ? '단축키 도움말' : 'Keyboard shortcuts';
+  String get shortcutNextMessage => _ko ? '다음 메일 선택' : 'Select next message';
+  String get shortcutPreviousMessage =>
+      _ko ? '이전 메일 선택' : 'Select previous message';
+  String get shortcutOpenMessage => _ko ? '선택한 메일 열기' : 'Open selected message';
+  String get mailMenu => _ko ? '메일' : 'Mail';
+  String get editMenu => _ko ? '편집' : 'Edit';
+  String get windowMenu => _ko ? '윈도우' : 'Window';
   String get close => _ko ? '닫기' : 'Close';
   String get send => _ko ? '보내기' : 'Send';
   String get message => _ko ? '메일' : 'Message';

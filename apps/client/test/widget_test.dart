@@ -1,5 +1,6 @@
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -94,6 +95,212 @@ void main() {
 
     expect(find.text(message.subject), findsOneWidget);
     expect(find.text(account.emailAddress), findsWidgets);
+  });
+
+  testWidgets('moves mailbox selection with j/k and shows shortcut help', (
+    WidgetTester tester,
+  ) async {
+    const account = MailAccountSummary(
+      id: 'account-1',
+      providerId: 'gmail',
+      emailAddress: 'mailbox@example.com',
+      incomingProtocol: 'imap',
+      authMode: 'oauth2',
+      syncStatus: 'idle',
+      syncError: null,
+      initialSync: InitialSyncOption.recommended,
+      lastSyncedAtLabel: 'now',
+    );
+    const messages = [
+      MailSummary(
+        id: 'm1',
+        sender: 'a@example.com',
+        subject: '첫째 메일',
+        snippet: '',
+        receivedAtLabel: 'now',
+        unread: true,
+      ),
+      MailSummary(
+        id: 'm2',
+        sender: 'b@example.com',
+        subject: '둘째 메일',
+        snippet: '',
+        receivedAtLabel: 'now',
+        unread: true,
+      ),
+    ];
+    await tester.binding.setSurfaceSize(const Size(1200, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          accountsProvider.overrideWith((ref) async => const [account]),
+          providersProvider.overrideWith((ref) async => const []),
+          accountMessagesProvider.overrideWith(
+            (ref, accountId) async => messages,
+          ),
+        ],
+        child: const DailyPostBoxApp(),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text(account.emailAddress).first);
+    await tester.pumpAndSettle();
+
+    bool selected(String subject) => tester
+        .widget<ListTile>(find.widgetWithText(ListTile, subject))
+        .selected;
+
+    Future<void> press(LogicalKeyboardKey key, String character) async {
+      await tester.sendKeyDownEvent(key, character: character);
+      await tester.sendKeyUpEvent(key);
+      await tester.pump();
+    }
+
+    await press(LogicalKeyboardKey.keyJ, 'j');
+    expect(selected('첫째 메일'), isTrue);
+    await press(LogicalKeyboardKey.keyJ, 'j');
+    await tester.pump();
+    expect(selected('둘째 메일'), isTrue);
+    await press(LogicalKeyboardKey.keyK, 'k');
+    expect(selected('첫째 메일'), isTrue);
+
+    await press(LogicalKeyboardKey.slash, '?');
+    expect(find.byType(AlertDialog), findsOneWidget);
+    await tester.tap(find.text('닫기'));
+    await tester.pumpAndSettle();
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pumpAndSettle();
+    expect(find.text('둘째 메일'), findsNothing);
+  });
+
+  testWidgets('Enter on a Tab-focused button activates it, not the message', (
+    WidgetTester tester,
+  ) async {
+    const account = MailAccountSummary(
+      id: 'account-1',
+      providerId: 'gmail',
+      emailAddress: 'mailbox@example.com',
+      incomingProtocol: 'imap',
+      authMode: 'oauth2',
+      syncStatus: 'idle',
+      syncError: null,
+      initialSync: InitialSyncOption.recommended,
+      lastSyncedAtLabel: 'now',
+    );
+    const messages = [
+      MailSummary(
+        id: 'm1',
+        sender: 'a@example.com',
+        subject: '첫째 메일',
+        snippet: '',
+        receivedAtLabel: 'now',
+        unread: true,
+      ),
+    ];
+    var loads = 0;
+    await tester.binding.setSurfaceSize(const Size(1200, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          accountsProvider.overrideWith((ref) async => const [account]),
+          providersProvider.overrideWith((ref) async => const []),
+          accountMessagesProvider.overrideWith((ref, accountId) async {
+            loads++;
+            return messages;
+          }),
+        ],
+        child: const DailyPostBoxApp(),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text(account.emailAddress).first);
+    await tester.pumpAndSettle();
+
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.keyJ, character: 'j');
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.keyJ);
+    await tester.pump();
+
+    // Tab until the refresh FAB holds focus.
+    for (var i = 0;
+        i < 20 &&
+            FocusManager.instance.primaryFocus?.context
+                    ?.findAncestorWidgetOfExactType<IconButton>() ==
+                null;
+        i++) {
+      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+      await tester.pump();
+    }
+    expect(
+      FocusManager.instance.primaryFocus?.context
+          ?.findAncestorWidgetOfExactType<IconButton>(),
+      isNotNull,
+    );
+
+    final before = loads;
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pumpAndSettle();
+    // Refresh handler ran; the selected message was not opened.
+    expect(loads, greaterThan(before));
+    expect(find.text('첫째 메일'), findsOneWidget);
+  });
+
+  testWidgets('keeps the j/k selected mailbox row visible', (
+    WidgetTester tester,
+  ) async {
+    const account = MailAccountSummary(
+      id: 'account-1',
+      providerId: 'gmail',
+      emailAddress: 'mailbox@example.com',
+      incomingProtocol: 'imap',
+      authMode: 'oauth2',
+      syncStatus: 'idle',
+      syncError: null,
+      initialSync: InitialSyncOption.recommended,
+      lastSyncedAtLabel: 'now',
+    );
+    final messages = [
+      for (var i = 0; i < 30; i++)
+        MailSummary(
+          id: 'm$i',
+          sender: 'a@example.com',
+          subject: '메일 $i',
+          snippet: '',
+          receivedAtLabel: 'now',
+          unread: true,
+        ),
+    ];
+    await tester.binding.setSurfaceSize(const Size(1200, 600));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          accountsProvider.overrideWith((ref) async => const [account]),
+          providersProvider.overrideWith((ref) async => const []),
+          accountMessagesProvider.overrideWith(
+            (ref, accountId) async => messages,
+          ),
+        ],
+        child: const DailyPostBoxApp(),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text(account.emailAddress).first);
+    await tester.pumpAndSettle();
+
+    for (var i = 0; i < 15; i++) {
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.keyJ, character: 'j');
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.keyJ);
+      await tester.pumpAndSettle();
+    }
+    final rect = tester.getRect(find.widgetWithText(ListTile, '메일 14'));
+    expect(rect.top, greaterThanOrEqualTo(0));
+    expect(rect.bottom, lessThanOrEqualTo(600));
   });
 
   testWidgets('shows a progressive loading state during account sync',
