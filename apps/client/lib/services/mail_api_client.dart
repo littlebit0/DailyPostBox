@@ -259,10 +259,11 @@ class MailSummary {
     required this.snippet,
     required this.receivedAtLabel,
     required this.unread,
-    this.category = 'person',
+    this.category,
   });
 
-  final String category;
+  /// Null until the server has classified the message.
+  final String? category;
   final String id;
   final String sender;
   final String subject;
@@ -278,10 +279,16 @@ class MailSummary {
       snippet: json['snippet'] as String? ?? '',
       receivedAtLabel: _formatReceivedAt(json['receivedAt'] as String?),
       unread: true,
-      category: json['category'] as String? ?? 'person',
+      category: json['category'] as String?,
     );
   }
 }
+
+/// Unclassified mail (null category) shows only under "All".
+List<MailSummary> filterByCategory(List<MailSummary> items, String? category) =>
+    category == null
+        ? items
+        : items.where((m) => m.category == category).toList();
 
 class MessageDetail {
   const MessageDetail({

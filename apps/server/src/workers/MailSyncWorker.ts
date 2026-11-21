@@ -16,6 +16,8 @@ export interface MailSyncWorkerOptions {
 }
 
 export class MailSyncWorker {
+  private static readonly backfillLimit = 500;
+  private static readonly backfillBatch = 50;
   private readonly stopHandlers = new Map<string, () => Promise<void>>();
   private readonly pollingTimers = new Map<string, NodeJS.Timeout>();
   private readonly syncPromises = new Map<string, Promise<void>>();
@@ -120,6 +122,16 @@ export class MailSyncWorker {
             )
           );
         }
+      }
+
+      if (account.incomingProtocol === "imap" && isCurrent()) {
+        // Best effort: a failed backfill must not fail the sync itself.
+        await this.backfillCategories(account).catch((error: unknown) => {
+          console.warn("imap:category-backfill-failed", {
+            accountId: account.id,
+            error: error instanceof Error ? error.message : String(error)
+          });
+        });
       }
 
       if (!isCurrent()) return;
@@ -262,6 +274,40 @@ export class MailSyncWorker {
         error: error instanceof Error ? error.message : String(error)
       });
     });
+  }
+
+  // Messages stored before classification existed have no category and the
+  // 25-message sync never revisits them. Every processed message gets one
+  // (even "person"), so it is not fetched again.
+  private async backfillCategories(account: MailAccount): Promise<void> {
+    const pending = (await this.accounts.listInbox(account.userId))
+      .filter((message) =>
+        message.accountId === account.id &&
+        message.category === undefined &&
+        /^\d+$/.test(message.providerMessageId))
+      .slice(0, MailSyncWorker.backfillLimit);
+
+    const byMailbox = new Map<string, typeof pending>();
+    for (const message of pending) {
+      byMailbox.set(message.mailbox, [...(byMailbox.get(message.mailbox) ?? []), message]);
+    }
+    for (const [mailbox, stored] of byMailbox) {
+      for (let i = 0; i < stored.length; i += MailSyncWorker.backfillBatch) {
+        const batch = stored.slice(i, i + MailSyncWorker.backfillBatch);
+        const fetched = new Map(
+          (await this.imap.fetchSummariesByUid(
+            account, mailbox, batch.map((m) => Number(m.providerMessageId))
+          )).map((m) => [m.providerMessageId, m.category])
+        );
+        for (const message of batch) {
+          await this.accounts.saveIncomingMessage({
+            ...message,
+            // Gone from the server: default to "person" so it is tried once.
+            category: fetched.get(message.providerMessageId) ?? "person"
+          });
+        }
+      }
+    }
   }
 
   private initialSyncLimit(account: MailAccount): number | "all" | 0 {

@@ -212,9 +212,7 @@ class _MailboxContentState extends ConsumerState<_MailboxContent> {
         Expanded(
           child: messages.when(
             data: (all) {
-              final items = _category == null
-                  ? all
-                  : all.where((m) => m.category == _category).toList();
+              final items = filterByCategory(all, _category);
               if (items.isEmpty) {
                 return Center(
                   child: Column(

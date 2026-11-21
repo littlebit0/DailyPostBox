@@ -108,6 +108,21 @@ export class ImapReceiver implements MailReceiver {
     }
   }
 
+  /** Re-reads classification headers of stored messages (one connection, one mailbox). */
+  async fetchSummariesByUid(
+    account: MailAccount,
+    mailbox: string,
+    uids: number[]
+  ): Promise<IncomingMessageSummary[]> {
+    if (uids.length === 0) return [];
+    return this.withConnectionRetry(() =>
+      this.withConnectedClient(account, async (client) => {
+        await client.mailboxOpen(mailbox, { readOnly: true });
+        return this.fetchUids(client, account, mailbox, uids);
+      })
+    );
+  }
+
   async fetchMessageContent(
     account: MailAccount,
     mailbox: string,

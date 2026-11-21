@@ -504,6 +504,22 @@ void main() {
       Rect.fromLTRB(0, 24, 36, 44),
     ]);
   });
+
+  test('unclassified mail appears only under All', () {
+    MailSummary mail(String id, String? category) => MailSummary(
+          id: id,
+          sender: '',
+          subject: '',
+          snippet: '',
+          receivedAtLabel: '',
+          unread: true,
+          category: category,
+        );
+    final items = [mail('1', null), mail('2', 'person'), mail('3', 'newsletter')];
+
+    expect(filterByCategory(items, null).map((m) => m.id), ['1', '2', '3']);
+    expect(filterByCategory(items, 'person').map((m) => m.id), ['2']);
+  });
 }
 
 class _CredentialRecordingApi extends MailApiClient {
