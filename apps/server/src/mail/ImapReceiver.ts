@@ -103,6 +103,15 @@ export class ImapReceiver implements MailReceiver {
     }
   }
 
+  async mailboxUidValidity(account: MailAccount, mailbox: string): Promise<string> {
+    return this.withConnectionRetry(() =>
+      this.withConnectedClient(account, async (client) => {
+        const status = await client.status(mailbox, { uidValidity: true });
+        return String(status.uidValidity ?? "");
+      })
+    );
+  }
+
   async fetchMessageContent(
     account: MailAccount,
     mailbox: string,
