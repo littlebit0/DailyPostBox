@@ -112,6 +112,12 @@ const maxHtmlStyleLength = 1024;
 const maxHtmlStyleDeclarations = 32;
 const maxHtmlWork = 100000;
 
+/// Remote images rendered per message; extras show alt text only.
+const maxHtmlImages = 20;
+
+/// Decode bound per image: 1200x1200 RGBA is about 5.5MiB.
+const _maxImageDecode = 1200;
+
 class _WorkBudgetExceeded implements Exception {
   const _WorkBudgetExceeded();
 }
@@ -165,6 +171,7 @@ class _Renderer {
   final _declCache = <dom.Element, List<(String, String)>>{};
   final _whiteSpaceCache = <dom.Element, String>{};
   int _work = 0;
+  int _images = 0;
 
   /// Counts work units; past [maxHtmlWork] the caller falls back to text.
   void _tick([int units = 1]) {
@@ -174,23 +181,23 @@ class _Renderer {
 
   /// Style declarations of an element, parsed once and capped in size.
   List<(String, String)> _decls(dom.Element el) => _declCache[el] ??= () {
-    final raw = el.attributes['style'] ?? '';
-    final out = <(String, String)>[];
-    final parts = raw
-        .substring(0, math.min(raw.length, maxHtmlStyleLength))
-        .split(';');
-    for (final declaration in parts) {
-      _tick();
-      if (out.length >= maxHtmlStyleDeclarations) break;
-      final index = declaration.indexOf(':');
-      if (index < 0) continue;
-      out.add((
-        declaration.substring(0, index).trim().toLowerCase(),
-        declaration.substring(index + 1).trim().toLowerCase(),
-      ));
-    }
-    return out;
-  }();
+        final raw = el.attributes['style'] ?? '';
+        final out = <(String, String)>[];
+        final parts = raw
+            .substring(0, math.min(raw.length, maxHtmlStyleLength))
+            .split(';');
+        for (final declaration in parts) {
+          _tick();
+          if (out.length >= maxHtmlStyleDeclarations) break;
+          final index = declaration.indexOf(':');
+          if (index < 0) continue;
+          out.add((
+            declaration.substring(0, index).trim().toLowerCase(),
+            declaration.substring(index + 1).trim().toLowerCase(),
+          ));
+        }
+        return out;
+      }();
 
   /// [bg] is the background actually painted behind the content: the nearest
   /// widget/decoration color passed down, overridden for text by an inline
@@ -368,9 +375,8 @@ class _Renderer {
           child: _column(el, style, bg, align, recognizer),
         );
       default:
-        final spacing = (tag == 'p' || (tag?.startsWith('h') ?? false))
-            ? 6.0
-            : 0.0;
+        final spacing =
+            (tag == 'p' || (tag?.startsWith('h') ?? false)) ? 6.0 : 0.0;
         return _paint(
           el,
           Padding(
@@ -650,13 +656,13 @@ class _Renderer {
 
   /// Whitespace mode of an element, inherited and computed once per element.
   String _whiteSpace(dom.Element el) => _whiteSpaceCache[el] ??= () {
-    var mode = el.localName == 'pre' ? 'pre' : null;
-    for (final (prop, value) in _decls(el)) {
-      if (prop == 'white-space') mode = value;
-    }
-    final parent = el.parent;
-    return mode ?? (parent == null ? 'normal' : _whiteSpace(parent));
-  }();
+        var mode = el.localName == 'pre' ? 'pre' : null;
+        for (final (prop, value) in _decls(el)) {
+          if (prop == 'white-space') mode = value;
+        }
+        final parent = el.parent;
+        return mode ?? (parent == null ? 'normal' : _whiteSpace(parent));
+      }();
 
   /// Collapses whitespace unless the element is `<pre>` or `white-space: pre*`.
   String _collapse(dom.Text node) {
@@ -685,19 +691,27 @@ class _Renderer {
 
     // data: URIs are never decoded: a tiny PNG can claim a huge pixel size.
     final scheme = Uri.tryParse(src)?.scheme.toLowerCase();
-    if (scheme == 'http' || scheme == 'https') {
-      image = Image.network(
-        src,
+    final remote = scheme == 'http' || scheme == 'https';
+    final tooMany = remote && ++_images > maxHtmlImages;
+    if (remote && !tooMany) {
+      // shortcut: animated images are bounded per frame only; cap frames later.
+      image = Image(
+        image: ResizeImage(
+          NetworkImage(src),
+          width: _maxImageDecode,
+          height: _maxImageDecode,
+          policy: ResizeImagePolicy.fit,
+        ),
         width: width,
         height: height,
-        // Caps decoded size (2x the 600px max layout width); keeps aspect ratio.
-        cacheWidth: 1200,
         errorBuilder: (_, __, ___) => const SizedBox.shrink(),
       );
     }
     if (image == null) {
       return TextSpan(
-        text: img.attributes['alt'] ?? '',
+        text: tooMany
+            ? '${img.attributes['alt'] ?? ''} [이미지 생략 / omitted]'
+            : img.attributes['alt'] ?? '',
         style: _leaf(style, bg),
       );
     }
@@ -794,8 +808,7 @@ class _Renderer {
             style = style.copyWith(backgroundColor: color);
           }
         case 'font-weight':
-          final bold =
-              value == 'bold' ||
+          final bold = value == 'bold' ||
               value == 'bolder' ||
               (int.tryParse(value) ?? 0) >= 600;
           style = style.copyWith(
