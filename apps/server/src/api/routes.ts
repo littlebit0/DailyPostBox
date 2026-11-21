@@ -12,6 +12,7 @@ import type {
   ProviderId
 } from "../domain/types.js";
 import type { AccountRepository } from "../workers/AccountRepository.js";
+import { suggestContacts } from "../contacts/suggestContacts.js";
 import { providerRegistry } from "../providers/providerRegistry.js";
 import {
   applySyncFailure,
@@ -336,6 +337,12 @@ export async function registerRoutes(
       bodyTruncated: content.truncated,
       bodyLinks: content.links
     };
+  });
+
+  app.get("/contacts/suggest", async (request) => {
+    const { q } = z.object({ q: z.string().default("") }).parse(request.query);
+    const messages = await deps.accounts.listInbox(demoUserId);
+    return suggestContacts(messages, q);
   });
 
   app.post("/mail/send", async (request, reply) => {

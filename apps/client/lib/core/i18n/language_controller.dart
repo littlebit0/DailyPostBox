@@ -49,6 +49,10 @@ class AppStrings {
   String get back => _ko ? '뒤로' : 'Back';
   String get from => _ko ? '보낸 사람' : 'From';
   String get to => _ko ? '받는 사람' : 'To';
+  String get invalidRecipient =>
+      _ko ? '올바르지 않은 주소가 있습니다' : 'Some addresses are not valid';
+  String get recipientRequired =>
+      _ko ? '받는 사람을 입력하세요' : 'Enter at least one recipient';
   String get subject => _ko ? '제목' : 'Subject';
   String get body => _ko ? '내용' : 'Message';
   String get emptyInboxTitle => _ko ? '받은 메일이 없습니다' : 'No messages yet';
