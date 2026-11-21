@@ -1,5 +1,6 @@
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -94,6 +95,85 @@ void main() {
 
     expect(find.text(message.subject), findsOneWidget);
     expect(find.text(account.emailAddress), findsWidgets);
+  });
+
+  testWidgets('moves mailbox selection with j/k and shows shortcut help', (
+    WidgetTester tester,
+  ) async {
+    const account = MailAccountSummary(
+      id: 'account-1',
+      providerId: 'gmail',
+      emailAddress: 'mailbox@example.com',
+      incomingProtocol: 'imap',
+      authMode: 'oauth2',
+      syncStatus: 'idle',
+      syncError: null,
+      initialSync: InitialSyncOption.recommended,
+      lastSyncedAtLabel: 'now',
+    );
+    const messages = [
+      MailSummary(
+        id: 'm1',
+        sender: 'a@example.com',
+        subject: '첫째 메일',
+        snippet: '',
+        receivedAtLabel: 'now',
+        unread: true,
+      ),
+      MailSummary(
+        id: 'm2',
+        sender: 'b@example.com',
+        subject: '둘째 메일',
+        snippet: '',
+        receivedAtLabel: 'now',
+        unread: true,
+      ),
+    ];
+    await tester.binding.setSurfaceSize(const Size(1200, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          accountsProvider.overrideWith((ref) async => const [account]),
+          providersProvider.overrideWith((ref) async => const []),
+          accountMessagesProvider.overrideWith(
+            (ref, accountId) async => messages,
+          ),
+        ],
+        child: const DailyPostBoxApp(),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text(account.emailAddress).first);
+    await tester.pumpAndSettle();
+
+    bool selected(String subject) => tester
+        .widget<ListTile>(find.widgetWithText(ListTile, subject))
+        .selected;
+
+    Future<void> press(LogicalKeyboardKey key, String character) async {
+      await tester.sendKeyDownEvent(key, character: character);
+      await tester.sendKeyUpEvent(key);
+      await tester.pump();
+    }
+
+    await press(LogicalKeyboardKey.keyJ, 'j');
+    expect(selected('첫째 메일'), isTrue);
+    await press(LogicalKeyboardKey.keyJ, 'j');
+    await tester.pump();
+    expect(selected('둘째 메일'), isTrue);
+    await press(LogicalKeyboardKey.keyK, 'k');
+    expect(selected('첫째 메일'), isTrue);
+
+    await press(LogicalKeyboardKey.slash, '?');
+    expect(find.byType(AlertDialog), findsOneWidget);
+    await tester.tap(find.text('닫기'));
+    await tester.pumpAndSettle();
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pumpAndSettle();
+    expect(find.text('둘째 메일'), findsNothing);
   });
 
   testWidgets('shows a progressive loading state during account sync',

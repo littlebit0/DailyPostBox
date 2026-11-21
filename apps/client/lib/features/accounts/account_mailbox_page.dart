@@ -1,6 +1,8 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -51,6 +53,37 @@ class AccountMailboxPage extends ConsumerWidget {
   }
 }
 
+class _MoveSelectionIntent extends Intent {
+  const _MoveSelectionIntent(this.delta);
+
+  final int delta;
+}
+
+class _OpenSelectedIntent extends Intent {
+  const _OpenSelectedIntent();
+}
+
+class _ComposeIntent extends Intent {
+  const _ComposeIntent();
+}
+
+class _ShowHelpIntent extends Intent {
+  const _ShowHelpIntent();
+}
+
+/// Single-key shortcuts must not fire while the user types in a text field.
+bool _typingInTextField() =>
+    FocusManager.instance.primaryFocus?.context
+        ?.findAncestorWidgetOfExactType<EditableText>() !=
+    null;
+
+class _GuardedCallbackAction<T extends Intent> extends CallbackAction<T> {
+  _GuardedCallbackAction({required super.onInvoke});
+
+  @override
+  bool isEnabled(T intent) => !_typingInTextField();
+}
+
 class _MailboxContent extends ConsumerStatefulWidget {
   const _MailboxContent({required this.account});
 
@@ -63,6 +96,7 @@ class _MailboxContent extends ConsumerStatefulWidget {
 class _MailboxContentState extends ConsumerState<_MailboxContent> {
   Timer? _refreshTimer;
   bool _refreshing = false;
+  String? _selectedId;
 
   bool get _isSyncing =>
       const {'syncing', 'validating'}.contains(widget.account.syncStatus);
@@ -134,13 +168,140 @@ class _MailboxContentState extends ConsumerState<_MailboxContent> {
     if (mounted && _isSyncing && _refreshTimer == null) _scheduleRefresh();
   }
 
+  List<MailSummary> get _items =>
+      ref.read(accountMessagesProvider(widget.account.id)).asData?.value ??
+      const [];
+
+  void _moveSelection(int delta) {
+    final items = _items;
+    if (items.isEmpty) return;
+    final current = items.indexWhere((item) => item.id == _selectedId);
+    final next = current == -1
+        ? (delta > 0 ? 0 : items.length - 1)
+        : (current + delta).clamp(0, items.length - 1);
+    setState(() => _selectedId = items[next].id);
+  }
+
+  void _openMessage(String messageId) => context.go(
+    '/accounts/${widget.account.id}/messages/${Uri.encodeComponent(messageId)}',
+    extra: const {'disableTransition': true},
+  );
+
+  void _openSelected() {
+    if (_items.any((item) => item.id == _selectedId)) {
+      _openMessage(_selectedId!);
+    }
+  }
+
+  void _compose() => context.go('/accounts/${widget.account.id}/compose');
+
+  void _showHelp() {
+    final strings = ref.read(appStringsProvider);
+    final rows = [
+      ('j', strings.shortcutNextMessage),
+      ('k', strings.shortcutPreviousMessage),
+      ('Enter', strings.shortcutOpenMessage),
+      ('c', strings.compose),
+      ('?', strings.shortcutHelp),
+    ];
+    showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(strings.shortcutHelp),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (final (key, label) in rows)
+              ListTile(
+                dense: true,
+                leading: Text(
+                  key,
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+                title: Text(label),
+              ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: Text(strings.close),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _withShortcuts(Widget child) {
+    final strings = ref.read(appStringsProvider);
+    final body = Shortcuts(
+      shortcuts: const {
+        CharacterActivator('j'): _MoveSelectionIntent(1),
+        CharacterActivator('k'): _MoveSelectionIntent(-1),
+        SingleActivator(LogicalKeyboardKey.enter): _OpenSelectedIntent(),
+        CharacterActivator('c'): _ComposeIntent(),
+        CharacterActivator('?'): _ShowHelpIntent(),
+      },
+      child: Actions(
+        actions: {
+          _MoveSelectionIntent: _GuardedCallbackAction<_MoveSelectionIntent>(
+            onInvoke: (intent) => _moveSelection(intent.delta),
+          ),
+          _OpenSelectedIntent: _GuardedCallbackAction<_OpenSelectedIntent>(
+            onInvoke: (_) => _openSelected(),
+          ),
+          _ComposeIntent: _GuardedCallbackAction<_ComposeIntent>(
+            onInvoke: (_) => _compose(),
+          ),
+          _ShowHelpIntent: _GuardedCallbackAction<_ShowHelpIntent>(
+            onInvoke: (_) => _showHelp(),
+          ),
+        },
+        child: Focus(autofocus: true, child: child),
+      ),
+    );
+    if (defaultTargetPlatform != TargetPlatform.macOS) return body;
+    return PlatformMenuBar(
+      menus: [
+        PlatformMenu(
+          label: strings.mailMenu,
+          menus: [
+            PlatformMenuItem(
+              label: strings.compose,
+              shortcut: const CharacterActivator('c'),
+              onSelected: _compose,
+            ),
+            PlatformMenuItem(
+              label: strings.shortcutOpenMessage,
+              onSelected: _openSelected,
+            ),
+            PlatformMenuItem(
+              label: strings.shortcutNextMessage,
+              onSelected: () => _moveSelection(1),
+            ),
+            PlatformMenuItem(
+              label: strings.shortcutPreviousMessage,
+              onSelected: () => _moveSelection(-1),
+            ),
+            PlatformMenuItem(
+              label: strings.shortcutHelp,
+              onSelected: _showHelp,
+            ),
+          ],
+        ),
+      ],
+      child: body,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final account = widget.account;
     final messages = ref.watch(accountMessagesProvider(account.id));
     final strings = ref.watch(appStringsProvider);
 
-    return Column(
+    return _withShortcuts(
+      Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         AppBar(
@@ -234,6 +395,7 @@ class _MailboxContentState extends ConsumerState<_MailboxContent> {
                 itemBuilder: (context, index) {
                   final message = items[index];
                   return ListTile(
+                    selected: message.id == _selectedId,
                     minLeadingWidth: 28,
                     leading: Icon(
                       message.unread
@@ -251,10 +413,7 @@ class _MailboxContentState extends ConsumerState<_MailboxContent> {
                       overflow: TextOverflow.ellipsis,
                     ),
                     trailing: Text(message.receivedAtLabel),
-                    onTap: () => context.go(
-                      '/accounts/${account.id}/messages/${Uri.encodeComponent(message.id)}',
-                      extra: const {'disableTransition': true},
-                    ),
+                    onTap: () => _openMessage(message.id),
                   );
                 },
               );
@@ -266,6 +425,7 @@ class _MailboxContentState extends ConsumerState<_MailboxContent> {
           ),
         ),
       ],
+    ),
     );
   }
 }
