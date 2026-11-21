@@ -32,6 +32,15 @@ export interface MailProviderConfig {
   };
 }
 
+export interface IncomingCapabilities {
+  idle: boolean;
+  move: boolean;
+  specialUse: boolean;
+  condstore: boolean;
+  /** ISO time of the login that reported these capabilities. */
+  checkedAt: string;
+}
+
 export interface MailAccount {
   id: string;
   userId: string;
@@ -49,6 +58,7 @@ export interface MailAccount {
     limit: number | "all";
   };
   lastSyncedAt?: Date;
+  incomingCapabilities?: IncomingCapabilities;
   connectionOverride?: {
     incoming?: {
       host: string;

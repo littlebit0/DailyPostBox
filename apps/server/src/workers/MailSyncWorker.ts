@@ -219,6 +219,9 @@ export class MailSyncWorker {
           scheduleReconnect
         );
         reconnectDelay = this.options.imapReconnectBaseDelayMs;
+        if (account.incomingCapabilities) {
+          await this.accounts.updateAccount(account).catch(() => undefined);
+        }
       } catch (error) {
         scheduleReconnect(error instanceof Error ? error : new Error(String(error)));
       }
