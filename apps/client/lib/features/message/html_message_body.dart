@@ -131,8 +131,9 @@ class _Renderer {
 
     void flush() {
       if (spans.isEmpty) return;
-      final onlySpace =
-          spans.every((span) => span.toPlainText().trim().isEmpty);
+      final onlySpace = spans.every(
+        (span) => span.toPlainText().trim().isEmpty,
+      );
       if (!onlySpace) {
         widgets.add(
           Text.rich(
@@ -205,8 +206,9 @@ class _Renderer {
           child: _column(el, style, align),
         );
       default:
-        final spacing =
-            (tag == 'p' || (tag?.startsWith('h') ?? false)) ? 6.0 : 0.0;
+        final spacing = (tag == 'p' || (tag?.startsWith('h') ?? false))
+            ? 6.0
+            : 0.0;
         return Padding(
           padding: EdgeInsets.symmetric(vertical: spacing),
           child: _column(el, style, align),
@@ -222,39 +224,63 @@ class _Renderer {
   }
 
   Widget _table(dom.Element table, TextStyle style) {
-    final rows = <List<dom.Element>>[];
+    final rows = <Map<int, (dom.Element cell, dom.Element row)>>[];
+    // column -> number of following rows still covered by a rowspan cell.
+    var pending = <int, int>{};
     for (final row in _descendants(table, 'tr')) {
-      final cells = row.children.where(
-        (c) => c.localName == 'td' || c.localName == 'th',
-      );
-      final expanded = <dom.Element>[];
+      final cells = row.children
+          .where((c) => c.localName == 'td' || c.localName == 'th')
+          .toList();
+      if (cells.isEmpty) continue;
+      final slots = <int, (dom.Element, dom.Element)>{};
+      final next = <int, int>{
+        for (final e in pending.entries)
+          if (e.value > 1) e.key: e.value - 1,
+      };
+      var col = 0;
       for (final cell in cells) {
-        expanded.add(cell);
-        final span = int.tryParse(cell.attributes['colspan'] ?? '') ?? 1;
-        for (var i = 1; i < span.clamp(1, 20); i++) {
-          expanded.add(dom.Element.tag('td'));
+        while ((pending[col] ?? 0) > 0) {
+          col++;
         }
+        final colspan = _span(cell, 'colspan');
+        final rowspan = _span(cell, 'rowspan');
+        slots[col] = (cell, row);
+        for (var i = 0; i < colspan; i++) {
+          if (rowspan > 1) next[col + i] = rowspan - 1;
+        }
+        col += colspan;
       }
-      if (expanded.isNotEmpty) rows.add(expanded);
+      pending = next;
+      rows.add(slots);
     }
     if (rows.isEmpty) return const SizedBox.shrink();
-    final columns = rows.fold<int>(0, (m, r) => r.length > m ? r.length : m);
+    final columns = rows.fold<int>(0, (m, r) {
+      final width = r.keys.fold<int>(0, (a, k) => k + 1 > a ? k + 1 : a);
+      return width > m ? width : m;
+    });
 
-    TableRow toRow(List<dom.Element> cells) => TableRow(
+    TableRow toRow(Map<int, (dom.Element cell, dom.Element row)> slots) =>
+        TableRow(
           children: [
             for (var i = 0; i < columns; i++)
-              if (i < cells.length)
-                Padding(
-                  padding: const EdgeInsets.all(4),
-                  child: _column(
-                    cells[i],
-                    cells[i].localName == 'th'
-                        ? _styled(
-                            cells[i],
-                            style,
-                          ).copyWith(fontWeight: FontWeight.bold)
-                        : _styled(cells[i], style),
-                    _align(cells[i]) ?? TextAlign.start,
+              if (slots[i] case (final cell, final row))
+                ColoredBox(
+                  color:
+                      _background(cell) ??
+                      _background(row) ??
+                      Colors.transparent,
+                  child: Padding(
+                    padding: const EdgeInsets.all(4),
+                    child: _column(
+                      cell,
+                      cell.localName == 'th'
+                          ? _styled(
+                              cell,
+                              style,
+                            ).copyWith(fontWeight: FontWeight.bold)
+                          : _styled(cell, style),
+                      _align(cell) ?? TextAlign.start,
+                    ),
                   ),
                 )
               else
@@ -263,10 +289,30 @@ class _Renderer {
         );
 
     final bordered = (int.tryParse(table.attributes['border'] ?? '') ?? 0) > 0;
-    return Table(
-      border: bordered ? TableBorder.all(color: Colors.black26) : null,
-      children: rows.map(toRow).toList(growable: false),
+    return ColoredBox(
+      color: _background(table) ?? Colors.transparent,
+      child: Table(
+        border: bordered ? TableBorder.all(color: Colors.black26) : null,
+        children: rows.map(toRow).toList(growable: false),
+      ),
     );
+  }
+
+  int _span(dom.Element cell, String attribute) =>
+      (int.tryParse(cell.attributes[attribute] ?? '') ?? 1).clamp(1, 20);
+
+  /// `bgcolor` attribute or inline `background-color` of a table element.
+  Color? _background(dom.Element el) {
+    Color? color = _color(el.attributes['bgcolor']);
+    for (final declaration in (el.attributes['style'] ?? '').split(';')) {
+      final index = declaration.indexOf(':');
+      if (index < 0) continue;
+      if (declaration.substring(0, index).trim().toLowerCase() ==
+          'background-color') {
+        color = _color(declaration.substring(index + 1)) ?? color;
+      }
+    }
+    return color;
   }
 
   Iterable<dom.Element> _descendants(dom.Element root, String tag) sync* {
@@ -286,7 +332,7 @@ class _Renderer {
     TapGestureRecognizer? recognizer,
   }) {
     if (node is dom.Text) {
-      final text = node.text.replaceAll(RegExp(r'\s+'), ' ');
+      final text = _collapse(node);
       if (text.isNotEmpty) {
         // Recognizers only fire on the innermost span, so every text leaf of
         // a link carries its own.
@@ -306,7 +352,7 @@ class _Renderer {
       case 'br':
         out.add(const TextSpan(text: '\n'));
       case 'img':
-        out.add(_image(node));
+        out.add(_image(node, recognizer));
       case 'a':
         final uri = _safeLink(node.attributes['href']);
         final linkStyle = uri == null
@@ -336,7 +382,31 @@ class _Renderer {
     }
   }
 
-  InlineSpan _image(dom.Element img) {
+  /// Collapses whitespace unless an ancestor is `<pre>` or `white-space: pre*`.
+  String _collapse(dom.Text node) {
+    var keepAll = false;
+    var keepBreaks = false;
+    for (dom.Element? e = node.parent; e != null; e = e.parent) {
+      var mode = e.localName == 'pre' ? 'pre' : null;
+      for (final declaration in (e.attributes['style'] ?? '').split(';')) {
+        final index = declaration.indexOf(':');
+        if (index > 0 &&
+            declaration.substring(0, index).trim().toLowerCase() ==
+                'white-space') {
+          mode = declaration.substring(index + 1).trim().toLowerCase();
+        }
+      }
+      if (mode == null) continue;
+      keepAll = mode == 'pre' || mode == 'pre-wrap' || mode == 'break-spaces';
+      keepBreaks = mode == 'pre-line';
+      break;
+    }
+    if (keepAll) return node.text;
+    if (keepBreaks) return node.text.replaceAll(RegExp(r'[ \t\r\f]+'), ' ');
+    return node.text.replaceAll(RegExp(r'\s+'), ' ');
+  }
+
+  InlineSpan _image(dom.Element img, TapGestureRecognizer? recognizer) {
     final src = img.attributes['src'] ?? '';
     final width = double.tryParse(img.attributes['width'] ?? '');
     final height = double.tryParse(img.attributes['height'] ?? '');
@@ -361,11 +431,17 @@ class _Renderer {
       );
     }
     if (image == null) return const TextSpan();
+    final onTap = recognizer?.onTap;
     return WidgetSpan(
       alignment: PlaceholderAlignment.middle,
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 600),
-        child: image,
+        child: onTap == null
+            ? image
+            : MouseRegion(
+                cursor: SystemMouseCursors.click,
+                child: GestureDetector(onTap: onTap, child: image),
+              ),
       ),
     );
   }
@@ -428,7 +504,8 @@ class _Renderer {
           final color = _color(value);
           if (color != null) style = style.copyWith(backgroundColor: color);
         case 'font-weight':
-          final bold = value == 'bold' ||
+          final bold =
+              value == 'bold' ||
               value == 'bolder' ||
               (int.tryParse(value) ?? 0) >= 600;
           style = style.copyWith(
@@ -509,7 +586,8 @@ Color? _color(String? value) {
     r'^rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)$',
   ).firstMatch(v);
   if (rgb != null) {
-    int c(int i) => int.parse(rgb.group(i)!).clamp(0, 255);
+    // Oversized digit runs overflow int.parse on native; treat them as max.
+    int c(int i) => (int.tryParse(rgb.group(i)!) ?? 255).clamp(0, 255);
     return Color.fromARGB(255, c(1), c(2), c(3));
   }
   return null;

@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:daily_postbox/features/message/html_message_body.dart';
+import 'package:daily_postbox/features/message/linked_message_body.dart';
 import 'package:daily_postbox/features/message/message_page.dart';
 import 'package:daily_postbox/services/mail_api_client.dart';
 
@@ -27,7 +28,8 @@ void main() {
       const MaterialApp(
         home: Scaffold(
           body: HtmlMessageBody(
-            html: '<h1>Receipt</h1><p>Hello <b>bold</b></p>'
+            html:
+                '<h1>Receipt</h1><p>Hello <b>bold</b></p>'
                 '<table><tr><td>Item</td><td>1,000</td></tr></table>'
                 '<ul><li>one</li></ul>',
           ),
@@ -51,7 +53,8 @@ void main() {
       MaterialApp(
         home: Scaffold(
           body: HtmlMessageBody(
-            html: '<a href="javascript:alert(1)">bad</a> '
+            html:
+                '<a href="javascript:alert(1)">bad</a> '
                 '<a href="https://example.com/x">good</a>',
             linkLauncher: (uri) async {
               opened = uri;
@@ -63,8 +66,9 @@ void main() {
     );
 
     // The rich text is "bad good": the second word starts after "bad " (4 Ahem glyphs, 60px).
-    final rect =
-        tester.getRect(find.textContaining('good', findRichText: true));
+    final rect = tester.getRect(
+      find.textContaining('good', findRichText: true),
+    );
     await tester.tapAt(rect.centerLeft + const Offset(90, 0));
     await tester.pump();
     expect(opened, Uri.parse('https://example.com/x'));
@@ -118,5 +122,91 @@ void main() {
       findsOneWidget,
     );
     expect(find.byType(HtmlMessageBody), findsNothing);
+  });
+
+  Future<void> pump(
+    WidgetTester tester,
+    String html, {
+    MessageLinkLauncher? launcher,
+  }) {
+    return tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: HtmlMessageBody(html: html, linkLauncher: launcher),
+          ),
+        ),
+      ),
+    );
+  }
+
+  testWidgets('image inside a link opens the link when tapped', (tester) async {
+    Uri? opened;
+    await pump(
+      tester,
+      '<a href="https://example.com/go"><img src="data:image/png;base64,'
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/'
+      'iZk9HQAAAABJRU5ErkJggg==" width="40" height="40"></a>',
+      launcher: (uri) async {
+        opened = uri;
+        return true;
+      },
+    );
+    await tester.tap(find.byType(Image));
+    expect(opened, Uri.parse('https://example.com/go'));
+  });
+
+  testWidgets('pre keeps line breaks and spacing, normal text collapses', (
+    tester,
+  ) async {
+    await pump(tester, '<pre>a  b\nc</pre><p>x  \n y</p>');
+    expect(find.text('a  b\nc', findRichText: true), findsOneWidget);
+    expect(find.text('x y', findRichText: true), findsOneWidget);
+
+    await pump(tester, '<div style="white-space: pre">d  e\nf</div>');
+    expect(find.text('d  e\nf', findRichText: true), findsOneWidget);
+  });
+
+  testWidgets('table and cell bgcolor are painted', (tester) async {
+    await pump(
+      tester,
+      '<table bgcolor="#000000"><tr><td bgcolor="#ff0000">'
+      '<font color="#ffffff">Your code: 1234</font></td>'
+      '<td style="background-color:#00ff00">ok</td></tr></table>',
+    );
+    final colors = tester
+        .widgetList<ColoredBox>(find.byType(ColoredBox))
+        .map((b) => b.color)
+        .toSet();
+    expect(
+      colors,
+      containsAll(const [
+        Color(0xFF000000),
+        Color(0xFFFF0000),
+        Color(0xFF00FF00),
+      ]),
+    );
+  });
+
+  testWidgets('oversized rgb() does not throw', (tester) async {
+    await pump(
+      tester,
+      '<p style="color:rgb(999999999999999999999999999999,0,0)">still shown</p>',
+    );
+    expect(tester.takeException(), isNull);
+    expect(find.text('still shown', findRichText: true), findsOneWidget);
+  });
+
+  testWidgets('rowspan reserves its column in following rows', (tester) async {
+    await pump(
+      tester,
+      '<table><tr><td rowspan="2">Item</td><td>10</td></tr>'
+      '<tr><td>20</td></tr></table>',
+    );
+    final item = tester.getTopLeft(find.text('Item', findRichText: true)).dx;
+    final ten = tester.getTopLeft(find.text('10', findRichText: true)).dx;
+    final twenty = tester.getTopLeft(find.text('20', findRichText: true)).dx;
+    expect(twenty, greaterThan(item));
+    expect(twenty, ten);
   });
 }
