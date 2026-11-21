@@ -22,7 +22,7 @@ export class MailSyncWorker {
   private readonly stopHandlers = new Map<string, () => Promise<void>>();
   private readonly pollingTimers = new Map<string, NodeJS.Timeout>();
   // accountId -> running backfill; stopAccount/stop drop the token to cancel it.
-  private readonly backfills = new Map<string, { token: object; done: Promise<void> }>();
+  private readonly backfills = new Map<string, { token: object; done: Promise<void>; saving?: Promise<unknown> }>();
   private readonly syncPromises = new Map<string, Promise<void>>();
   // stopAccount drops the token so a sync still running with replaced
   // credentials cannot overwrite the status of the restarted sync.
@@ -144,7 +144,9 @@ export class MailSyncWorker {
   }
 
   async stop(): Promise<void> {
+    const saving = [...this.backfills.values()].map((b) => b.saving);
     this.backfills.clear();
+    await Promise.all(saving);
     for (const timer of this.pollingTimers.values()) clearInterval(timer);
     this.pollingTimers.clear();
 
@@ -157,7 +159,10 @@ export class MailSyncWorker {
   async stopAccount(accountId: string): Promise<void> {
     this.syncPromises.delete(accountId);
     this.syncTokens.delete(accountId);
+    const backfill = this.backfills.get(accountId);
     this.backfills.delete(accountId);
+    // Wait for the batch save already issued so nothing is written after the caller deletes the account.
+    await backfill?.saving?.catch(() => undefined);
 
     const timer = this.pollingTimers.get(accountId);
     if (timer) {
@@ -288,22 +293,36 @@ export class MailSyncWorker {
   private startBackfill(account: MailAccount): void {
     if (this.backfills.has(account.id)) return;
     const token = {};
-    const done = this.backfillThreadMetadata(account, token)
+    const entry: { token: object; done: Promise<void>; saving?: Promise<unknown> } = {
+      token,
+      done: Promise.resolve()
+    };
+    this.backfills.set(account.id, entry);
+    entry.done = this.backfillThreadMetadata(account, token, entry)
       .catch((error) => {
         console.warn("imap:backfill-stopped", {
           accountId: account.id,
           error: error instanceof Error ? error.message : String(error)
         });
       })
+      .then(async () => {
+        if (this.backfills.get(account.id)?.token !== token || !account.threadBackfill) return;
+        // Tell clients the backfill ended so they reload the list once more.
+        account.threadBackfill = undefined;
+        await this.accounts.updateAccount(account).catch(() => undefined);
+      })
       .finally(() => {
         if (this.backfills.get(account.id)?.token === token) {
           this.backfills.delete(account.id);
         }
       });
-    this.backfills.set(account.id, { token, done });
   }
 
-  private async backfillThreadMetadata(account: MailAccount, token: object): Promise<void> {
+  private async backfillThreadMetadata(
+    account: MailAccount,
+    token: object,
+    entry: { saving?: Promise<unknown> }
+  ): Promise<void> {
     const active = () => this.backfills.get(account.id)?.token === token;
     const pending = (await this.accounts.listInbox(account.userId))
       .filter((message) =>
@@ -315,8 +334,13 @@ export class MailSyncWorker {
 
     const byMailbox = new Map<string, typeof pending>();
     for (const message of pending) {
-      byMailbox.set(message.mailbox, [...(byMailbox.get(message.mailbox) ?? []), message]);
+      const group = byMailbox.get(message.mailbox);
+      if (group) group.push(message);
+      else byMailbox.set(message.mailbox, [message]);
     }
+    if (pending.length === 0 || !active()) return;
+    account.threadBackfill = "running";
+    await this.accounts.updateAccount(account);
     for (const [mailbox, stored] of byMailbox) {
       for (let i = 0; i < stored.length; i += MailSyncWorker.backfillBatch) {
         // Yield first so sync and other accounts are not starved.
@@ -329,16 +353,18 @@ export class MailSyncWorker {
           )).map((m) => [m.providerMessageId, m])
         );
         if (!active()) return;
-        for (const message of batch) {
+        // Concurrent saves share one coalesced file write instead of one per message.
+        entry.saving = Promise.all(batch.map((message) => {
           const found = fetched.get(message.providerMessageId);
-          await this.accounts.saveIncomingMessage({
+          return this.accounts.saveIncomingMessage({
             ...message,
             messageId: found?.messageId,
             inReplyTo: found?.inReplyTo,
             references: found?.references ?? [],
             gmailThreadId: found?.gmailThreadId
           });
-        }
+        }));
+        await entry.saving;
       }
     }
   }

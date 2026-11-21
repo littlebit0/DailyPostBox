@@ -367,6 +367,7 @@ class MailAccountSummary {
     this.syncErrorCode,
     required this.initialSync,
     required this.lastSyncedAtLabel,
+    this.threadBackfilling = false,
   });
 
   final String id;
@@ -379,6 +380,8 @@ class MailAccountSummary {
   final String? syncErrorCode;
   final InitialSyncOption? initialSync;
   final String lastSyncedAtLabel;
+  // Server is still filling thread metadata for older messages.
+  final bool threadBackfilling;
 
   factory MailAccountSummary.fromJson(Map<String, dynamic> json) {
     return MailAccountSummary(
@@ -395,6 +398,7 @@ class MailAccountSummary {
               json['initialSync'] as Map<String, dynamic>)
           : null,
       lastSyncedAtLabel: _formatReceivedAt(json['lastSyncedAt'] as String?),
+      threadBackfilling: json['threadBackfill'] == 'running',
     );
   }
 }

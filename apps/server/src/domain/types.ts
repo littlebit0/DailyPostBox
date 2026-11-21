@@ -42,6 +42,8 @@ export interface MailAccount {
   incomingProtocol: MailProtocol;
   encryptedSecretRef: string;
   syncStatus?: "idle" | "validating" | "syncing" | "error";
+  /** Set while the background thread-metadata backfill runs; clients keep refreshing. */
+  threadBackfill?: "running";
   syncError?: string;
   syncErrorCode?: "authentication";
   initialSync?: {

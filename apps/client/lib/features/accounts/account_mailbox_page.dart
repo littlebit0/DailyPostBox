@@ -64,8 +64,11 @@ class _MailboxContentState extends ConsumerState<_MailboxContent> {
   Timer? _refreshTimer;
   bool _refreshing = false;
 
-  bool get _isSyncing =>
-      const {'syncing', 'validating'}.contains(widget.account.syncStatus);
+  static bool _busy(MailAccountSummary account) =>
+      account.threadBackfilling ||
+      const {'syncing', 'validating'}.contains(account.syncStatus);
+
+  bool get _isSyncing => _busy(widget.account);
 
   @override
   void initState() {
@@ -76,8 +79,7 @@ class _MailboxContentState extends ConsumerState<_MailboxContent> {
   @override
   void didUpdateWidget(covariant _MailboxContent oldWidget) {
     super.didUpdateWidget(oldWidget);
-    final wasSyncing =
-        const {'syncing', 'validating'}.contains(oldWidget.account.syncStatus);
+    final wasSyncing = _busy(oldWidget.account);
     if (oldWidget.account.id == widget.account.id &&
         wasSyncing &&
         !_isSyncing) {
@@ -88,7 +90,7 @@ class _MailboxContentState extends ConsumerState<_MailboxContent> {
       });
     }
     if (oldWidget.account.id != widget.account.id ||
-        oldWidget.account.syncStatus != widget.account.syncStatus) {
+        _busy(oldWidget.account) != _isSyncing) {
       _configureRefreshTimer();
     }
   }

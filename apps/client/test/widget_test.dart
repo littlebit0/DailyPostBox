@@ -247,6 +247,72 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
+  testWidgets('keeps polling and reloads mail when thread backfill finishes',
+      (WidgetTester tester) async {
+    const syncing = MailAccountSummary(
+      id: 'syncing-account',
+      providerId: 'naver',
+      emailAddress: 'syncing@example.com',
+      incomingProtocol: 'imap',
+      authMode: 'app-password',
+      syncStatus: 'idle',
+      syncError: null,
+      initialSync: InitialSyncOption.recommended,
+      lastSyncedAtLabel: 'never',
+      threadBackfilling: true,
+    );
+    const idle = MailAccountSummary(
+      id: 'syncing-account',
+      providerId: 'naver',
+      emailAddress: 'syncing@example.com',
+      incomingProtocol: 'imap',
+      authMode: 'app-password',
+      syncStatus: 'idle',
+      syncError: null,
+      initialSync: InitialSyncOption.recommended,
+      lastSyncedAtLabel: 'now',
+    );
+    var accountLoads = 0;
+    var messageLoads = 0;
+    await tester.binding.setSurfaceSize(const Size(1200, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          accountsProvider.overrideWith((ref) async {
+            accountLoads += 1;
+            return accountLoads == 1 ? const [syncing] : const [idle];
+          }),
+          providersProvider.overrideWith((ref) async => const []),
+          accountMessagesProvider.overrideWith((ref, accountId) async {
+            messageLoads += 1;
+            return const [];
+          }),
+        ],
+        child: const DailyPostBoxApp(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text(syncing.emailAddress).first);
+    await tester.pump();
+    final loadsBeforePoll = messageLoads;
+    await tester.pump(const Duration(seconds: 4));
+    await tester.pump();
+    await tester.pump();
+
+    // One poll plus one reload after the status leaves syncing.
+    expect(messageLoads, loadsBeforePoll + 2);
+    expect(find.text('이 계정에 표시할 메일이 없습니다'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    await tester.pump(const Duration(seconds: 4));
+    expect(messageLoads, loadsBeforePoll + 2);
+
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('explains an authentication failure in the mailbox',
       (WidgetTester tester) async {
     const account = MailAccountSummary(
