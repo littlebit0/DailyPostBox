@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  batchLimit,
+  cursorUid,
   latestUidSearchQuery,
   newestFirstSequenceRanges,
   newestFirstUidBatches
@@ -50,4 +52,19 @@ test("searches only the newest sequence range for finite fetches", () => {
   assert.deepEqual(latestUidSearchQuery(10, "all"), { all: true });
   assert.equal(latestUidSearchQuery(0, "all"), null);
   assert.equal(latestUidSearchQuery(10, 0), null);
+});
+
+test("a cursor is used only in the mailbox numbering it was taken from", () => {
+  assert.equal(cursorUid(undefined, "7"), undefined);
+  assert.equal(cursorUid({ uid: 41, uidValidity: "7" }, "7"), 41);
+  assert.equal(cursorUid({ uid: 41, uidValidity: "7" }, "8"), undefined);
+  // Cursors from saved mail have no recorded UIDVALIDITY.
+  assert.equal(cursorUid({ uid: 41 }, "8"), 41);
+});
+
+test("incremental syncs fetch every message after the cursor", () => {
+  assert.equal(batchLimit(41, 25), "all");
+  assert.equal(batchLimit(undefined, 25), 25);
+  const uids = Array.from({ length: 59 }, (_, index) => 42 + index);
+  assert.equal(newestFirstUidBatches(uids, batchLimit(41, 25)).flat().length, 59);
 });

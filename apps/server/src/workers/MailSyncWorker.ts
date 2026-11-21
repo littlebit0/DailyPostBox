@@ -1,5 +1,9 @@
 import type { MailAccount, IncomingMessageSummary } from "../domain/types.js";
-import type { ImapReceiver } from "../mail/ImapReceiver.js";
+import type {
+  ImapReceiver,
+  ImapSyncCursor,
+  ImapSyncResult
+} from "../mail/ImapReceiver.js";
 import type { Pop3Receiver } from "../mail/Pop3Receiver.js";
 import type { PushNotifier } from "../notifications/PushNotifier.js";
 import type { AccountRepository } from "./AccountRepository.js";
@@ -88,8 +92,8 @@ export class MailSyncWorker {
   private async performSync(account: MailAccount, token: object): Promise<void> {
     const isCurrent = () => this.syncTokens.get(account.id) === token;
     const limit = this.initialSyncLimit(account);
-    const afterUid = account.lastSyncedAt
-      ? await this.newestStoredUid(account)
+    const cursor = account.lastSyncedAt
+      ? await this.syncCursor(account)
       : undefined;
     account.syncStatus = "syncing";
     account.syncError = undefined;
@@ -97,36 +101,42 @@ export class MailSyncWorker {
     await this.accounts.updateAccount(account);
 
     try {
-      if (limit !== 0) {
-        if (account.incomingProtocol === "imap") {
-          await this.imap.fetchLatestBatches(
-            account,
-            this.options.mailbox,
-            limit,
-            async (messages) => {
-              await Promise.all(
-                messages.map((message) =>
-                  this.handleIncoming(account, message, false)
-                )
-              );
-            },
-            afterUid
-          );
-        } else {
-          const messages = await this.pop3.fetchLatest(
-            account,
-            this.options.mailbox,
-            limit
-          );
-          await Promise.all(
-            messages.map((message) =>
-              this.handleIncoming(account, message, false)
-            )
-          );
-        }
+      let result: ImapSyncResult | undefined;
+      if (account.incomingProtocol === "imap") {
+        // Runs even when history is skipped, to record the starting UID.
+        result = await this.imap.fetchLatestBatches(
+          account,
+          this.options.mailbox,
+          limit,
+          async (messages) => {
+            await Promise.all(
+              messages.map((message) =>
+                this.handleIncoming(account, message, false)
+              )
+            );
+          },
+          cursor
+        );
+      } else if (limit !== 0) {
+        const messages = await this.pop3.fetchLatest(
+          account,
+          this.options.mailbox,
+          limit
+        );
+        await Promise.all(
+          messages.map((message) =>
+            this.handleIncoming(account, message, false)
+          )
+        );
       }
 
       if (!isCurrent()) return;
+      // Advanced only here: mail the IDLE watcher saved meanwhile must not
+      // move the cursor past messages this sync has not checked.
+      if (result?.highestUid !== undefined) {
+        account.syncedUid = result.highestUid;
+        account.syncedUidValidity = result.uidValidity;
+      }
       account.syncStatus = "idle";
       account.lastSyncedAt = new Date();
       await this.accounts.updateAccount(account);
@@ -272,8 +282,17 @@ export class MailSyncWorker {
     });
   }
 
-  // Resyncs continue after the newest saved UID so no gap is skipped,
-  // however many messages arrived while the server was disconnected.
+  // Resyncs continue after the last completed sync, however many messages
+  // arrived while the server was disconnected.
+  private async syncCursor(account: MailAccount): Promise<ImapSyncCursor | undefined> {
+    if (account.syncedUid !== undefined) {
+      return { uid: account.syncedUid, uidValidity: account.syncedUidValidity };
+    }
+    // Accounts synced before cursors were stored start after their newest mail.
+    const uid = await this.newestStoredUid(account);
+    return uid === undefined ? undefined : { uid };
+  }
+
   private async newestStoredUid(account: MailAccount): Promise<number | undefined> {
     const uids = (await this.accounts.listInbox(account.userId))
       .filter((message) =>

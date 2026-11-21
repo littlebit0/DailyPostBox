@@ -13,11 +13,22 @@ import { resolveIncomingSettings } from "../providers/resolveConnectionSettings.
 import type { SecretResolver } from "../security/SecretResolver.js";
 import type { MailReceiver } from "./MailReceiver.js";
 import {
+  batchLimit,
+  cursorUid,
   latestUidSearchQuery,
   newestFirstUidBatches
 } from "./imapSequenceRanges.js";
 import { isAuthenticationFailure } from "./authenticationFailure.js";
 import { extractMessageLinks } from "./messageLinks.js";
+
+export type { ImapSyncCursor } from "./imapSequenceRanges.js";
+import type { ImapSyncCursor } from "./imapSequenceRanges.js";
+
+export interface ImapSyncResult {
+  uidValidity: string;
+  // Newest UID that existed when the sync opened the mailbox.
+  highestUid?: number;
+}
 
 export class ImapReceiver implements MailReceiver {
   private static readonly maxBodyBytes = 2 * 1024 * 1024;
@@ -53,21 +64,36 @@ export class ImapReceiver implements MailReceiver {
     mailbox: string,
     limit: number | "all",
     onBatch: (messages: IncomingMessageSummary[]) => Promise<void>,
-    afterUid?: number
-  ): Promise<void> {
+    cursor?: ImapSyncCursor
+  ): Promise<ImapSyncResult> {
     const initial = await this.withConnectionRetry(async () => {
       return this.withConnectedClient(account, async (client) => {
         const openedMailbox = await client.mailboxOpen(mailbox, {
           readOnly: true
         });
+        const uidValidity = String(openedMailbox.uidValidity);
+        const afterUid = cursorUid(cursor, uidValidity);
         const uids = afterUid === undefined
           ? await this.searchLatestUids(client, openedMailbox.exists, limit)
           : await this.searchUidsAfter(client, afterUid);
-        const batches = newestFirstUidBatches(uids, limit);
+        const batches = newestFirstUidBatches(
+          uids,
+          batchLimit(afterUid, limit)
+        );
         const firstUids = batches.at(0);
+        const newestSeen = uids.reduce(
+          (newest, uid) => Math.max(newest, uid),
+          afterUid ?? 0
+        );
 
         return {
-          uidValidity: openedMailbox.uidValidity,
+          rawUidValidity: openedMailbox.uidValidity,
+          result: {
+            uidValidity,
+            highestUid: openedMailbox.uidNext
+              ? Number(openedMailbox.uidNext) - 1
+              : newestSeen || undefined
+          },
           firstBatch: firstUids
             ? await this.fetchUids(client, account, mailbox, firstUids)
             : [],
@@ -89,7 +115,7 @@ export class ImapReceiver implements MailReceiver {
           const openedMailbox = await client.mailboxOpen(mailbox, {
             readOnly: true
           });
-          if (openedMailbox.uidValidity !== initial.uidValidity) {
+          if (openedMailbox.uidValidity !== initial.rawUidValidity) {
             throw new Error("Mailbox UIDVALIDITY changed during import");
           }
           return this.fetchUids(client, account, mailbox, uids);
@@ -100,6 +126,7 @@ export class ImapReceiver implements MailReceiver {
         await onBatch(batch);
       }
     }
+    return initial.result;
   }
 
   async fetchMessageContent(
