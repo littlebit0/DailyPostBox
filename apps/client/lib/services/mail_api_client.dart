@@ -2,6 +2,11 @@ import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+const undoSendDelayOptions = [0, 5, 10, 20, 30];
+
+/// Seconds the server holds a sent mail so it can still be cancelled.
+final undoSendDelayProvider = StateProvider<int>((ref) => 5);
+
 final mailApiClientProvider = Provider<MailApiClient>((ref) {
   return MailApiClient(
     baseUrl: resolveMailApiBaseUrl(),
@@ -190,18 +195,31 @@ class MailApiClient {
     });
   }
 
-  Future<void> sendMail({
+  /// Queues the mail on the server and returns the id used to cancel it.
+  Future<String> sendMail({
     required String accountId,
     required List<String> to,
     required String subject,
     required String body,
+    int delaySeconds = 5,
   }) async {
-    await _dio.post('/mail/send', data: {
+    final response = await _dio.post('/mail/send', data: {
       'accountId': accountId,
       'to': to,
       'subject': subject,
       'text': body,
+      'delaySeconds': delaySeconds,
     });
+    return (response.data as Map<String, dynamic>)['id'] as String;
+  }
+
+  /// Returns false when the mail was already sent.
+  Future<bool> cancelSend(String id) async {
+    final response = await _dio.post(
+      '/mail/send/$id/cancel',
+      options: Options(validateStatus: (code) => code == 200 || code == 409),
+    );
+    return response.statusCode == 200;
   }
 }
 

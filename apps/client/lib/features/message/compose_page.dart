@@ -134,12 +134,38 @@ class _ComposePageState extends ConsumerState<ComposePage> {
     final accountId = _accountId;
     if (accountId == null) return;
 
-    await ref.read(mailApiClientProvider).sendMail(
-          accountId: accountId,
-          to: _toController.text.split(',').map((item) => item.trim()).toList(),
-          subject: _subjectController.text,
-          body: _bodyController.text,
-        );
+    final client = ref.read(mailApiClientProvider);
+    final strings = ref.read(appStringsProvider);
+    final delay = ref.read(undoSendDelayProvider);
+    final messenger = ScaffoldMessenger.of(context);
+    final id = await client.sendMail(
+      accountId: accountId,
+      to: _toController.text.split(',').map((item) => item.trim()).toList(),
+      subject: _subjectController.text,
+      body: _bodyController.text,
+      delaySeconds: delay,
+    );
+
+    if (delay > 0) {
+      messenger.showSnackBar(SnackBar(
+        content: Text(strings.mailSending),
+        duration: Duration(seconds: delay),
+        action: SnackBarAction(
+          label: strings.undoSend,
+          onPressed: () async {
+            String result;
+            try {
+              result = await client.cancelSend(id)
+                  ? strings.sendCancelled
+                  : strings.sendAlreadySent;
+            } catch (_) {
+              result = strings.sendCancelFailed;
+            }
+            messenger.showSnackBar(SnackBar(content: Text(result)));
+          },
+        ),
+      ));
+    }
 
     if (mounted) context.go('/accounts/$accountId/mail');
   }

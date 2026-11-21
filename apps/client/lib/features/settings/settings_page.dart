@@ -46,6 +46,26 @@ class SettingsPage extends ConsumerWidget {
                     },
                   ),
                 ),
+                ListTile(
+                  leading: const Icon(Icons.undo),
+                  title: Text(strings.undoSendSetting),
+                  subtitle: Text(strings.undoSendSettingDescription),
+                  trailing: DropdownButton<int>(
+                    value: ref.watch(undoSendDelayProvider),
+                    items: [
+                      for (final seconds in undoSendDelayOptions)
+                        DropdownMenuItem(
+                          value: seconds,
+                          child: Text(strings.secondsLabel(seconds)),
+                        ),
+                    ],
+                    onChanged: (value) {
+                      if (value != null) {
+                        ref.read(undoSendDelayProvider.notifier).state = value;
+                      }
+                    },
+                  ),
+                ),
                 SwitchListTile(
                   value: true,
                   onChanged: (_) {},

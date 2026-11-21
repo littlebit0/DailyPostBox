@@ -2,6 +2,11 @@ import type { FastifyInstance } from "fastify";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { MailSender } from "../mail/MailSender.js";
+import {
+  SendQueue,
+  defaultUndoDelaySeconds,
+  undoDelaySeconds
+} from "../mail/SendQueue.js";
 import type {
   AuthMode,
   IncomingMessageContent,
@@ -25,7 +30,13 @@ const sendSchema = z.object({
   bcc: z.array(z.string().email()).optional(),
   subject: z.string().default(""),
   html: z.string().optional(),
-  text: z.string().optional()
+  text: z.string().optional(),
+  delaySeconds: z
+    .number()
+    .refine((value) => (undoDelaySeconds as readonly number[]).includes(value), {
+      message: `delaySeconds must be one of ${undoDelaySeconds.join(", ")}`
+    })
+    .default(defaultUndoDelaySeconds)
 });
 
 const pushTokenSchema = z.object({
@@ -77,6 +88,7 @@ export async function registerRoutes(
   app: FastifyInstance,
   deps: {
     sender: MailSender;
+    sendQueue?: SendQueue;
     accounts: AccountRepository;
     validateAccount: (account: MailAccount) => Promise<void>;
     fetchMessageContent: (
@@ -88,6 +100,10 @@ export async function registerRoutes(
     stopAccountSync: (accountId: string) => Promise<void>;
   }
 ): Promise<void> {
+  const sendQueue =
+    deps.sendQueue ??
+    new SendQueue(deps.sender, (error) => app.log.error({ err: error }, "mail send failed"));
+
   app.get("/health", async () => ({ ok: true }));
 
   app.get("/providers", async () => {
@@ -339,15 +355,29 @@ export async function registerRoutes(
   });
 
   app.post("/mail/send", async (request, reply) => {
-    const draft = sendSchema.parse(request.body) as OutgoingMessageDraft;
+    const { delaySeconds, ...parsed } = sendSchema.parse(request.body);
+    const draft = parsed as OutgoingMessageDraft;
     const account = await deps.accounts.getAccount(draft.accountId);
 
     if (!account) {
       return reply.code(404).send({ error: "Account not found" });
     }
 
-    const result = await deps.sender.send(account, draft);
-    return reply.code(202).send(result);
+    const id = sendQueue.enqueue(account, draft, delaySeconds);
+    return reply.code(202).send({ id, delaySeconds });
+  });
+
+  app.post("/mail/send/:id/cancel", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const status = sendQueue.cancel(id);
+
+    if (!status) {
+      return reply.code(404).send({ error: "Send request not found" });
+    }
+    if (status !== "cancelled") {
+      return reply.code(409).send({ error: "Message already sent", status });
+    }
+    return reply.code(200).send({ id, status });
   });
 
   app.post("/devices/push-token", async (request, reply) => {
