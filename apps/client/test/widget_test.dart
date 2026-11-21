@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:daily_postbox/features/accounts/accounts_page.dart';
 import 'package:daily_postbox/features/message/linked_message_body.dart';
+import 'package:daily_postbox/features/message/message_page.dart';
 import 'package:daily_postbox/main.dart';
 import 'package:daily_postbox/services/mail_api_client.dart';
 
@@ -504,6 +505,45 @@ void main() {
       Rect.fromLTRB(0, 24, 36, 44),
     ]);
   });
+
+  for (final enabled in [false, true]) {
+    testWidgets('summary card visible only when AI is enabled ($enabled)',
+        (WidgetTester tester) async {
+      final api = _FakeSummaryApi();
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            accountsProvider.overrideWith((ref) async => const []),
+            providersProvider.overrideWith((ref) async => const []),
+            mailApiClientProvider.overrideWithValue(api),
+            aiSummaryEnabledProvider.overrideWith((ref) async => enabled),
+            messageProvider.overrideWith(
+              (ref, request) async => const MessageDetail(
+                id: 'm1',
+                sender: 's@example.test',
+                subject: '제목',
+                body: '본문',
+                links: [],
+                receivedAtLabel: 'now',
+              ),
+            ),
+          ],
+          child: const MaterialApp(
+            home: MessagePage(messageId: 'm1', accountId: 'a1'),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('AI 요약'), enabled ? findsOneWidget : findsNothing);
+      if (enabled) {
+        await tester.tap(find.text('요약'));
+        await tester.pumpAndSettle();
+        expect(find.text('가짜 요약'), findsOneWidget);
+        expect(api.calls, 1);
+      }
+    });
+  }
 }
 
 class _CredentialRecordingApi extends MailApiClient {
@@ -517,5 +557,20 @@ class _CredentialRecordingApi extends MailApiClient {
     required String secret,
   }) async {
     updates.add((accountId, secret));
+  }
+}
+
+class _FakeSummaryApi extends MailApiClient {
+  _FakeSummaryApi() : super(baseUrl: 'http://127.0.0.1:1');
+
+  int calls = 0;
+
+  @override
+  Future<String> summarizeMessage({
+    required String accountId,
+    required String messageId,
+  }) async {
+    calls++;
+    return '가짜 요약';
   }
 }

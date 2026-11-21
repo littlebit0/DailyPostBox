@@ -12,6 +12,7 @@ import type {
   ProviderId
 } from "../domain/types.js";
 import type { AccountRepository } from "../workers/AccountRepository.js";
+import type { AiSummarizer } from "../ai/AiSummarizer.js";
 import { providerRegistry } from "../providers/providerRegistry.js";
 import {
   applySyncFailure,
@@ -86,9 +87,12 @@ export async function registerRoutes(
     startAccountSync: (account: MailAccount) => Promise<void>;
     resumeAccountSync: (account: MailAccount) => Promise<void>;
     stopAccountSync: (accountId: string) => Promise<void>;
+    summarizer?: AiSummarizer;
   }
 ): Promise<void> {
   app.get("/health", async () => ({ ok: true }));
+
+  app.get("/features", async () => ({ aiSummary: deps.summarizer?.enabled ?? false }));
 
   app.get("/providers", async () => {
     return Object.values(providerRegistry).map((provider) => ({
@@ -304,6 +308,40 @@ export async function registerRoutes(
       bodyTruncated: content.truncated,
       bodyLinks: content.links
     };
+  });
+
+  app.post("/accounts/:accountId/messages/:messageId/summary", async (request, reply) => {
+    const summarizer = deps.summarizer;
+    if (!summarizer?.enabled) {
+      return reply.code(404).send({ error: "AI summary is not enabled" });
+    }
+    const params = z.object({
+      accountId: z.string(),
+      messageId: z.string()
+    }).parse(request.params);
+    const account = await deps.accounts.getAccount(params.accountId);
+    if (!account || account.userId !== demoUserId) {
+      return reply.code(404).send({ error: "Account not found" });
+    }
+    const messages = await deps.accounts.listInbox(demoUserId);
+    const message = messages.find(
+      (item) => item.accountId === params.accountId &&
+        item.providerMessageId === params.messageId
+    );
+    if (!message) {
+      return reply.code(404).send({ error: "Message not found" });
+    }
+    const content = await deps.fetchMessageContent(account, message);
+    try {
+      const summary = await summarizer.summarize({
+        subject: message.subject,
+        from: message.from,
+        body: content.text
+      });
+      return { summary };
+    } catch {
+      return reply.code(502).send({ error: "요약을 만들지 못했습니다. 잠시 후 다시 시도하세요." });
+    }
   });
 
   app.get("/mail/inbox", async () => {

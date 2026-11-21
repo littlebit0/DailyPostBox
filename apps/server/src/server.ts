@@ -15,6 +15,7 @@ import { InMemoryAccountRepository } from "./workers/AccountRepository.js";
 import type { AccountRepository } from "./workers/AccountRepository.js";
 import { LocalFileAccountRepository } from "./workers/LocalFileAccountRepository.js";
 import { MailSyncWorker } from "./workers/MailSyncWorker.js";
+import { createAiSummarizer } from "./ai/AiSummarizer.js";
 import { registerRoutes } from "./api/routes.js";
 import { OAuthAccountFlow } from "./auth/OAuthAccountFlow.js";
 import { OAuthTokenManager } from "./auth/OAuthTokenManager.js";
@@ -50,6 +51,11 @@ const worker = new MailSyncWorker(accounts, imap, pop3, push, {
 });
 
 await registerRoutes(app, {
+  summarizer: createAiSummarizer({
+    enabled: env.AI_SUMMARY_ENABLED === "true",
+    apiKey: env.ANTHROPIC_API_KEY,
+    model: env.AI_MODEL
+  }),
   sender,
   accounts,
   validateAccount: async (account) => {

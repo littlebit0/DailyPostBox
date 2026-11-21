@@ -93,6 +93,22 @@ class MailApiClient {
     return MessageDetail.fromJson(response.data ?? {});
   }
 
+  Future<bool> fetchAiSummaryEnabled() async {
+    final response = await _dio.get<Map<String, dynamic>>('/features');
+    return response.data?['aiSummary'] == true;
+  }
+
+  Future<String> summarizeMessage({
+    required String accountId,
+    required String messageId,
+  }) async {
+    final response = await _dio.post<Map<String, dynamic>>(
+      '/accounts/$accountId/messages/$messageId/summary',
+      options: Options(receiveTimeout: const Duration(seconds: 60)),
+    );
+    return response.data?['summary'] as String? ?? '';
+  }
+
   Future<void> addAccount({
     required String providerId,
     required String emailAddress,
