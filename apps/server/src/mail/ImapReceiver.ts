@@ -3,6 +3,7 @@ import type { FetchMessageObject, MessageStructureObject } from "imapflow";
 import { simpleParser } from "mailparser";
 import type { OAuthTokenManager } from "../auth/OAuthTokenManager.js";
 import type {
+  CalendarInvite,
   IncomingMessageContent,
   IncomingMessageLink,
   IncomingMessageSummary,
@@ -18,6 +19,7 @@ import {
 } from "./imapSequenceRanges.js";
 import { isAuthenticationFailure } from "./authenticationFailure.js";
 import { extractMessageLinks } from "./messageLinks.js";
+import { parseCalendarInvite } from "./calendarInvite.js";
 
 export class ImapReceiver implements MailReceiver {
   private static readonly maxBodyBytes = 2 * 1024 * 1024;
@@ -123,6 +125,11 @@ export class ImapReceiver implements MailReceiver {
       }
 
       const bodyParts = selectBodyParts(message.bodyStructure);
+      const invite = await this.fetchInvite(
+        client,
+        providerMessageId,
+        message.bodyStructure
+      );
       let htmlFallback: IncomingMessageContent | null = null;
       let htmlLinks: IncomingMessageLink[] = [];
 
@@ -141,7 +148,7 @@ export class ImapReceiver implements MailReceiver {
 
         if (bodyPart.type.toLowerCase() !== "text/html") {
           const text = cleanMessageText(decoded);
-          if (text) return { text, truncated, links: htmlLinks };
+          if (text) return { text, truncated, links: htmlLinks, invite };
           continue;
         }
 
@@ -167,13 +174,14 @@ export class ImapReceiver implements MailReceiver {
           htmlFallback = {
             text,
             truncated,
-            links: htmlLinks
+            links: htmlLinks,
+            invite
           };
         }
       }
 
       if (htmlFallback) return { ...htmlFallback, links: htmlLinks };
-      return { text: "", truncated: false, links: [] };
+      return { text: "", truncated: false, links: [], invite };
     } finally {
       await client.logout().catch(() => undefined);
     }
@@ -234,6 +242,26 @@ export class ImapReceiver implements MailReceiver {
       stopped = true;
       await client.logout().catch(() => undefined);
     };
+  }
+
+  // A broken invite part must never hide the message body.
+  private async fetchInvite(
+    client: ImapFlow,
+    uid: string,
+    structure: MessageStructureObject
+  ): Promise<CalendarInvite | undefined> {
+    const part = findCalendarPart(structure);
+    if (!part) return undefined;
+    try {
+      const download = await client.download(uid, part.part ?? "1", {
+        uid: true,
+        maxBytes: ImapReceiver.maxBodyBytes
+      });
+      const raw = await readBodyStream(download.content);
+      return parseCalendarInvite(raw.toString("utf8")) ?? undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   private async createClient(account: MailAccount): Promise<ImapFlow> {
@@ -374,6 +402,17 @@ function selectBodyParts(
     ...candidates.filter((part) => part.type.toLowerCase() === "text/html"),
     ...candidates.filter((part) => part.type.toLowerCase() === "text/plain")
   ];
+}
+
+function findCalendarPart(
+  part: MessageStructureObject
+): MessageStructureObject | null {
+  if (part.type.toLowerCase() === "text/calendar") return part;
+  for (const child of part.childNodes ?? []) {
+    const found = findCalendarPart(child);
+    if (found) return found;
+  }
+  return null;
 }
 
 async function readBodyStream(
