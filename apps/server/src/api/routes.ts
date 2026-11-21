@@ -75,10 +75,14 @@ const accountSchema = z.object({
 const demoUserId = "demo-user";
 
 // shortcut: no real auth yet (issue #20), so attachment downloads are
-// loopback-only unless ALLOW_REMOTE_MAIL_ACCESS=true.
-function canReadAttachments(ip: string): boolean {
-  return process.env.ALLOW_REMOTE_MAIL_ACCESS === "true" ||
-    ip === "127.0.0.1" || ip === "::1" || ip === "::ffff:127.0.0.1";
+// loopback-only unless ALLOW_REMOTE_MAIL_ACCESS=true. Host and Origin checks
+// also block DNS rebinding and cross-site browser requests to localhost.
+function canReadAttachments(request: FastifyRequest): boolean {
+  if (process.env.ALLOW_REMOTE_MAIL_ACCESS === "true") return true;
+  const host = (request.headers.host ?? "").replace(/:\d+$/, "").toLowerCase();
+  return ["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(request.ip) &&
+    ["127.0.0.1", "localhost", "[::1]"].includes(host) &&
+    request.headers.origin === undefined;
 }
 
 export async function registerRoutes(
@@ -323,7 +327,7 @@ export async function registerRoutes(
   app.get(
     "/accounts/:accountId/messages/:messageId/attachments/:part",
     async (request, reply) => {
-      if (!canReadAttachments(request.ip)) {
+      if (!canReadAttachments(request)) {
         return reply.code(403).send({ error: "Attachments are only available locally." });
       }
       const params = z.object({
