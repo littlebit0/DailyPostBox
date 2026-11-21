@@ -5,7 +5,15 @@ import type { MailSender } from "./MailSender.js";
 export const undoDelaySeconds = [0, 5, 10, 20, 30] as const;
 export const defaultUndoDelaySeconds = 5;
 
-export type SendStatus = "pending" | "sent" | "failed" | "cancelled";
+export type SendStatus = "pending" | "sending" | "sent" | "failed" | "cancelled";
+
+export interface SendStatusInfo {
+  status: SendStatus;
+  sendAt: string;
+  error?: string;
+  /** Only for failed sends, so the client can reopen the draft. */
+  draft?: OutgoingMessageDraft;
+}
 
 export interface SendQueueLimits {
   maxEntries: number;
@@ -29,6 +37,9 @@ interface Entry {
   accountId: string;
   settled: boolean;
   status: SendStatus;
+  sendAt: Date;
+  draft: OutgoingMessageDraft;
+  error?: string;
   timer?: NodeJS.Timeout;
   sending?: Promise<void>;
   run: () => Promise<void>;
@@ -65,7 +76,11 @@ export class SendQueue {
     else this.activeSends--;
   }
 
-  enqueue(account: MailAccount, draft: OutgoingMessageDraft, delaySeconds: number): string {
+  enqueue(
+    account: MailAccount,
+    draft: OutgoingMessageDraft,
+    delaySeconds: number
+  ): { id: string; sendAt: Date } {
     if (this.entries.size >= this.limits.maxEntries) throw new SendQueueFullError();
     let pendingForAccount = 0;
     for (const e of this.entries.values()) {
@@ -78,18 +93,22 @@ export class SendQueue {
       accountId: account.id,
       settled: false,
       status: "pending",
+      sendAt: new Date(Date.now() + delaySeconds * 1000),
+      draft,
       run: () => {
         // flush() during an in-flight send must await the same promise, never send twice.
         if (entry.sending) return entry.sending;
         if (entry.status !== "pending") return Promise.resolve();
         clearTimeout(entry.timer);
-        entry.status = "sent";
+        entry.status = "sending";
         entry.sending = (async () => {
           await this.acquire();
           try {
             await this.sender.send(account, draft);
+            entry.status = "sent";
           } catch (error) {
             entry.status = "failed";
+            entry.error = error instanceof Error ? error.message : String(error);
             this.onError(error);
           } finally {
             this.release();
@@ -102,7 +121,19 @@ export class SendQueue {
     };
     entry.timer = setTimeout(() => void entry.run(), delaySeconds * 1000);
     this.entries.set(id, entry);
-    return id;
+    return { id, sendAt: entry.sendAt };
+  }
+
+  /** Result of a queued send; failed entries keep their draft until retention ends. */
+  status(id: string): SendStatusInfo | undefined {
+    const entry = this.entries.get(id);
+    if (!entry) return undefined;
+    const info: SendStatusInfo = { status: entry.status, sendAt: entry.sendAt.toISOString() };
+    if (entry.status === "failed") {
+      info.error = entry.error;
+      info.draft = entry.draft;
+    }
+    return info;
   }
 
   private expire(id: string): void {

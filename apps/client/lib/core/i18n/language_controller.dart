@@ -212,6 +212,11 @@ class AppStrings {
       _ko ? '이미 발송되어 취소할 수 없습니다.' : 'Already sent; it cannot be cancelled.';
   String get sendCancelFailed =>
       _ko ? '취소하지 못했습니다. 메일이 발송될 수 있습니다.' : 'Could not cancel; the mail may be sent.';
+  String sendDeliveryFailed(String reason) => _ko
+      ? '메일을 보내지 못했습니다: $reason'
+      : 'The mail could not be delivered: $reason';
+  String get sendFailedShort => _ko ? '발송에 실패했습니다.' : 'Sending failed.';
+  String get rewriteMail => _ko ? '다시 작성' : 'Rewrite';
   String get undoSendSetting => _ko ? '보내기 취소 시간' : 'Undo send delay';
   String get undoSendSettingDescription => _ko
       ? '보낸 메일을 이 시간 동안 서버가 보관하며 취소할 수 있습니다.'

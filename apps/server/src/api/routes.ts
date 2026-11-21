@@ -365,16 +365,25 @@ export async function registerRoutes(
       return reply.code(404).send({ error: "Account not found" });
     }
 
-    let id: string;
+    let queued: { id: string; sendAt: Date };
     try {
-      id = sendQueue.enqueue(account, draft, delaySeconds);
+      queued = sendQueue.enqueue(account, draft, delaySeconds);
     } catch (error) {
       if (error instanceof SendQueueFullError) {
         return reply.code(429).send({ error: "Too many pending sends" });
       }
       throw error;
     }
-    return reply.code(202).send({ id, delaySeconds });
+    return reply
+      .code(202)
+      .send({ id: queued.id, delaySeconds, sendAt: queued.sendAt.toISOString(), now: new Date().toISOString() });
+  });
+
+  app.get("/mail/send/:id", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const info = sendQueue.status(id);
+    if (!info) return reply.code(404).send({ error: "Send request not found" });
+    return info;
   });
 
   app.post("/mail/send/:id/cancel", async (request, reply) => {

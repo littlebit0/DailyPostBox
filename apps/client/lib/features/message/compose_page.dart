@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -14,9 +16,11 @@ class ComposePage extends ConsumerStatefulWidget {
   const ComposePage({
     super.key,
     this.initialAccountId,
+    this.initialDraft,
   });
 
   final String? initialAccountId;
+  final ComposeDraft? initialDraft;
 
   @override
   ConsumerState<ComposePage> createState() => _ComposePageState();
@@ -32,6 +36,12 @@ class _ComposePageState extends ConsumerState<ComposePage> {
   void initState() {
     super.initState();
     _accountId = widget.initialAccountId;
+    final draft = widget.initialDraft;
+    if (draft != null) {
+      _toController.text = draft.to;
+      _subjectController.text = draft.subject;
+      _bodyController.text = draft.body;
+    }
   }
 
   @override
@@ -138,8 +148,8 @@ class _ComposePageState extends ConsumerState<ComposePage> {
     final strings = ref.read(appStringsProvider);
     final delay = ref.read(undoSendDelayProvider);
     final messenger = ScaffoldMessenger.of(context);
-    final started = DateTime.now();
-    final id = await client.sendMail(
+    final router = GoRouter.of(context);
+    final receipt = await client.sendMail(
       accountId: accountId,
       to: _toController.text.split(',').map((item) => item.trim()).toList(),
       subject: _subjectController.text,
@@ -147,22 +157,24 @@ class _ComposePageState extends ConsumerState<ComposePage> {
       delaySeconds: delay,
     );
 
-    // Server countdown starts at enqueue: show immediately (not behind older snackbars)
-    // and expire against the real send deadline.
-    final remaining = Duration(seconds: delay) - DateTime.now().difference(started);
-    if (delay > 0 && remaining > Duration.zero) {
+    // The countdown comes from the server's deadline: show immediately (not behind
+    // older snackbars) and expire when the server actually sends.
+    if (delay > 0 && receipt.remaining > Duration.zero) {
       messenger.clearSnackBars();
       messenger.showSnackBar(SnackBar(
         content: Text(strings.mailSending),
-        duration: remaining,
+        duration: receipt.remaining,
         action: SnackBarAction(
           label: strings.undoSend,
           onPressed: () async {
             String result;
             try {
-              result = await client.cancelSend(id)
-                  ? strings.sendCancelled
-                  : strings.sendAlreadySent;
+              final status = await client.cancelSend(receipt.id);
+              result = switch (status) {
+                'cancelled' => strings.sendCancelled,
+                'failed' => strings.sendFailedShort,
+                _ => strings.sendAlreadySent,
+              };
             } catch (_) {
               result = strings.sendCancelFailed;
             }
@@ -172,6 +184,51 @@ class _ComposePageState extends ConsumerState<ComposePage> {
       ));
     }
 
+    // Detached from this page on purpose: the composer closes right after sending.
+    unawaited(_reportFailure(client, receipt, strings, messenger, router));
+
     if (mounted) context.go('/accounts/$accountId/mail');
   }
+}
+
+/// Polls the queued send after the undo window; on failure offers to reopen the draft.
+Future<void> _reportFailure(
+  MailApiClient client,
+  SendReceipt receipt,
+  AppStrings strings,
+  ScaffoldMessengerState messenger,
+  GoRouter router,
+) async {
+  final outcome = await awaitSendOutcome(client, receipt);
+  final draft = outcome?.draft;
+  if (outcome == null || draft == null) return;
+  messenger.showSnackBar(SnackBar(
+    content: Text(strings.sendDeliveryFailed(outcome.error ?? '')),
+    duration: const Duration(seconds: 15),
+    action: SnackBarAction(
+      label: strings.rewriteMail,
+      onPressed: () => router.go('/accounts/${draft.accountId}/compose', extra: draft),
+    ),
+  ));
+}
+
+/// Waits out the undo window, then polls a few times. Returns the outcome only when the send failed.
+Future<SendOutcome?> awaitSendOutcome(
+  MailApiClient client,
+  SendReceipt receipt, {
+  Duration interval = const Duration(seconds: 2),
+  int attempts = 10,
+}) async {
+  if (receipt.remaining > Duration.zero) await Future<void>.delayed(receipt.remaining);
+  for (var i = 0; i < attempts; i++) {
+    await Future<void>.delayed(interval);
+    try {
+      final outcome = await client.fetchSendOutcome(receipt.id);
+      if (outcome.status == 'failed') return outcome;
+      if (outcome.status == 'sent' || outcome.status == 'cancelled') return null;
+    } catch (_) {
+      // Transient error or expired entry: try again, then give up quietly.
+    }
+  }
+  return null;
 }

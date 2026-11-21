@@ -7,6 +7,7 @@ import '../features/accounts/accounts_page.dart';
 import '../features/message/compose_page.dart';
 import '../features/message/message_page.dart';
 import '../features/settings/settings_page.dart';
+import '../services/mail_api_client.dart';
 
 final appRouterProvider = Provider<GoRouter>((ref) {
   return GoRouter(
@@ -49,6 +50,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           state: state,
           child: ComposePage(
             initialAccountId: state.pathParameters['accountId'],
+            initialDraft: state.extra as ComposeDraft?,
           ),
         ),
       ),
