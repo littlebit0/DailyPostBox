@@ -67,7 +67,7 @@ class _ComposePageState extends ConsumerState<ComposePage> {
         AppBar(
           leading: IconButton(
             tooltip: strings.close,
-            onPressed: () => context.go(returnPath),
+            onPressed: () => context.canPop() ? context.pop() : context.go(returnPath),
             icon: const Icon(Icons.close),
           ),
           title: Text(strings.compose),
@@ -207,7 +207,7 @@ Future<void> _reportFailure(
     duration: const Duration(seconds: 15),
     action: SnackBarAction(
       label: strings.rewriteMail,
-      onPressed: () => router.go('/accounts/${draft.accountId}/compose', extra: draft),
+      onPressed: () => router.push('/compose/recover', extra: draft),
     ),
   ));
 }

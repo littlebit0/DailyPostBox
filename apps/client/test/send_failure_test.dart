@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
 
 import 'package:daily_postbox/features/message/compose_page.dart';
 import 'package:daily_postbox/services/mail_api_client.dart';
@@ -76,17 +77,26 @@ void main() {
         isNull);
   });
 
-  testWidgets('recovery draft replaces an already-open composer via new key', (tester) async {
-    Widget app(Widget page) => ProviderScope(
-          overrides: [composeAccountsProvider.overrideWith((ref) async => const [])],
-          child: MaterialApp(home: page),
-        );
-    await tester.pumpWidget(app(const ComposePage()));
+  testWidgets('recovery is stacked: original compose input survives pop', (tester) async {
+    final router = GoRouter(routes: [
+      GoRoute(path: '/', builder: (_, __) => const ComposePage()),
+      GoRoute(
+        path: '/compose/recover',
+        builder: (_, state) => ComposePage(initialDraft: state.extra as ComposeDraft),
+      ),
+    ]);
+    await tester.pumpWidget(ProviderScope(
+      overrides: [composeAccountsProvider.overrideWith((ref) async => const [])],
+      child: MaterialApp.router(routerConfig: router),
+    ));
     await tester.pump();
-    expect(find.text('Hello'), findsNothing);
-    await tester.pumpWidget(app(ComposePage(key: ObjectKey(_draft), initialDraft: _draft)));
-    await tester.pump();
+    await tester.enterText(find.byType(TextField).first, 'typing in progress');
+    router.push('/compose/recover', extra: _draft);
+    await tester.pumpAndSettle();
     expect(find.text('Hello'), findsOneWidget);
-    expect(find.text('Body text'), findsOneWidget);
+    router.pop();
+    await tester.pumpAndSettle();
+    expect(find.text('typing in progress'), findsOneWidget);
+    expect(find.text('Hello'), findsNothing);
   });
 }

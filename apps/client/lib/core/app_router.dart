@@ -49,12 +49,21 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         pageBuilder: (context, state) => _verticalPage(
           state: state,
           child: ComposePage(
-            // A recovered draft gets its own page state so an open composer is not reused or clobbered.
-            key: state.extra is ComposeDraft ? ObjectKey(state.extra) : null,
             initialAccountId: state.pathParameters['accountId'],
-            initialDraft: state.extra as ComposeDraft?,
           ),
         ),
+      ),
+      GoRoute(
+        // Pushed on top of any open composer so its input survives; popping returns to it.
+        path: '/compose/recover',
+        redirect: (context, state) => state.extra is ComposeDraft ? null : '/accounts',
+        pageBuilder: (context, state) {
+          final draft = state.extra! as ComposeDraft;
+          return _verticalPage(
+            state: state,
+            child: ComposePage(initialAccountId: draft.accountId, initialDraft: draft),
+          );
+        },
       ),
       GoRoute(
         path: '/messages/:id',
