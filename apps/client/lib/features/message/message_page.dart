@@ -44,16 +44,27 @@ class _MessagePageState extends ConsumerState<MessagePage> {
   String get messageId => widget.messageId;
   String? get accountId => widget.accountId;
 
+  // Bumped per request so a failed request only rolls back fields no newer request touched.
+  int _seenVersion = 0;
+  int _flaggedVersion = 0;
+
   Future<void> _setFlags({bool? seen, bool? flagged}) async {
     final id = accountId;
     if (id == null) return;
-    final previous = (_seen, _flagged);
+    // The container outlives this widget, so invalidation still works after dispose.
+    final container = ProviderScope.containerOf(context, listen: false);
+    final previousSeen = _seen;
+    final previousFlagged = _flagged;
+    final seenVersion = seen != null ? ++_seenVersion : _seenVersion;
+    final flaggedVersion = flagged != null
+        ? ++_flaggedVersion
+        : _flaggedVersion;
     setState(() {
       if (seen != null) _seen = seen;
       if (flagged != null) _flagged = flagged;
     });
     try {
-      await ref
+      await container
           .read(mailApiClientProvider)
           .setMessageFlags(
             accountId: id,
@@ -61,12 +72,17 @@ class _MessagePageState extends ConsumerState<MessagePage> {
             seen: seen,
             flagged: flagged,
           );
-      ref.invalidate(accountMessagesProvider(id));
+      container.invalidate(accountMessagesProvider(id));
+      container.invalidate(
+        messageProvider((messageId: messageId, accountId: id)),
+      );
     } catch (_) {
       if (!mounted) return;
       setState(() {
-        _seen = previous.$1;
-        _flagged = previous.$2;
+        if (seen != null && seenVersion == _seenVersion) _seen = previousSeen;
+        if (flagged != null && flaggedVersion == _flaggedVersion) {
+          _flagged = previousFlagged;
+        }
       });
       ScaffoldMessenger.maybeOf(context)?.showSnackBar(
         SnackBar(content: Text(ref.read(appStringsProvider).flagUpdateFailed)),
