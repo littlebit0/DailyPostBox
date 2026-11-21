@@ -200,6 +200,7 @@ void main() {
         unread: true,
       ),
     ];
+    var loads = 0;
     await tester.binding.setSurfaceSize(const Size(1200, 800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
 
@@ -208,9 +209,10 @@ void main() {
         overrides: [
           accountsProvider.overrideWith((ref) async => const [account]),
           providersProvider.overrideWith((ref) async => const []),
-          accountMessagesProvider.overrideWith(
-            (ref, accountId) async => messages,
-          ),
+          accountMessagesProvider.overrideWith((ref, accountId) async {
+            loads++;
+            return messages;
+          }),
         ],
         child: const DailyPostBoxApp(),
       ),
@@ -223,11 +225,11 @@ void main() {
     await tester.sendKeyUpEvent(LogicalKeyboardKey.keyJ);
     await tester.pump();
 
-    // Tab until the compose FAB holds focus.
+    // Tab until the refresh FAB holds focus.
     for (var i = 0;
         i < 20 &&
             FocusManager.instance.primaryFocus?.context
-                    ?.findAncestorWidgetOfExactType<FloatingActionButton>() ==
+                    ?.findAncestorWidgetOfExactType<IconButton>() ==
                 null;
         i++) {
       await tester.sendKeyEvent(LogicalKeyboardKey.tab);
@@ -235,15 +237,16 @@ void main() {
     }
     expect(
       FocusManager.instance.primaryFocus?.context
-          ?.findAncestorWidgetOfExactType<FloatingActionButton>(),
+          ?.findAncestorWidgetOfExactType<IconButton>(),
       isNotNull,
     );
 
+    final before = loads;
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
     await tester.pumpAndSettle();
-    // FAB handler ran (navigated to compose); the message was not opened.
-    expect(find.text('첫째 메일'), findsNothing);
-    expect(find.byType(FloatingActionButton), findsNothing);
+    // Refresh handler ran; the selected message was not opened.
+    expect(loads, greaterThan(before));
+    expect(find.text('첫째 메일'), findsOneWidget);
   });
 
   testWidgets('keeps the j/k selected mailbox row visible', (
