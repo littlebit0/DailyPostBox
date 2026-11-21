@@ -125,6 +125,7 @@ class _Renderer {
     List<dom.Node> nodes,
     TextStyle style, {
     TextAlign align = TextAlign.start,
+    TapGestureRecognizer? recognizer,
   }) {
     final widgets = <Widget>[];
     var spans = <InlineSpan>[];
@@ -146,18 +147,47 @@ class _Renderer {
     }
 
     for (final node in nodes) {
-      if (node is dom.Element && _blockTags.contains(node.localName)) {
+      if (node is dom.Element && node.localName == 'a' && _hasBlock(node)) {
+        // Keep block structure inside a link and hand the tap down to it.
         flush();
-        widgets.add(_block(node, style));
+        final (linkStyle, linkRecognizer) = _link(node, style);
+        widgets.addAll(children(node.nodes, linkStyle,
+            align: align, recognizer: linkRecognizer));
+      } else if (node is dom.Element && _blockTags.contains(node.localName)) {
+        flush();
+        widgets.add(_block(node, style, recognizer));
       } else {
-        _inline(node, style, spans);
+        _inline(node, style, spans, recognizer: recognizer);
       }
     }
     flush();
     return widgets;
   }
 
-  Widget _block(dom.Element el, TextStyle parent) {
+  bool _hasBlock(dom.Element el) => el.nodes.any(
+        (c) => c is dom.Element && _blockTags.contains(c.localName),
+      );
+
+  (TextStyle, TapGestureRecognizer?) _link(dom.Element a, TextStyle style) {
+    final uri = _safeLink(a.attributes['href']);
+    if (uri == null) return (style, null);
+    final recognizer = TapGestureRecognizer()..onTap = () => onLink(uri);
+    recognizers.add(recognizer);
+    return (
+      style.copyWith(
+        color: linkColor,
+        decoration: TextDecoration.underline,
+        decorationColor: linkColor,
+      ),
+      recognizer,
+    );
+  }
+
+  Widget _block(
+    dom.Element el,
+    TextStyle parent,
+    TapGestureRecognizer? recognizer,
+  ) {
     final style = _styled(el, parent);
     final align = _align(el) ?? TextAlign.start;
     final tag = el.localName;
@@ -169,7 +199,7 @@ class _Renderer {
           child: Divider(height: 1),
         );
       case 'table':
-        return _table(el, style);
+        return _table(el, style, recognizer);
       case 'ul':
       case 'ol':
         var index = 0;
@@ -184,7 +214,7 @@ class _Renderer {
                   width: 28,
                   child: Text(tag == 'ol' ? '$index.' : '•', style: style),
                 ),
-                Expanded(child: _column(child, style, align)),
+                Expanded(child: _column(child, style, align, recognizer)),
               ],
             ),
           );
@@ -203,27 +233,35 @@ class _Renderer {
           decoration: const BoxDecoration(
             border: Border(left: BorderSide(color: Colors.black26, width: 3)),
           ),
-          child: _column(el, style, align),
+          child: _column(el, style, align, recognizer),
         );
       default:
-        final spacing = (tag == 'p' || (tag?.startsWith('h') ?? false))
-            ? 6.0
-            : 0.0;
+        final spacing =
+            (tag == 'p' || (tag?.startsWith('h') ?? false)) ? 6.0 : 0.0;
         return Padding(
           padding: EdgeInsets.symmetric(vertical: spacing),
-          child: _column(el, style, align),
+          child: _column(el, style, align, recognizer),
         );
     }
   }
 
-  Widget _column(dom.Element el, TextStyle style, TextAlign align) {
+  Widget _column(
+    dom.Element el,
+    TextStyle style,
+    TextAlign align,
+    TapGestureRecognizer? recognizer,
+  ) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: children(el.nodes, style, align: align),
+      children: children(el.nodes, style, align: align, recognizer: recognizer),
     );
   }
 
-  Widget _table(dom.Element table, TextStyle style) {
+  Widget _table(
+    dom.Element table,
+    TextStyle style,
+    TapGestureRecognizer? recognizer,
+  ) {
     final rows = <Map<int, (dom.Element cell, dom.Element row)>>[];
     // column -> number of following rows still covered by a rowspan cell.
     var pending = <int, int>{};
@@ -265,8 +303,7 @@ class _Renderer {
             for (var i = 0; i < columns; i++)
               if (slots[i] case (final cell, final row))
                 ColoredBox(
-                  color:
-                      _background(cell) ??
+                  color: _background(cell) ??
                       _background(row) ??
                       Colors.transparent,
                   child: Padding(
@@ -276,10 +313,11 @@ class _Renderer {
                       cell.localName == 'th'
                           ? _styled(
                               cell,
-                              style,
+                              _styled(row, style),
                             ).copyWith(fontWeight: FontWeight.bold)
-                          : _styled(cell, style),
-                      _align(cell) ?? TextAlign.start,
+                          : _styled(cell, _styled(row, style)),
+                      _align(cell) ?? _align(row) ?? TextAlign.start,
+                      recognizer,
                     ),
                   ),
                 )
@@ -354,24 +392,28 @@ class _Renderer {
       case 'img':
         out.add(_image(node, recognizer));
       case 'a':
-        final uri = _safeLink(node.attributes['href']);
-        final linkStyle = uri == null
-            ? style
-            : style.copyWith(
-                color: linkColor,
-                decoration: TextDecoration.underline,
-                decorationColor: linkColor,
-              );
-        TapGestureRecognizer? linkRecognizer;
-        if (uri != null) {
-          linkRecognizer = TapGestureRecognizer()..onTap = () => onLink(uri);
-          recognizers.add(linkRecognizer);
+        final (linkStyle, linkRecognizer) = _link(node, style);
+        if (_hasBlock(node)) {
+          // Nested inside other inline content: blocks inside a link keep their structure in a nested column.
+          out.add(
+            WidgetSpan(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: children(
+                  node.nodes,
+                  linkStyle,
+                  recognizer: linkRecognizer,
+                ),
+              ),
+            ),
+          );
+          return;
         }
-        final children = <InlineSpan>[];
+        final spans = <InlineSpan>[];
         for (final child in node.nodes) {
-          _inline(child, linkStyle, children, recognizer: linkRecognizer);
+          _inline(child, linkStyle, spans, recognizer: linkRecognizer);
         }
-        out.add(TextSpan(style: linkStyle, children: children));
+        out.add(TextSpan(style: linkStyle, children: spans));
       default:
         final next = _styled(node, style);
         final children = <InlineSpan>[];
@@ -504,8 +546,7 @@ class _Renderer {
           final color = _color(value);
           if (color != null) style = style.copyWith(backgroundColor: color);
         case 'font-weight':
-          final bold =
-              value == 'bold' ||
+          final bold = value == 'bold' ||
               value == 'bolder' ||
               (int.tryParse(value) ?? 0) >= 600;
           style = style.copyWith(

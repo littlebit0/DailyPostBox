@@ -129,8 +129,10 @@ function serializeAttributes(tag: string, attribs: Record<string, string>): stri
 }
 
 function safeHref(value: string): string | null {
-  // Strip control chars/whitespace browsers ignore inside schemes ("java\tscript:").
-  const candidate = value.replace(/[\u0000- \u007f-\u009f]/g, "");
+  // Drop control chars (browsers ignore them inside schemes: "java\tscript:"),
+  // trim the ends, and encode inner spaces so paths/queries keep their meaning.
+  // The scheme is validated on this same string, so "java script:" stays invalid.
+  const candidate = value.replace(/[\u0000-\u001f\u007f-\u009f]/g, "").trim().replace(/ /g, "%20");
   if (!candidate || candidate.length > 8192) return null;
   try {
     const url = new URL(candidate);

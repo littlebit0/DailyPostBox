@@ -28,8 +28,7 @@ void main() {
       const MaterialApp(
         home: Scaffold(
           body: HtmlMessageBody(
-            html:
-                '<h1>Receipt</h1><p>Hello <b>bold</b></p>'
+            html: '<h1>Receipt</h1><p>Hello <b>bold</b></p>'
                 '<table><tr><td>Item</td><td>1,000</td></tr></table>'
                 '<ul><li>one</li></ul>',
           ),
@@ -53,8 +52,7 @@ void main() {
       MaterialApp(
         home: Scaffold(
           body: HtmlMessageBody(
-            html:
-                '<a href="javascript:alert(1)">bad</a> '
+            html: '<a href="javascript:alert(1)">bad</a> '
                 '<a href="https://example.com/x">good</a>',
             linkLauncher: (uri) async {
               opened = uri;
@@ -208,5 +206,43 @@ void main() {
     final twenty = tester.getTopLeft(find.text('20', findRichText: true)).dx;
     expect(twenty, greaterThan(item));
     expect(twenty, ten);
+  });
+
+  testWidgets('row text style is inherited by cells', (tester) async {
+    await pump(
+      tester,
+      '<table><tr style="color:#ffffff;background-color:#000000">'
+      '<td>code 1234</td></tr></table>',
+    );
+    final text = tester.widget<RichText>(
+      find.text('code 1234', findRichText: true),
+    );
+    final span = (text.text as TextSpan).children!.first as TextSpan;
+    expect(span.style?.color, const Color(0xFFFFFFFF));
+  });
+
+  testWidgets('blocks inside a link stay separate and tappable', (
+    tester,
+  ) async {
+    Uri? opened;
+    await pump(
+      tester,
+      '<a href="https://example.com/x"><p>first</p><p>second</p></a>',
+      launcher: (uri) async {
+        opened = uri;
+        return true;
+      },
+    );
+    final first = find.text('first', findRichText: true);
+    final second = find.text('second', findRichText: true);
+    expect(first, findsOneWidget);
+    expect(second, findsOneWidget);
+    expect(
+      tester.getTopLeft(second).dy,
+      greaterThan(tester.getTopLeft(first).dy),
+    );
+    await tester.tapAt(tester.getTopLeft(second) + const Offset(10, 10));
+    await tester.pump();
+    expect(opened, Uri.parse('https://example.com/x'));
   });
 }

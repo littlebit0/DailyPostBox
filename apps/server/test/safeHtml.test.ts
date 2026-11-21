@@ -92,3 +92,17 @@ test("handles broken and deeply nested input", () => {
   const deep = "<div>".repeat(5000) + "x";
   assert.doesNotThrow(() => clean(deep));
 });
+
+test("keeps spaces in href path and query by encoding them, still blocks scheme obfuscation", () => {
+  assert.equal(
+    clean('<a href=" https://example.com/order details?id=hello world ">x</a>').html,
+    '<a href="https://example.com/order%20details?id=hello%20world">x</a>'
+  );
+  assert.equal(
+    clean('<a href="mailto:a@b.co?subject=hi there&amp;body=a b">m</a>').html,
+    '<a href="mailto:a@b.co?subject=hi%20there&amp;body=a%20b">m</a>'
+  );
+  for (const href of ["java script:alert(1)", "javascript :alert(1)", " java\tscript:alert(1)", "java&#10;script:alert(1)", "\u0001javascript:alert(1)", "jav&#x09;ascript:alert(1)"]) {
+    assert.equal(clean(`<a href="${href}">x</a>`).html, "<a>x</a>", href);
+  }
+});
