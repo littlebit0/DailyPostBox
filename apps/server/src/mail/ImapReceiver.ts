@@ -9,7 +9,10 @@ import type {
   MailAccount
 } from "../domain/types.js";
 import { getProvider } from "../providers/providerRegistry.js";
-import { resolveIncomingSettings } from "../providers/resolveConnectionSettings.js";
+import {
+  resolveIncomingSettings,
+  supportsImapIdle
+} from "../providers/resolveConnectionSettings.js";
 import type { SecretResolver } from "../security/SecretResolver.js";
 import type { MailReceiver } from "./MailReceiver.js";
 import {
@@ -185,8 +188,8 @@ export class ImapReceiver implements MailReceiver {
     onMessage: (message: IncomingMessageSummary) => Promise<void>,
     onDisconnect?: (error: Error) => void
   ): Promise<() => Promise<void>> {
-    const provider = getProvider(account.providerId);
-    if (!provider.incoming.supportsIdle) {
+    if (!supportsImapIdle(account)) {
+      const provider = getProvider(account.providerId);
       throw new Error(`${provider.displayName} does not support IMAP IDLE`);
     }
 

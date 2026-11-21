@@ -3,6 +3,7 @@ import type { ImapReceiver } from "../mail/ImapReceiver.js";
 import type { Pop3Receiver } from "../mail/Pop3Receiver.js";
 import type { PushNotifier } from "../notifications/PushNotifier.js";
 import type { AccountRepository } from "./AccountRepository.js";
+import { supportsImapIdle } from "../providers/resolveConnectionSettings.js";
 import {
   applySyncFailure,
   isAuthenticationFailure
@@ -37,7 +38,7 @@ export class MailSyncWorker {
   }
 
   async startAccount(account: MailAccount): Promise<void> {
-    if (account.incomingProtocol === "imap") {
+    if (supportsImapIdle(account)) {
       if (!this.stopHandlers.has(account.id)) {
         await this.startImapAccount(account);
       }
@@ -56,12 +57,16 @@ export class MailSyncWorker {
       return;
     }
 
-    this.startPop3Account(account);
+    if (account.incomingProtocol === "imap") {
+      this.startImapPolling(account);
+    } else {
+      this.startPop3Account(account);
+    }
   }
 
   /** Starts watching or polling only when nothing is running for the account. */
   async resumeAccount(account: MailAccount): Promise<void> {
-    const running = account.incomingProtocol === "imap"
+    const running = supportsImapIdle(account)
       ? this.stopHandlers.has(account.id)
       : this.pollingTimers.has(account.id);
     if (!running) await this.startAccount(account);
@@ -234,6 +239,24 @@ export class MailSyncWorker {
     this.stopHandlers.set(account.id, stopWatching);
 
     await connect();
+  }
+
+  // Servers without IDLE get new mail by periodic sync instead of a watcher
+  // that would fail and reconnect forever.
+  private startImapPolling(account: MailAccount): void {
+    // Rejected credentials would fail every poll and can lock the mailbox.
+    if (account.syncErrorCode === "authentication") return;
+    const timer = setInterval(() => {
+      if (account.syncErrorCode === "authentication") {
+        clearInterval(timer);
+        if (this.pollingTimers.get(account.id) === timer) {
+          this.pollingTimers.delete(account.id);
+        }
+        return;
+      }
+      void this.syncAccount(account).catch(() => undefined);
+    }, this.options.pop3PollIntervalMs);
+    this.pollingTimers.set(account.id, timer);
   }
 
   private startPop3Account(account: MailAccount): void {

@@ -219,3 +219,104 @@ test("a failing push does not disturb mail handling", async () => {
     await syncWorker.stop();
   }
 });
+
+function customAccount(supportsIdle?: boolean): MailAccount {
+  return {
+    ...account(),
+    id: "custom-account",
+    providerId: "custom",
+    connectionOverride: {
+      incoming: { host: "imap.example.com", port: 993, secure: true, supportsIdle }
+    }
+  };
+}
+
+test("polls an IMAP server without IDLE instead of reconnecting forever", async () => {
+  const repository = new InMemoryAccountRepository();
+  const mailAccount = customAccount();
+  await repository.addAccount(mailAccount);
+  let watchCalls = 0;
+  let syncs = 0;
+  const imap = {
+    watch: async () => {
+      watchCalls += 1;
+      return async () => undefined;
+    },
+    fetchLatestBatches: async () => {
+      syncs += 1;
+    }
+  };
+  const syncWorker = new MailSyncWorker(
+    repository,
+    imap as unknown as ImapReceiver,
+    {} as Pop3Receiver,
+    {} as PushNotifier,
+    { mailbox: "INBOX", pop3PollIntervalMs: 5, imapReconnectBaseDelayMs: 1, imapReconnectMaxDelayMs: 1 }
+  );
+
+  try {
+    await syncWorker.startAccount(mailAccount);
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    assert.equal(watchCalls, 0);
+    assert.ok(syncs > 2, `expected repeated polls, got ${syncs}`);
+
+    // resume leaves the running poll alone.
+    const before = syncs;
+    await syncWorker.resumeAccount(mailAccount);
+    assert.ok(syncs - before <= 1);
+  } finally {
+    await syncWorker.stop();
+  }
+});
+
+test("stops polling once the server rejects the credentials", async () => {
+  const repository = new InMemoryAccountRepository();
+  const mailAccount = customAccount();
+  await repository.addAccount(mailAccount);
+  let syncs = 0;
+  const imap = {
+    watch: async () => async () => undefined,
+    fetchLatestBatches: async () => {
+      syncs += 1;
+      if (syncs >= 2) throw authenticationFailure("Authentication failed.");
+    }
+  };
+  const syncWorker = new MailSyncWorker(
+    repository,
+    imap as unknown as ImapReceiver,
+    {} as Pop3Receiver,
+    {} as PushNotifier,
+    { mailbox: "INBOX", pop3PollIntervalMs: 5, imapReconnectBaseDelayMs: 1, imapReconnectMaxDelayMs: 1 }
+  );
+
+  try {
+    await syncWorker.startAccount(mailAccount);
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    assert.equal(syncs, 2);
+    assert.equal(mailAccount.syncErrorCode, "authentication");
+  } finally {
+    await syncWorker.stop();
+  }
+});
+
+test("a custom server that declares IDLE support is watched", async () => {
+  const repository = new InMemoryAccountRepository();
+  const mailAccount = customAccount(true);
+  await repository.addAccount(mailAccount);
+  let watchCalls = 0;
+  const imap = {
+    watch: async () => {
+      watchCalls += 1;
+      return async () => undefined;
+    },
+    fetchLatestBatches: async () => undefined
+  };
+  const syncWorker = worker(repository, imap);
+
+  try {
+    await syncWorker.startAccount(mailAccount);
+    assert.equal(watchCalls, 1);
+  } finally {
+    await syncWorker.stop();
+  }
+});
