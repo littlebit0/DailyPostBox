@@ -16,6 +16,8 @@ export interface MailSyncWorkerOptions {
 }
 
 export class MailSyncWorker {
+  private static readonly backfillLimit = 200;
+  private static readonly backfillBatch = 50;
   private readonly stopHandlers = new Map<string, () => Promise<void>>();
   private readonly pollingTimers = new Map<string, NodeJS.Timeout>();
   private readonly syncPromises = new Map<string, Promise<void>>();
@@ -120,6 +122,10 @@ export class MailSyncWorker {
             )
           );
         }
+      }
+
+      if (account.incomingProtocol === "imap" && isCurrent()) {
+        await this.backfillThreadMetadata(account);
       }
 
       if (!isCurrent()) return;
@@ -262,6 +268,46 @@ export class MailSyncWorker {
         error: error instanceof Error ? error.message : String(error)
       });
     });
+  }
+
+  // Messages stored before threading existed have no header metadata and the
+  // 25-message sync never revisits them. Fetch it in bounded batches; a
+  // message still lacking it afterwards gets `references: []` so it is tried once.
+  private async backfillThreadMetadata(account: MailAccount): Promise<void> {
+    const pending = (await this.accounts.listInbox(account.userId))
+      .filter((message) =>
+        message.accountId === account.id &&
+        message.messageId === undefined &&
+        message.gmailThreadId === undefined &&
+        message.references === undefined &&
+        /^\d+$/.test(message.providerMessageId))
+      .slice(0, MailSyncWorker.backfillLimit);
+    if (pending.length === 0) return;
+
+    const byMailbox = new Map<string, typeof pending>();
+    for (const message of pending) {
+      byMailbox.set(message.mailbox, [...(byMailbox.get(message.mailbox) ?? []), message]);
+    }
+    for (const [mailbox, stored] of byMailbox) {
+      for (let i = 0; i < stored.length; i += MailSyncWorker.backfillBatch) {
+        const batch = stored.slice(i, i + MailSyncWorker.backfillBatch);
+        const fetched = new Map(
+          (await this.imap.fetchSummariesByUid(
+            account, mailbox, batch.map((m) => Number(m.providerMessageId))
+          )).map((m) => [m.providerMessageId, m])
+        );
+        for (const message of batch) {
+          const found = fetched.get(message.providerMessageId);
+          await this.accounts.saveIncomingMessage({
+            ...message,
+            messageId: found?.messageId,
+            inReplyTo: found?.inReplyTo,
+            references: found?.references ?? [],
+            gmailThreadId: found?.gmailThreadId
+          });
+        }
+      }
+    }
   }
 
   private initialSyncLimit(account: MailAccount): number | "all" | 0 {

@@ -219,3 +219,44 @@ test("a failing push does not disturb mail handling", async () => {
     await syncWorker.stop();
   }
 });
+
+test("backfills thread metadata for stored messages once, in bounded batches", async () => {
+  const repository = new InMemoryAccountRepository();
+  const mailAccount = account();
+  await repository.addAccount(mailAccount);
+  const stored = (uid: number): IncomingMessageSummary => ({
+    accountId: mailAccount.id,
+    providerMessageId: String(uid),
+    mailbox: "INBOX",
+    from: "a@example.com",
+    subject: "old",
+    receivedAt: new Date(uid * 1000),
+    hasAttachments: false
+  });
+  for (let uid = 1; uid <= 120; uid += 1) {
+    await repository.saveIncomingMessage(stored(uid));
+  }
+  const requests: number[][] = [];
+  const imap = {
+    fetchLatestBatches: async () => undefined,
+    fetchSummariesByUid: async (_a: MailAccount, _m: string, uids: number[]) => {
+      requests.push(uids);
+      // uid 1 is gone from the server; the rest carry a Message-ID.
+      return uids.filter((uid) => uid !== 1).map((uid) => ({
+        ...stored(uid),
+        messageId: `<m${uid}@example.com>`,
+        references: ["<root@example.com>"]
+      }));
+    }
+  };
+  const syncWorker = worker(repository, imap);
+
+  await syncWorker.syncAccount(mailAccount);
+  assert.deepEqual(requests.map((r) => r.length), [50, 50, 20]);
+  const inbox = await repository.listInbox(mailAccount.userId);
+  assert.equal(inbox.find((m) => m.providerMessageId === "2")?.messageId, "<m2@example.com>");
+  assert.deepEqual(inbox.find((m) => m.providerMessageId === "1")?.references, []);
+
+  await syncWorker.syncAccount(mailAccount);
+  assert.equal(requests.length, 3);
+});
