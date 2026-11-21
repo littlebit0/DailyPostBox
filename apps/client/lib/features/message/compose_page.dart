@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../core/i18n/language_controller.dart';
 import '../../services/mail_api_client.dart';
 import '../../widgets/app_shell.dart';
+import 'reply_draft.dart';
 
 final composeAccountsProvider = FutureProvider<List<MailAccountSummary>>((ref) {
   return ref.watch(mailApiClientProvider).fetchAccounts();
@@ -14,9 +15,11 @@ class ComposePage extends ConsumerStatefulWidget {
   const ComposePage({
     super.key,
     this.initialAccountId,
+    this.reply,
   });
 
   final String? initialAccountId;
+  final ReplyDraft? reply;
 
   @override
   ConsumerState<ComposePage> createState() => _ComposePageState();
@@ -24,6 +27,7 @@ class ComposePage extends ConsumerStatefulWidget {
 
 class _ComposePageState extends ConsumerState<ComposePage> {
   final _toController = TextEditingController();
+  final _ccController = TextEditingController();
   final _subjectController = TextEditingController();
   final _bodyController = TextEditingController();
   String? _accountId;
@@ -32,11 +36,19 @@ class _ComposePageState extends ConsumerState<ComposePage> {
   void initState() {
     super.initState();
     _accountId = widget.initialAccountId;
+    final reply = widget.reply;
+    if (reply != null) {
+      _toController.text = reply.to.join(', ');
+      _ccController.text = reply.cc.join(', ');
+      _subjectController.text = reply.subject;
+      _bodyController.text = reply.body;
+    }
   }
 
   @override
   void dispose() {
     _toController.dispose();
+    _ccController.dispose();
     _subjectController.dispose();
     _bodyController.dispose();
     super.dispose();
@@ -97,6 +109,13 @@ class _ComposePageState extends ConsumerState<ComposePage> {
                     controller: _toController,
                     decoration: InputDecoration(labelText: strings.to),
                   ),
+                  if (_ccController.text.isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: _ccController,
+                      decoration: InputDecoration(labelText: strings.cc),
+                    ),
+                  ],
                   const SizedBox(height: 12),
                   TextField(
                     controller: _subjectController,
@@ -136,11 +155,20 @@ class _ComposePageState extends ConsumerState<ComposePage> {
 
     await ref.read(mailApiClientProvider).sendMail(
           accountId: accountId,
-          to: _toController.text.split(',').map((item) => item.trim()).toList(),
+          to: _addresses(_toController.text),
+          cc: _addresses(_ccController.text),
           subject: _subjectController.text,
           body: _bodyController.text,
+          inReplyTo: widget.reply?.inReplyTo,
+          references: widget.reply?.references ?? const [],
         );
 
     if (mounted) context.go('/accounts/$accountId/mail');
   }
+
+  List<String> _addresses(String value) => value
+      .split(',')
+      .map((item) => item.trim())
+      .where((item) => item.isNotEmpty)
+      .toList();
 }

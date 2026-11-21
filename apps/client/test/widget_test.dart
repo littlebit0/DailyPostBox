@@ -2,13 +2,64 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:intl/date_symbol_data_local.dart';
 
 import 'package:daily_postbox/features/accounts/accounts_page.dart';
 import 'package:daily_postbox/features/message/linked_message_body.dart';
+import 'package:daily_postbox/core/i18n/language_controller.dart';
+import 'package:daily_postbox/features/message/reply_draft.dart';
 import 'package:daily_postbox/main.dart';
 import 'package:daily_postbox/services/mail_api_client.dart';
 
 void main() {
+  test('replySubject adds Re: once', () {
+    expect(replySubject('Hello'), 'Re: Hello');
+    expect(replySubject('Re: Hello'), 'Re: Hello');
+    expect(replySubject('RE: Hello'), 'RE: Hello');
+  });
+
+  test('ReplyDraft quote header uses absolute local date-time', () async {
+    await initializeDateFormatting();
+    final iso = DateTime(2026, 11, 20, 17, 12).toIso8601String();
+    final message = MessageDetail.fromJson({
+      'id': '1',
+      'from': 'a@x.com',
+      'body': 'hi',
+      'receivedAt': iso,
+    });
+    expect(
+      ReplyDraft.from(message, AppStrings(AppLanguage.korean), all: false).body,
+      contains('2026-11-20 (금) 17:12 a@x.com 님이 작성:'),
+    );
+    expect(
+      ReplyDraft.from(message, AppStrings(AppLanguage.english), all: false)
+          .body,
+      contains('On Fri, Nov 20, 2026 at 17:12, a@x.com wrote:'),
+    );
+  });
+
+  test('ReplyDraft quotes the original and keeps thread ids', () {
+    final message = MessageDetail.fromJson({
+      'id': '1',
+      'from': 'a@x.com',
+      'subject': 'Hi',
+      'body': 'line1\nline2',
+      'messageId': '<m1@x>',
+      'references': ['<r0@x>'],
+      'replyTo': ['a@x.com'],
+      'replyAllTo': ['a@x.com', 'b@x.com'],
+      'replyAllCc': ['c@x.com'],
+    });
+    final strings = AppStrings(AppLanguage.english);
+    final all = ReplyDraft.from(message, strings, all: true);
+    expect(all.to, ['a@x.com', 'b@x.com']);
+    expect(all.cc, ['c@x.com']);
+    expect(all.subject, 'Re: Hi');
+    expect(all.body, contains('> line1\n> line2'));
+    expect(all.inReplyTo, '<m1@x>');
+    expect(ReplyDraft.from(message, strings, all: false).cc, isEmpty);
+  });
+
   testWidgets('renders mail app shell', (WidgetTester tester) async {
     await tester.pumpWidget(
       ProviderScope(

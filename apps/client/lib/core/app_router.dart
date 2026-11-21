@@ -6,6 +6,7 @@ import '../features/accounts/account_mailbox_page.dart';
 import '../features/accounts/accounts_page.dart';
 import '../features/message/compose_page.dart';
 import '../features/message/message_page.dart';
+import '../features/message/reply_draft.dart';
 import '../features/settings/settings_page.dart';
 
 final appRouterProvider = Provider<GoRouter>((ref) {
@@ -49,6 +50,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           state: state,
           child: ComposePage(
             initialAccountId: state.pathParameters['accountId'],
+            reply: state.extra is ReplyDraft ? state.extra as ReplyDraft : null,
           ),
         ),
       ),

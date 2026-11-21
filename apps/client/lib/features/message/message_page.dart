@@ -6,6 +6,7 @@ import '../../core/i18n/language_controller.dart';
 import '../../services/mail_api_client.dart';
 import '../../widgets/app_shell.dart';
 import 'linked_message_body.dart';
+import 'reply_draft.dart';
 
 typedef MessageRequest = ({String messageId, String? accountId});
 
@@ -55,11 +56,18 @@ class MessagePage extends ConsumerWidget {
           ),
           title: Text(strings.message),
           actions: [
-            IconButton(
-              tooltip: strings.reply,
-              onPressed: () {},
-              icon: const Icon(Icons.reply),
-            ),
+            if (message.value case final item?) ...[
+              IconButton(
+                tooltip: strings.reply,
+                onPressed: () => _reply(context, item, strings, all: false),
+                icon: const Icon(Icons.reply),
+              ),
+              IconButton(
+                tooltip: strings.replyAll,
+                onPressed: () => _reply(context, item, strings, all: true),
+                icon: const Icon(Icons.reply_all),
+              ),
+            ],
             IconButton(
               tooltip: strings.archive,
               onPressed: () {},
@@ -99,6 +107,20 @@ class MessagePage extends ConsumerWidget {
     return AppShell(
       selectedDestinationId: AppShell.accountDestinationId(selectedAccountId),
       child: content,
+    );
+  }
+
+  void _reply(
+    BuildContext context,
+    MessageDetail item,
+    AppStrings strings, {
+    required bool all,
+  }) {
+    final replyAccountId = item.accountId ?? accountId;
+    if (replyAccountId == null) return;
+    context.go(
+      '/accounts/$replyAccountId/compose',
+      extra: ReplyDraft.from(item, strings, all: all),
     );
   }
 }
