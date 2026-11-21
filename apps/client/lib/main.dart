@@ -12,11 +12,13 @@ Future<void> main() async {
 
   final pushService = PushService();
   await pushService.initialize();
+  final language = await loadSavedLanguage();
 
   runApp(
     ProviderScope(
       overrides: [
         pushServiceProvider.overrideWithValue(pushService),
+        initialLanguageProvider.overrideWithValue(language),
       ],
       child: const DailyPostBoxApp(),
     ),
