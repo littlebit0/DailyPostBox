@@ -27,7 +27,7 @@ function account(): MailAccount {
 function worker(repository: InMemoryAccountRepository, imap: object) {
   return new MailSyncWorker(
     repository,
-    { mailboxUidValidity: async () => "1", ...imap } as unknown as ImapReceiver,
+    imap as ImapReceiver,
     {} as Pop3Receiver,
     {} as PushNotifier,
     {
@@ -193,8 +193,7 @@ test("a failing push does not disturb mail handling", async () => {
       deliver = onMessage;
       return async () => undefined;
     },
-    fetchLatestBatches: async () => undefined,
-    mailboxUidValidity: async () => "1"
+    fetchLatestBatches: async () => undefined
   };
   const syncWorker = new MailSyncWorker(
     repository,

@@ -43,14 +43,15 @@ async function sync(stored: MailAccount, serverUidValidity: string) {
   await repository.saveIncomingMessage(message("5", "old numbering"));
   const limits: unknown[] = [];
   const imap = {
-    mailboxUidValidity: async () => serverUidValidity,
     fetchLatestBatches: async (
       _account: MailAccount,
       _mailbox: string,
-      limit: unknown,
-      onBatch: (messages: IncomingMessageSummary[]) => Promise<void>
+      limit: number | "all",
+      onBatch: (messages: IncomingMessageSummary[]) => Promise<void>,
+      onMailboxOpened: (uidValidity: string) => Promise<number | "all" | undefined>
     ) => {
-      limits.push(limit);
+      // Like ImapReceiver: reconcile on the fetching connection first.
+      limits.push((await onMailboxOpened(serverUidValidity)) ?? limit);
       await onBatch([message("1", "new numbering")]);
     }
   };

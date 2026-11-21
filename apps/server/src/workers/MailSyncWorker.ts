@@ -93,9 +93,6 @@ export class MailSyncWorker {
     await this.accounts.updateAccount(account);
 
     try {
-      if (account.incomingProtocol === "imap") {
-        await this.resetOnUidValidityChange(account);
-      }
       const limit = this.initialSyncLimit(account);
       if (limit !== 0) {
         if (account.incomingProtocol === "imap") {
@@ -109,7 +106,8 @@ export class MailSyncWorker {
                   this.handleIncoming(account, message, false)
                 )
               );
-            }
+            },
+            (uidValidity) => this.reconcileUidValidity(account, uidValidity)
           );
         } else {
           const messages = await this.pop3.fetchLatest(
@@ -268,17 +266,22 @@ export class MailSyncWorker {
   }
 
   // Saved UIDs point at other messages once the mailbox's UIDVALIDITY
-  // changes, so the account's mail is dropped and imported again.
-  private async resetOnUidValidityChange(account: MailAccount): Promise<void> {
-    const current = await this.imap.mailboxUidValidity(account, this.options.mailbox);
-    if (!current || account.uidValidity === current) return;
-    if (account.uidValidity !== undefined) {
+  // changes, so the account's mail is dropped and imported again with the
+  // account's initial import choice. Returns that limit, if changed.
+  private async reconcileUidValidity(
+    account: MailAccount,
+    current: string
+  ): Promise<number | "all" | undefined> {
+    if (account.uidValidity === current) return undefined;
+    const changed = account.uidValidity !== undefined;
+    if (changed) {
       console.warn("imap:uidvalidity-changed", { accountId: account.id });
       await this.accounts.deleteMessages(account.id);
       account.lastSyncedAt = undefined;
     }
     account.uidValidity = current;
     await this.accounts.updateAccount(account);
+    return changed ? this.initialSyncLimit(account) : undefined;
   }
 
   private initialSyncLimit(account: MailAccount): number | "all" | 0 {
