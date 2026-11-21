@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 
 import 'package:daily_postbox/features/message/compose_page.dart';
+import 'package:daily_postbox/features/message/failed_sends.dart';
 import 'package:daily_postbox/features/accounts/account_providers.dart';
 import 'package:daily_postbox/services/mail_api_client.dart';
 import 'package:daily_postbox/widgets/app_shell.dart';
@@ -48,7 +49,8 @@ void main() {
   const receipt = SendReceipt('id', Duration.zero);
   const tick = Duration(milliseconds: 1);
 
-  test('polls past sending and returns the failed outcome with its draft', () async {
+  test('polls past sending and returns the failed outcome with its draft',
+      () async {
     final api = _PollApi([
       const SendOutcome(status: 'pending'),
       const SendOutcome(status: 'sending'),
@@ -66,7 +68,8 @@ void main() {
     expect(api.calls, 1);
   });
 
-  testWidgets('composer reopens prefilled with the failed draft', (tester) async {
+  testWidgets('composer reopens prefilled with the failed draft',
+      (tester) async {
     await tester.pumpWidget(ProviderScope(
       overrides: [
         composeAccountsProvider.overrideWith((ref) async => const []),
@@ -79,7 +82,8 @@ void main() {
     expect(find.text('Body text'), findsOneWidget);
   });
 
-  test('keeps polling past 10 tries while still sending, until failure', () async {
+  test('keeps polling past 10 tries while still sending, until failure',
+      () async {
     final api = _PollApi([
       for (var i = 0; i < 25; i++) const SendOutcome(status: 'sending'),
       const SendOutcome(status: 'failed', error: 'late', draft: _draft),
@@ -94,20 +98,26 @@ void main() {
     final api = _PollApi([const SendOutcome(status: 'pending')]);
     expect(
         await awaitSendOutcome(api, receipt,
-            interval: tick, maxInterval: tick, maxWait: const Duration(milliseconds: 20)),
+            interval: tick,
+            maxInterval: tick,
+            maxWait: const Duration(milliseconds: 20)),
         isNull);
   });
 
-  testWidgets('recovery is stacked: original compose input survives pop', (tester) async {
+  testWidgets('recovery is stacked: original compose input survives pop',
+      (tester) async {
     final router = GoRouter(routes: [
       GoRoute(path: '/', builder: (_, __) => const ComposePage()),
       GoRoute(
         path: '/compose/recover',
-        builder: (_, state) => ComposePage(initialDraft: state.extra as ComposeDraft),
+        builder: (_, state) =>
+            ComposePage(initialDraft: state.extra as ComposeDraft),
       ),
     ]);
     await tester.pumpWidget(ProviderScope(
-      overrides: [composeAccountsProvider.overrideWith((ref) async => const [])],
+      overrides: [
+        composeAccountsProvider.overrideWith((ref) async => const [])
+      ],
       child: MaterialApp.router(routerConfig: router),
     ));
     await tester.pump();
@@ -121,13 +131,15 @@ void main() {
     expect(find.text('Hello'), findsNothing);
   });
 
-  testWidgets('sending from recovery pops back to the original compose with undo snackbar',
+  testWidgets(
+      'sending from recovery pops back to the original compose with undo snackbar',
       (tester) async {
     final router = GoRouter(routes: [
       GoRoute(path: '/', builder: (_, __) => const ComposePage()),
       GoRoute(
         path: '/compose/recover',
-        builder: (_, state) => ComposePage(initialDraft: state.extra as ComposeDraft),
+        builder: (_, state) =>
+            ComposePage(initialDraft: state.extra as ComposeDraft),
       ),
     ]);
     await tester.pumpWidget(ProviderScope(
@@ -177,7 +189,8 @@ class _FailApi extends _SendApi {
 
 void _failedSendsTests() {
   Future<GoRouter> pumpApp(WidgetTester tester) async {
-    Widget shell(Widget child) => AppShell(selectedDestinationId: 'x', child: child);
+    Widget shell(Widget child) =>
+        AppShell(selectedDestinationId: 'x', child: child);
     final router = GoRouter(routes: [
       GoRoute(
         path: '/',
@@ -189,7 +202,8 @@ void _failedSendsTests() {
       ),
       GoRoute(
         path: '/compose/recover',
-        builder: (_, state) => ComposePage(initialDraft: state.extra as ComposeDraft),
+        builder: (_, state) =>
+            ComposePage(initialDraft: state.extra as ComposeDraft),
       ),
     ]);
     await tester.pumpWidget(ProviderScope(
@@ -216,7 +230,8 @@ void _failedSendsTests() {
     return router;
   }
 
-  testWidgets('failed draft stays recoverable from banner after snackbars are cleared',
+  testWidgets(
+      'failed draft stays recoverable from banner after snackbars are cleared',
       (tester) async {
     final router = await pumpApp(tester);
     await tester.tap(find.byIcon(Icons.send_outlined));
@@ -233,6 +248,8 @@ void _failedSendsTests() {
     expect(find.byType(SnackBar), findsNothing);
     expect(find.text('발송 실패 1건'), findsOneWidget);
 
+    await tester.tap(find.text('보기'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('다시 작성'));
     await tester.pumpAndSettle();
     expect(router.state.uri.path, '/compose/recover');
@@ -248,8 +265,53 @@ void _failedSendsTests() {
     await tester.pumpAndSettle(const Duration(milliseconds: 100));
     await tester.pump(const Duration(seconds: 6));
     await tester.pump(const Duration(seconds: 3));
+    await tester.tap(find.text('보기'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('삭제'));
     await tester.pumpAndSettle();
     expect(find.text('발송 실패 1건'), findsNothing);
+  });
+
+  testWidgets(
+      '30 failures stay one compact row; dialog list is bounded and rewrite works',
+      (tester) async {
+    tester.view.physicalSize = const Size(800, 500);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final router = await pumpApp(tester);
+    final container =
+        ProviderScope.containerOf(tester.element(find.byType(MaterialApp)));
+    router.go('/accounts/a1/mail');
+    await tester.pumpAndSettle();
+    for (var i = 0; i < 30; i++) {
+      container.read(failedSendsProvider.notifier).add(FailedSend(
+          id: 'f$i',
+          draft: ComposeDraft(
+              accountId: 'a1',
+              to: 't$i@example.com',
+              subject: 'S$i',
+              body: 'b'),
+          error: 'e'));
+    }
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    expect(find.text('발송 실패 30건'), findsOneWidget);
+    expect(find.text('mailbox'), findsOneWidget);
+    expect(tester.getRect(find.text('mailbox')).bottom, lessThan(500));
+    expect(find.text('다시 작성'), findsNothing);
+
+    await tester.tap(find.text('보기'));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    expect(tester.getRect(find.byType(AlertDialog)).height,
+        lessThanOrEqualTo(500));
+
+    await tester.tap(find.text('다시 작성').first);
+    await tester.pumpAndSettle();
+    expect(router.state.uri.path, '/compose/recover');
+    expect(find.text('S0'), findsOneWidget);
+    router.pop();
+    await tester.pumpAndSettle();
+    expect(find.text('발송 실패 29건'), findsOneWidget);
   });
 }
