@@ -78,6 +78,15 @@ test("revoker reports failures without throwing", async () => {
   assert.equal(await new OAuthTokenRevoker(secrets, mockFetch(400).fn).revoke(account("a")), "revoked");
 });
 
+test("revoker gives up on a stalled request and reports failed", async () => {
+  const stalled = ((_url: string, init: { signal: AbortSignal }) =>
+    new Promise((_resolve, reject) => {
+      init.signal.addEventListener("abort", () => reject(init.signal.reason));
+    })) as unknown as typeof fetch;
+  const revoker = new OAuthTokenRevoker(new DevelopmentSecretResolver(), stalled, 20);
+  assert.equal(await revoker.revoke(account("a")), "failed");
+});
+
 test("DELETE removes only that account's credentials and messages, even if revoke fails", async () => {
   const dir = await mkdtemp(join(tmpdir(), "dpb-delete-"));
   const file = join(dir, "state.json");

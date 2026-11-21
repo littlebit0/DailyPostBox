@@ -11,7 +11,9 @@ const googleRevokeUrl = "https://oauth2.googleapis.com/revoke";
 export class OAuthTokenRevoker {
   constructor(
     private readonly secrets: SecretResolver,
-    private readonly fetchImpl: typeof fetch = fetch
+    private readonly fetchImpl: typeof fetch = fetch,
+    // Must stay well under the client's 30s receive timeout.
+    private readonly timeoutMs = 10_000
   ) {}
 
   async revoke(account: MailAccount): Promise<RevokeResult> {
@@ -19,6 +21,8 @@ export class OAuthTokenRevoker {
     if (account.providerId === "outlook") return "unsupported";
     if (account.providerId !== "gmail") return "skipped";
 
+    const abort = new AbortController();
+    const timer = setTimeout(() => abort.abort(), this.timeoutMs);
     try {
       const raw = await this.secrets.resolve(account.encryptedSecretRef);
       const payload = JSON.parse(raw) as { refreshToken?: string; accessToken?: string };
@@ -28,12 +32,15 @@ export class OAuthTokenRevoker {
       const response = await this.fetchImpl(googleRevokeUrl, {
         method: "POST",
         headers: { "content-type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({ token })
+        body: new URLSearchParams({ token }),
+        signal: abort.signal
       });
       // 400 invalid_token: already revoked or expired, so access is gone anyway.
       return response.ok || response.status === 400 ? "revoked" : "failed";
     } catch {
       return "failed";
+    } finally {
+      clearTimeout(timer);
     }
   }
 }
