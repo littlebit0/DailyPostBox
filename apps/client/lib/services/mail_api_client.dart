@@ -2,6 +2,37 @@ import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+const undoSendDelayOptions = [0, 5, 10, 20, 30];
+
+/// Seconds the server holds a sent mail so it can still be cancelled.
+final undoSendDelayProvider = StateProvider<int>((ref) => 5);
+
+class SendReceipt {
+  const SendReceipt(this.id, this.remaining);
+  final String id;
+  final Duration remaining;
+}
+
+class ComposeDraft {
+  const ComposeDraft({
+    required this.accountId,
+    required this.to,
+    required this.subject,
+    required this.body,
+  });
+  final String accountId;
+  final String to;
+  final String subject;
+  final String body;
+}
+
+class SendOutcome {
+  const SendOutcome({required this.status, this.error, this.draft});
+  final String status;
+  final String? error;
+  final ComposeDraft? draft;
+}
+
 final mailApiClientProvider = Provider<MailApiClient>((ref) {
   return MailApiClient(
     baseUrl: resolveMailApiBaseUrl(),
@@ -190,18 +221,53 @@ class MailApiClient {
     });
   }
 
-  Future<void> sendMail({
+  /// Queues the mail on the server; the receipt carries the id and the server's send deadline.
+  Future<SendReceipt> sendMail({
     required String accountId,
     required List<String> to,
     required String subject,
     required String body,
+    int delaySeconds = 5,
   }) async {
-    await _dio.post('/mail/send', data: {
+    final response = await _dio.post('/mail/send', data: {
       'accountId': accountId,
       'to': to,
       'subject': subject,
       'text': body,
+      'delaySeconds': delaySeconds,
     });
+    final data = response.data as Map<String, dynamic>;
+    // remaining = sendAt - server now, so client clock skew and upload time do not matter.
+    final remaining = DateTime.parse(data['sendAt'] as String)
+        .difference(DateTime.parse(data['now'] as String));
+    return SendReceipt(data['id'] as String, remaining);
+  }
+
+  /// Returns the resulting status: 'cancelled', or why it could not be cancelled.
+  Future<String> cancelSend(String id) async {
+    final response = await _dio.post(
+      '/mail/send/$id/cancel',
+      options: Options(validateStatus: (code) => code == 200 || code == 409),
+    );
+    return (response.data as Map<String, dynamic>)['status'] as String;
+  }
+
+  Future<SendOutcome> fetchSendOutcome(String id) async {
+    final response = await _dio.get('/mail/send/$id');
+    final data = response.data as Map<String, dynamic>;
+    final draft = data['draft'] as Map<String, dynamic>?;
+    return SendOutcome(
+      status: data['status'] as String,
+      error: data['error'] as String?,
+      draft: draft == null
+          ? null
+          : ComposeDraft(
+              accountId: draft['accountId'] as String,
+              to: (draft['to'] as List).cast<String>().join(', '),
+              subject: draft['subject'] as String? ?? '',
+              body: draft['text'] as String? ?? '',
+            ),
+    );
   }
 }
 

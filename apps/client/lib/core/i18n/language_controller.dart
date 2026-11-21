@@ -204,6 +204,28 @@ class AppStrings {
         'password' => _ko ? '비밀번호' : 'Password',
         _ => mode,
       };
+  String get mailSending => _ko ? '메일을 보내는 중입니다.' : 'Sending mail...';
+  String get undoSend => _ko ? '보내기 취소' : 'Undo send';
+  String get sendCancelled =>
+      _ko ? '보내기를 취소했습니다.' : 'Sending was cancelled.';
+  String get sendAlreadySent =>
+      _ko ? '이미 발송되어 취소할 수 없습니다.' : 'Already sent; it cannot be cancelled.';
+  String get sendCancelFailed =>
+      _ko ? '취소하지 못했습니다. 메일이 발송될 수 있습니다.' : 'Could not cancel; the mail may be sent.';
+  String sendDeliveryFailed(String reason) => _ko
+      ? '메일을 보내지 못했습니다: $reason'
+      : 'The mail could not be delivered: $reason';
+  String get sendFailedShort => _ko ? '발송에 실패했습니다.' : 'Sending failed.';
+  String failedSendsCount(int n) => _ko ? '발송 실패 $n건' : '$n failed to send';
+  String get viewFailedSends => _ko ? '보기' : 'View';
+  String get deleteFailedSend => _ko ? '삭제' : 'Delete';
+  String get rewriteMail => _ko ? '다시 작성' : 'Rewrite';
+  String get undoSendSetting => _ko ? '보내기 취소 시간' : 'Undo send delay';
+  String get undoSendSettingDescription => _ko
+      ? '보낸 메일을 이 시간 동안 서버가 보관하며 취소할 수 있습니다.'
+      : 'The server holds sent mail for this long so you can cancel it.';
+  String secondsLabel(int seconds) =>
+      seconds == 0 ? (_ko ? '끔' : 'Off') : (_ko ? '$seconds초' : '${seconds}s');
   String get pushNotifications => _ko ? '푸시 알림' : 'Push notifications';
   String get pushNotificationsDescription => _ko
       ? '새 IMAP 메일은 서버 푸시를 통해 즉시 전달됩니다.'
