@@ -57,3 +57,17 @@ test("parses message ids from a References header", () => {
   assert.deepEqual(parseMessageIds("<a@x>\r\n <b@x>"), ["<a@x>", "<b@x>"]);
   assert.deepEqual(parseMessageIds(undefined), []);
 });
+
+test("resolves In-Reply-To ancestry to a common root without References", () => {
+  const list = withThreadInfo([
+    summary("1", { messageId: "<a@x>" }),
+    summary("2", { messageId: "<b@x>", inReplyTo: "<a@x>" }),
+    summary("3", { messageId: "<c@x>", inReplyTo: "<b@x>" })
+  ]);
+  assert.deepEqual(list.map((item) => item.threadCount), [3, 3, 3]);
+});
+
+test("keeps the thread id short for very long message ids", () => {
+  const id = computeThreadId({ messageId: `<${"a".repeat(300)}@x>` })!;
+  assert.ok(id.length <= 100);
+});

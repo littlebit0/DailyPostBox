@@ -11,8 +11,9 @@ final accountMessagesProvider =
   return ref.watch(mailApiClientProvider).fetchAccountMessages(accountId);
 });
 
-final threadMessagesProvider = FutureProvider.family<List<MailSummary>,
-    ({String accountId, String threadId})>((ref, key) {
+final threadMessagesProvider = FutureProvider.autoDispose
+    .family<List<MailSummary>, ({String accountId, String threadId})>(
+        (ref, key) {
   return ref
       .watch(mailApiClientProvider)
       .fetchThread(key.accountId, key.threadId);
