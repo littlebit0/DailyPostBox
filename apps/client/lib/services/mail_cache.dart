@@ -1,0 +1,87 @@
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+/// Set while a screen shows cached data because the server was unreachable.
+/// Holds the time the shown data was last fetched; null when online.
+final offlineSinceProvider = StateProvider<DateTime?>((ref) => null);
+
+class CachedPayload {
+  const CachedPayload({required this.data, required this.savedAt});
+
+  final Object? data;
+  final DateTime savedAt;
+}
+
+/// JSON-file cache of server responses keyed by request path.
+/// Account-scoped paths (`/accounts/{id}/...`) live in one folder per account
+/// so deleting an account removes its mail from the device.
+class MailCache {
+  MailCache(this._root);
+
+  final Future<Directory> Function() _root;
+
+  static const _sharedFolder = 'shared';
+  static final _accountPath = RegExp(r'^/accounts/([^/]+)/');
+
+  static String _folderFor(String path) {
+    final match = _accountPath.firstMatch(path);
+    return match == null ? _sharedFolder : 'a_${match.group(1)}';
+  }
+
+  // FNV-1a 64-bit; the stored path is re-checked on read, so a collision is a miss.
+  static String _fileName(String path) {
+    var hash = 0xcbf29ce484222325;
+    for (final unit in utf8.encode(path)) {
+      hash = (hash ^ unit) * 0x100000001b3;
+    }
+    return '${hash.toUnsigned(64).toRadixString(16)}.json';
+  }
+
+  Future<File> _file(String path) async {
+    final root = await _root();
+    return File('${root.path}/${_folderFor(path)}/${_fileName(path)}');
+  }
+
+  Future<void> write(String path, Object? data) async {
+    try {
+      final file = await _file(path);
+      await file.parent.create(recursive: true);
+      await file.writeAsString(jsonEncode({
+        'path': path,
+        'savedAt': DateTime.now().toUtc().toIso8601String(),
+        'data': data,
+      }));
+    } catch (_) {
+      // A cache write failure must never break a live response.
+    }
+  }
+
+  Future<CachedPayload?> read(String path) async {
+    try {
+      final file = await _file(path);
+      if (!await file.exists()) return null;
+      final json =
+          jsonDecode(await file.readAsString()) as Map<String, dynamic>;
+      if (json['path'] != path) return null;
+      final savedAt = DateTime.tryParse(json['savedAt'] as String? ?? '');
+      if (savedAt == null) return null;
+      return CachedPayload(data: json['data'], savedAt: savedAt.toLocal());
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Removes everything cached for [accountId]. The shared folder also goes
+  /// because the merged inbox and account list may contain that account.
+  Future<void> clearAccount(String accountId) async {
+    try {
+      final root = await _root();
+      for (final folder in ['a_$accountId', _sharedFolder]) {
+        final dir = Directory('${root.path}/$folder');
+        if (await dir.exists()) await dir.delete(recursive: true);
+      }
+    } catch (_) {}
+  }
+}

@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../core/i18n/language_controller.dart';
 import '../features/accounts/account_providers.dart';
+import '../services/mail_cache.dart';
 
 class AppShell extends ConsumerWidget {
   const AppShell({
@@ -80,6 +81,31 @@ class AppShell extends ConsumerWidget {
       onDestinationSelected: selectDestination,
     );
 
+    final offlineSince = ref.watch(offlineSinceProvider);
+    final content = Column(
+      children: [
+        Expanded(child: child),
+        if (offlineSince != null)
+          Material(
+            color: Theme.of(context).colorScheme.errorContainer,
+            child: SafeArea(
+              top: false,
+              child: Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: Row(
+                  children: [
+                    const Icon(Icons.cloud_off_outlined, size: 18),
+                    const SizedBox(width: 8),
+                    Expanded(child: Text(strings.offlineBanner(offlineSince))),
+                  ],
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+
     return Scaffold(
       drawer: compact
           ? Drawer(
@@ -88,12 +114,12 @@ class AppShell extends ConsumerWidget {
             )
           : null,
       body: compact
-          ? child
+          ? content
           : Row(
               children: [
                 SizedBox(width: 284, child: navigation),
                 const VerticalDivider(width: 1),
-                Expanded(child: child),
+                Expanded(child: content),
               ],
             ),
       floatingActionButton: floatingActionButton,
