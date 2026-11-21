@@ -8,8 +8,11 @@ import 'package:path_provider/path_provider.dart';
 import 'mail_cache.dart';
 
 final mailCacheProvider = Provider<MailCache>((ref) {
-  return MailCache(() async =>
-      Directory('${(await getApplicationSupportDirectory()).path}/mail_cache'));
+  return MailCache(
+    () async => Directory(
+      '${(await getApplicationSupportDirectory()).path}/mail_cache',
+    ),
+  );
 });
 
 final mailApiClientProvider = Provider<MailApiClient>((ref) {
@@ -37,8 +40,7 @@ bool isMailApiConnectionError(Object error) {
     DioExceptionType.connectionTimeout ||
     DioExceptionType.sendTimeout ||
     DioExceptionType.receiveTimeout ||
-    DioExceptionType.badCertificate =>
-      true,
+    DioExceptionType.badCertificate => true,
     DioExceptionType.unknown => error.response == null,
     _ => false,
   };
@@ -50,14 +52,15 @@ class MailApiClient {
     Dio? dio,
     this.cache,
     this.onCacheState,
-  }) : _dio = dio ??
-            Dio(
-              BaseOptions(
-                baseUrl: baseUrl,
-                connectTimeout: const Duration(seconds: 10),
-                receiveTimeout: const Duration(seconds: 30),
-              ),
-            );
+  }) : _dio =
+           dio ??
+           Dio(
+             BaseOptions(
+               baseUrl: baseUrl,
+               connectTimeout: const Duration(seconds: 10),
+               receiveTimeout: const Duration(seconds: 30),
+             ),
+           );
 
   final Dio _dio;
   final MailCache? cache;
@@ -103,22 +106,24 @@ class MailApiClient {
     final data = await _getCached<List<dynamic>>('/accounts') ?? [];
     return data
         .map(
-            (item) => MailAccountSummary.fromJson(item as Map<String, dynamic>))
+          (item) => MailAccountSummary.fromJson(item as Map<String, dynamic>),
+        )
         .toList();
   }
 
   Future<List<MailProviderSummary>> fetchProviders() async {
-    final response = await _dio.get<List<dynamic>>('/providers');
-    final data = response.data ?? [];
+    final data = await _getCached<List<dynamic>>('/providers') ?? [];
     return data
-        .map((item) =>
-            MailProviderSummary.fromJson(item as Map<String, dynamic>))
+        .map(
+          (item) => MailProviderSummary.fromJson(item as Map<String, dynamic>),
+        )
         .toList();
   }
 
   Future<MessageDetail> fetchMessage(String messageId) async {
-    final data =
-        await _getCached<Map<String, dynamic>>('/mail/messages/$messageId');
+    final data = await _getCached<Map<String, dynamic>>(
+      '/mail/messages/$messageId',
+    );
     return MessageDetail.fromJson(data ?? {});
   }
 
@@ -140,14 +145,17 @@ class MailApiClient {
     required String secret,
     required InitialSyncOption initialSync,
   }) async {
-    await _dio.post('/accounts', data: {
-      'providerId': providerId,
-      'emailAddress': emailAddress,
-      'authMode': authMode,
-      'incomingProtocol': incomingProtocol,
-      'secret': secret,
-      'initialSync': initialSync.toJson(),
-    });
+    await _dio.post(
+      '/accounts',
+      data: {
+        'providerId': providerId,
+        'emailAddress': emailAddress,
+        'authMode': authMode,
+        'incomingProtocol': incomingProtocol,
+        'secret': secret,
+        'initialSync': initialSync.toJson(),
+      },
+    );
   }
 
   Future<void> validateAccount({
@@ -158,14 +166,17 @@ class MailApiClient {
     required String secret,
     required InitialSyncOption initialSync,
   }) async {
-    await _dio.post('/accounts/validate', data: {
-      'providerId': providerId,
-      'emailAddress': emailAddress,
-      'authMode': authMode,
-      'incomingProtocol': incomingProtocol,
-      'secret': secret,
-      'initialSync': initialSync.toJson(),
-    });
+    await _dio.post(
+      '/accounts/validate',
+      data: {
+        'providerId': providerId,
+        'emailAddress': emailAddress,
+        'authMode': authMode,
+        'incomingProtocol': incomingProtocol,
+        'secret': secret,
+        'initialSync': initialSync.toJson(),
+      },
+    );
   }
 
   Future<OAuthStartResult> startOAuthLogin({
@@ -174,16 +185,15 @@ class MailApiClient {
   }) async {
     final response = await _dio.post<Map<String, dynamic>>(
       '/auth/$providerId/start',
-      data: {
-        if (reconnectAccountId != null) 'accountId': reconnectAccountId,
-      },
+      data: {if (reconnectAccountId != null) 'accountId': reconnectAccountId},
     );
     return OAuthStartResult.fromJson(response.data ?? {});
   }
 
   Future<OAuthSessionStatus> fetchOAuthSession(String state) async {
-    final response =
-        await _dio.get<Map<String, dynamic>>('/auth/sessions/$state');
+    final response = await _dio.get<Map<String, dynamic>>(
+      '/auth/sessions/$state',
+    );
     return OAuthSessionStatus.fromJson(response.data ?? {});
   }
 
@@ -192,19 +202,23 @@ class MailApiClient {
     required String incomingProtocol,
     required InitialSyncOption initialSync,
   }) async {
-    await _dio.post('/auth/sessions/$state/complete', data: {
-      'incomingProtocol': incomingProtocol,
-      'initialSync': initialSync.toJson(),
-    });
+    await _dio.post(
+      '/auth/sessions/$state/complete',
+      data: {
+        'incomingProtocol': incomingProtocol,
+        'initialSync': initialSync.toJson(),
+      },
+    );
   }
 
   Future<void> updateAccountCredentials({
     required String accountId,
     required String secret,
   }) async {
-    await _dio.put('/accounts/$accountId/credentials', data: {
-      'secret': secret,
-    });
+    await _dio.put(
+      '/accounts/$accountId/credentials',
+      data: {'secret': secret},
+    );
   }
 
   Future<void> validateStoredAccount(String accountId) async {
@@ -224,10 +238,10 @@ class MailApiClient {
     required String platform,
     required String token,
   }) async {
-    await _dio.post('/devices/push-token', data: {
-      'platform': platform,
-      'token': token,
-    });
+    await _dio.post(
+      '/devices/push-token',
+      data: {'platform': platform, 'token': token},
+    );
   }
 
   Future<void> sendMail({
@@ -236,12 +250,15 @@ class MailApiClient {
     required String subject,
     required String body,
   }) async {
-    await _dio.post('/mail/send', data: {
-      'accountId': accountId,
-      'to': to,
-      'subject': subject,
-      'text': body,
-    });
+    await _dio.post(
+      '/mail/send',
+      data: {
+        'accountId': accountId,
+        'to': to,
+        'subject': subject,
+        'text': body,
+      },
+    );
   }
 }
 
@@ -403,7 +420,8 @@ class MailAccountSummary {
       syncErrorCode: json['syncErrorCode'] as String?,
       initialSync: json['initialSync'] is Map<String, dynamic>
           ? InitialSyncOption.fromJson(
-              json['initialSync'] as Map<String, dynamic>)
+              json['initialSync'] as Map<String, dynamic>,
+            )
           : null,
       lastSyncedAtLabel: _formatReceivedAt(json['lastSyncedAt'] as String?),
     );
@@ -425,10 +443,7 @@ class InitialSyncOption {
   );
 
   Map<String, Object> toJson() {
-    return {
-      'includePreviousMessages': includePreviousMessages,
-      'limit': limit,
-    };
+    return {'includePreviousMessages': includePreviousMessages, 'limit': limit};
   }
 
   factory InitialSyncOption.fromJson(Map<String, dynamic> json) {
