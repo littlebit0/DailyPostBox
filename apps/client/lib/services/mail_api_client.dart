@@ -288,6 +288,7 @@ class MessageDetail {
     required this.body,
     required this.links,
     required this.receivedAtLabel,
+    this.authenticationFailures = const [],
   });
 
   final String id;
@@ -295,6 +296,7 @@ class MessageDetail {
   final String subject;
   final String body;
   final List<MessageLink> links;
+  final List<String> authenticationFailures;
   final String receivedAtLabel;
 
   factory MessageDetail.fromJson(Map<String, dynamic> json) {
@@ -308,6 +310,10 @@ class MessageDetail {
           .map(MessageLink.fromJson)
           .toList(growable: false),
       receivedAtLabel: _formatReceivedAt(json['receivedAt'] as String?),
+      authenticationFailures:
+          (json['authenticationFailures'] as List<dynamic>? ?? const [])
+              .whereType<String>()
+              .toList(growable: false),
     );
   }
 }

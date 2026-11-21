@@ -77,10 +77,13 @@ export interface IncomingMessageSummary {
   hasAttachments: boolean;
 }
 
+export type AuthenticationFailure = "dmarc" | "spf" | "dkim";
+
 export interface IncomingMessageContent {
   text: string;
   truncated: boolean;
   links: IncomingMessageLink[];
+  authenticationFailures?: AuthenticationFailure[];
 }
 
 export interface IncomingMessageLink {

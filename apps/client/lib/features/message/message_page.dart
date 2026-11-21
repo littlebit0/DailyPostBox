@@ -79,6 +79,18 @@ class MessagePage extends ConsumerWidget {
                 const SizedBox(height: 12),
                 Text('${strings.from}: ${item.sender}'),
                 Text(item.receivedAtLabel),
+                if (item.authenticationFailures.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  MaterialBanner(
+                    backgroundColor:
+                        Theme.of(context).colorScheme.errorContainer,
+                    leading: const Icon(Icons.warning_amber_rounded),
+                    content: Text(
+                      strings.authFailureWarning(item.authenticationFailures),
+                    ),
+                    actions: const [SizedBox.shrink()],
+                  ),
+                ],
                 const Divider(height: 32),
                 LinkedMessageBody(body: item.body, links: item.links),
               ],
