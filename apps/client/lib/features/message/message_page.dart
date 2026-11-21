@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/i18n/language_controller.dart';
+import '../../services/browser_launcher.dart';
 import '../../services/mail_api_client.dart';
 import '../../widgets/app_shell.dart';
 import 'linked_message_body.dart';
@@ -55,6 +56,16 @@ class MessagePage extends ConsumerWidget {
           ),
           title: Text(strings.message),
           actions: [
+            if (message.valueOrNull?.canUnsubscribe ?? false)
+              TextButton(
+                onPressed: () => _unsubscribe(
+                  context,
+                  ref,
+                  strings,
+                  message.requireValue,
+                ),
+                child: Text(strings.unsubscribe),
+              ),
             IconButton(
               tooltip: strings.reply,
               onPressed: () {},
@@ -100,5 +111,50 @@ class MessagePage extends ConsumerWidget {
       selectedDestinationId: AppShell.accountDestinationId(selectedAccountId),
       child: content,
     );
+  }
+}
+
+Future<void> _unsubscribe(
+  BuildContext context,
+  WidgetRef ref,
+  AppStrings strings,
+  MessageDetail item,
+) async {
+  final messenger = ScaffoldMessenger.maybeOf(context);
+  final url = item.unsubscribeUrl;
+  var ok = true;
+  if (url != null) {
+    ok = await openExternalBrowser(url);
+  } else {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(strings.unsubscribeConfirmTitle),
+        content: Text(strings.unsubscribeConfirmBody(item.unsubscribeMailto!)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: Text(strings.cancel),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: Text(strings.unsubscribe),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      await ref
+          .read(mailApiClientProvider)
+          .unsubscribeByMail(accountId: item.accountId!, messageId: item.id);
+      messenger?.showSnackBar(SnackBar(content: Text(strings.unsubscribeSent)));
+      return;
+    } catch (_) {
+      ok = false;
+    }
+  }
+  if (!ok) {
+    messenger?.showSnackBar(SnackBar(content: Text(strings.unsubscribeFailed)));
   }
 }

@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:daily_postbox/features/accounts/accounts_page.dart';
 import 'package:daily_postbox/features/message/linked_message_body.dart';
+import 'package:daily_postbox/features/message/message_page.dart';
 import 'package:daily_postbox/main.dart';
 import 'package:daily_postbox/services/mail_api_client.dart';
 
@@ -503,6 +504,43 @@ void main() {
       Rect.fromLTRB(0, 0, 88, 20),
       Rect.fromLTRB(0, 24, 36, 44),
     ]);
+  });
+
+  testWidgets('shows unsubscribe only for messages with the header',
+      (WidgetTester tester) async {
+    MessageDetail detail(Map<String, dynamic> extra) => MessageDetail.fromJson({
+          'id': 'm1',
+          'accountId': 'a1',
+          'from': 'news@example.test',
+          'subject': 'news',
+          'body': 'hi',
+          ...extra,
+        });
+    final withHeader = detail({
+      'unsubscribe': {'url': 'https://example.test/u', 'oneClick': false}
+    });
+    expect(withHeader.canUnsubscribe, isTrue);
+    expect(detail({}).canUnsubscribe, isFalse);
+
+    Future<void> pump(MessageDetail item) async {
+      await tester.binding.setSurfaceSize(const Size(1200, 800));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await tester.pumpWidget(const SizedBox());
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            messageProvider.overrideWith((ref, request) async => item),
+          ],
+          child: const MaterialApp(home: MessagePage(messageId: 'm1')),
+        ),
+      );
+      await tester.pumpAndSettle();
+    }
+
+    await pump(withHeader);
+    expect(find.text('수신 거부'), findsOneWidget);
+    await pump(detail({}));
+    expect(find.text('수신 거부'), findsNothing);
   });
 }
 

@@ -75,6 +75,14 @@ export interface IncomingMessageSummary {
   snippet?: string;
   receivedAt: Date;
   hasAttachments: boolean;
+  unsubscribe?: ListUnsubscribe;
+}
+
+export interface ListUnsubscribe {
+  url?: string;
+  mailto?: { address: string; subject?: string; body?: string };
+  // RFC 8058 one-click is only recorded here; handling it is a later stage.
+  oneClick: boolean;
 }
 
 export interface IncomingMessageContent {
