@@ -536,6 +536,42 @@ void main() {
     expect(find.text('x' * 4000), findsOneWidget);
   });
 
+  testWidgets('table slots count toward the whole-body work budget', (
+    tester,
+  ) async {
+    final table = '<table><tr>${'<td>a</td>' * 99}</tr>'
+        '${'<tr><td>b</td></tr>' * 99}</table>';
+    await pump(tester, table);
+    expect(find.byType(Table), findsOneWidget);
+    await pump(tester, table * 12);
+    expect(find.byType(Table), findsNothing);
+    expect(find.byType(HtmlMessageBody), findsOneWidget);
+  });
+
+  testWidgets('plain text fallback keeps readable color in dark theme', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(),
+        home: Scaffold(
+          body: HtmlMessageBody(
+            html: '<p style="${'color:#333;' * 32}">x</p>' * 4000,
+          ),
+        ),
+      ),
+    );
+    expect(
+      tester.widget<Text>(find.text('x' * 4000)).style?.color,
+      Colors.black87,
+    );
+  });
+
+  testWidgets('image scheme check ignores case', (tester) async {
+    await pump(tester, '<img src="HTTPS://cdn.example.com/a.png">');
+    expect(find.byType(Image), findsOneWidget);
+  });
+
   test('readableTextColor keeps contrasting colors', () {
     expect(readableTextColor(Colors.black87, Colors.white), Colors.black87);
     expect(readableTextColor(Colors.white, Colors.white), Colors.black87);

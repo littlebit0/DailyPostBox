@@ -59,7 +59,7 @@ class _HtmlMessageBodyState extends State<HtmlMessageBody> {
     final body = html_parser.parseFragment(widget.html);
     if (_countElements(body) > maxHtmlElements) {
       // Same order as the server budget; avoids building a huge widget tree.
-      _content = Text(body.text ?? '');
+      _content = Text(body.text ?? '', style: _baseStyle);
       return;
     }
     final linkColor = Theme.of(context).colorScheme.primary;
@@ -68,7 +68,7 @@ class _HtmlMessageBodyState extends State<HtmlMessageBody> {
       onLink: (uri) => (widget.linkLauncher ?? launchMessageLink)(uri),
       recognizers: _recognizers,
     );
-    const base = TextStyle(color: Colors.black87, fontSize: 15, height: 1.45);
+    const base = _baseStyle;
     try {
       _content = Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -76,7 +76,7 @@ class _HtmlMessageBodyState extends State<HtmlMessageBody> {
       );
     } on _WorkBudgetExceeded {
       _disposeRecognizers();
-      _content = Text(body.text ?? '');
+      _content = Text(body.text ?? '', style: _baseStyle);
     }
   }
 
@@ -96,6 +96,9 @@ class _HtmlMessageBodyState extends State<HtmlMessageBody> {
     );
   }
 }
+
+// Fixed white surface: text must not follow the (possibly dark) theme.
+const _baseStyle = TextStyle(color: Colors.black87, fontSize: 15, height: 1.45);
 
 /// Above this many elements the body is shown as plain text.
 const maxHtmlElements = 5000;
@@ -164,8 +167,9 @@ class _Renderer {
   int _work = 0;
 
   /// Counts work units; past [maxHtmlWork] the caller falls back to text.
-  void _tick() {
-    if (++_work > maxHtmlWork) throw const _WorkBudgetExceeded();
+  void _tick([int units = 1]) {
+    _work += units;
+    if (_work > maxHtmlWork) throw const _WorkBudgetExceeded();
   }
 
   /// Style declarations of an element, parsed once and capped in size.
@@ -441,6 +445,8 @@ class _Renderer {
     if (rows.length * columns > maxHtmlTableSlots) {
       return Text(table.text, style: style);
     }
+    // Slots count toward the whole-body budget, not just this table.
+    _tick(rows.length * columns);
 
     Color? cellBg(dom.Element cell, dom.Element row) =>
         _background(cell) ?? _background(row) ?? _groupBackground(row);
@@ -671,7 +677,8 @@ class _Renderer {
     Widget? image;
 
     // data: URIs are never decoded: a tiny PNG can claim a huge pixel size.
-    if (src.startsWith('http://') || src.startsWith('https://')) {
+    final scheme = Uri.tryParse(src)?.scheme.toLowerCase();
+    if (scheme == 'http' || scheme == 'https') {
       image = Image.network(
         src,
         width: width,
