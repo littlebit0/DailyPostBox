@@ -72,7 +72,14 @@ test("remote http(s) images survive only when explicitly allowed", () => {
     true
   );
   assert.equal(remoteImageCount, 2);
-  assert.equal(html, '<img src="https://t.example/p.png">');
+  assert.equal(html, '<img src="https://t.example/p.png"><img src="https://t.example/b.png">');
+});
+
+test("protocol-relative images are normalized to https once allowed", () => {
+  const html = '<img src="//cdn.example/n.png">';
+  assert.equal(clean(html).html, "");
+  assert.equal(clean(html).remoteImageCount, 1);
+  assert.equal(clean(html, true).html, '<img src="https://cdn.example/n.png">');
 });
 
 test("strips data images to alt text and does not count them as remote", () => {

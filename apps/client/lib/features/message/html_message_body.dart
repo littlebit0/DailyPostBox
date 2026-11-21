@@ -210,6 +210,12 @@ class _Renderer {
     );
   }
 
+  /// Every block path paints its own element's background (never inherited).
+  Widget _paint(dom.Element el, Widget child) {
+    final color = _background(el);
+    return color == null ? child : ColoredBox(color: color, child: child);
+  }
+
   Widget _block(
     dom.Element el,
     TextStyle parent,
@@ -233,11 +239,14 @@ class _Renderer {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             for (final c in caption)
-              _column(
+              _paint(
                 c,
-                _styled(c, style),
-                _align(c) ?? TextAlign.center,
-                recognizer,
+                _column(
+                  c,
+                  _styled(c, style),
+                  _align(c) ?? TextAlign.center,
+                  recognizer,
+                ),
               ),
             table,
           ],
@@ -256,34 +265,44 @@ class _Renderer {
                   width: 28,
                   child: Text(tag == 'ol' ? '$index.' : '•', style: style),
                 ),
-                Expanded(child: _column(child, style, align, recognizer)),
+                Expanded(
+                  child: _paint(
+                    child,
+                    _column(child, _styled(child, style), align, recognizer),
+                  ),
+                ),
               ],
             ),
           );
         }
-        return Padding(
-          padding: const EdgeInsets.only(left: 8, top: 4, bottom: 4),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: items,
+        return _paint(
+          el,
+          Padding(
+            padding: const EdgeInsets.only(left: 8, top: 4, bottom: 4),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: items,
+            ),
           ),
         );
       case 'blockquote':
         return Container(
           margin: const EdgeInsets.symmetric(vertical: 6),
           padding: const EdgeInsets.only(left: 12),
-          decoration: const BoxDecoration(
-            border: Border(left: BorderSide(color: Colors.black26, width: 3)),
+          decoration: BoxDecoration(
+            color: _background(el),
+            border: const Border(
+              left: BorderSide(color: Colors.black26, width: 3),
+            ),
           ),
           child: _column(el, style, align, recognizer),
         );
       default:
-        final spacing = (tag == 'p' || (tag?.startsWith('h') ?? false))
-            ? 6.0
-            : 0.0;
-        return ColoredBox(
-          color: _background(el) ?? Colors.transparent,
-          child: Padding(
+        final spacing =
+            (tag == 'p' || (tag?.startsWith('h') ?? false)) ? 6.0 : 0.0;
+        return _paint(
+          el,
+          Padding(
             padding: EdgeInsets.symmetric(vertical: spacing),
             child: _column(el, style, align, recognizer),
           ),
@@ -354,8 +373,7 @@ class _Renderer {
             for (var i = 0; i < columns; i++)
               if (slots[i] case (final cell, final row))
                 ColoredBox(
-                  color:
-                      _background(cell) ??
+                  color: _background(cell) ??
                       _background(row) ??
                       Colors.transparent,
                   child: Padding(
@@ -641,8 +659,7 @@ class _Renderer {
             style = style.copyWith(backgroundColor: color);
           }
         case 'font-weight':
-          final bold =
-              value == 'bold' ||
+          final bold = value == 'bold' ||
               value == 'bolder' ||
               (int.tryParse(value) ?? 0) >= 600;
           style = style.copyWith(

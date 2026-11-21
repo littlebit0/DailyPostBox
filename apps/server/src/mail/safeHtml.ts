@@ -117,7 +117,8 @@ function serializeElement(el: Element, state: State, depth: number): string {
 }
 
 function serializeImage(el: Element, state: State): string {
-  const src = (el.attribs.src ?? "").trim();
+  let src = (el.attribs.src ?? "").trim();
+  if (/^\/\//.test(src)) src = `https:${src}`; // protocol-relative: load over https
   const alt = el.attribs.alt ?? "";
   if (/^(?:https?:)?\/\//i.test(src)) {
     state.remoteImageCount += 1;

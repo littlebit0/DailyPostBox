@@ -339,6 +339,32 @@ void main() {
     expect(span.style?.color, const Color(0xFFFFFFFF));
   });
 
+  testWidgets('blockquote, list and caption paint their own background', (
+    tester,
+  ) async {
+    await pump(
+      tester,
+      '<blockquote style="background-color:#000001;color:#fff">a</blockquote>'
+      '<ul style="background-color:#000002"><li style="background-color:#000003">b</li></ul>'
+      '<table><caption style="background-color:#000004">c</caption>'
+      '<tr><td>d</td></tr></table>',
+    );
+    bool painted(int rgb) => find
+        .byWidgetPredicate(
+          (w) =>
+              (w is ColoredBox && w.color == Color(0xFF000000 | rgb)) ||
+              (w is Container &&
+                  w.decoration is BoxDecoration &&
+                  (w.decoration as BoxDecoration).color ==
+                      Color(0xFF000000 | rgb)),
+        )
+        .evaluate()
+        .isNotEmpty;
+    for (final rgb in [1, 2, 3, 4]) {
+      expect(painted(rgb), isTrue, reason: 'bg #00000$rgb');
+    }
+  });
+
   testWidgets('block background is not inherited as text background', (
     tester,
   ) async {

@@ -146,7 +146,9 @@ export class ImapReceiver implements MailReceiver {
           continue;
         }
 
-        rawHtml ??= decoded;
+        // A truncated HTML part is incomplete: leave html empty so the client
+        // shows the complete plain-text body instead.
+        if (!truncated) rawHtml ??= decoded;
         htmlLinks = mergeMessageLinks(
           htmlLinks,
           extractMessageLinks(decoded)
