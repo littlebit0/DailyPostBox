@@ -53,6 +53,12 @@ const maxDepth = 100;
 // More elements than this means a pathological mail: return no HTML so the
 // client shows the plain-text body instead of building a huge widget tree.
 export const maxElements = 5000;
+// colspan/rowspan above this are clamped so a table cannot claim huge grids.
+const maxSpan = 50;
+function clampSpan(value: string): string {
+  const n = Number.parseInt(value, 10);
+  return String(Number.isFinite(n) ? Math.min(Math.max(n, 1), maxSpan) : 1);
+}
 class BudgetExceeded extends Error {}
 
 export function sanitizeHtml(
@@ -134,7 +140,7 @@ function serializeAttributes(tag: string, attribs: Record<string, string>): stri
       value.length <= 200 &&
       (key === "title" || key === "alt" || key === "face" || safeAttrValue.test(value))
     ) {
-      out += ` ${key}="${escapeAttr(value)}"`;
+      out += ` ${key}="${escapeAttr(key === "colspan" || key === "rowspan" ? clampSpan(value) : value)}"`;
     }
   }
   return out;

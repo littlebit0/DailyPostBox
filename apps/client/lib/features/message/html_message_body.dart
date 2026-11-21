@@ -95,6 +95,10 @@ class _HtmlMessageBodyState extends State<HtmlMessageBody> {
 /// Above this many elements the body is shown as plain text.
 const maxHtmlElements = 5000;
 
+/// Largest colspan/rowspan honored, and rows x columns budget per table.
+const maxHtmlSpan = 50;
+const maxHtmlTableSlots = 10000;
+
 int _countElements(dom.Node root) {
   var count = 0;
   final stack = <dom.Node>[root];
@@ -316,6 +320,11 @@ class _Renderer {
       final width = r.keys.fold<int>(0, (a, k) => k + 1 > a ? k + 1 : a);
       return width > m ? width : m;
     });
+    // Every row builds `columns` children, so spans can blow up the count
+    // even when the element count is small.
+    if (rows.length * columns > maxHtmlTableSlots) {
+      return Text(table.text, style: style);
+    }
 
     TableRow toRow(Map<int, (dom.Element cell, dom.Element row)> slots) =>
         TableRow(
@@ -357,7 +366,7 @@ class _Renderer {
   }
 
   int _span(dom.Element cell, String attribute) =>
-      (int.tryParse(cell.attributes[attribute] ?? '') ?? 1).clamp(1, 20);
+      (int.tryParse(cell.attributes[attribute] ?? '') ?? 1).clamp(1, maxHtmlSpan);
 
   /// `bgcolor` attribute or inline `background-color` of a table element.
   Color? _background(dom.Element el) {

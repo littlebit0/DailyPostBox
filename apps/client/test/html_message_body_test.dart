@@ -255,4 +255,18 @@ void main() {
     await pump(tester, '<div>x</div>' * 10);
     expect(find.byType(Column), findsWidgets);
   });
+
+  testWidgets('wide colspan tables over the slot budget fall back to text', (
+    tester,
+  ) async {
+    final html = '<table><tr>${'<td colspan="20">a</td>' * 1000}</tr>'
+        '${'<tr><td>b</td></tr>' * 1000}</table>';
+    await pump(tester, html);
+    expect(tester.takeException(), isNull);
+    expect(find.byType(Table), findsNothing);
+    expect(tester.allWidgets.length, lessThan(1000));
+
+    await pump(tester, '<table><tr><td colspan="2">a</td></tr></table>');
+    expect(find.byType(Table), findsOneWidget);
+  });
 }

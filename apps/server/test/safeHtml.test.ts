@@ -113,3 +113,8 @@ test("returns empty html when the element budget is exceeded", () => {
   assert.equal(clean(ok + "<div>y</div>").html, "");
   assert.equal(clean("<span>a</span>".repeat(maxElements + 1)).html, "");
 });
+
+test("clamps colspan and rowspan", () => {
+  assert.equal(clean('<table><tr><td colspan="99999" rowspan="0">x</td><td colspan="3">y</td></tr></table>').html,
+    '<table><tr><td colspan="50" rowspan="1">x</td><td colspan="3">y</td></tr></table>');
+});
