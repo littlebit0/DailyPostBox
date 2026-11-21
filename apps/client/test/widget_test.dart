@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:daily_postbox/features/accounts/accounts_page.dart';
+import 'package:daily_postbox/features/message/compose_page.dart';
 import 'package:daily_postbox/features/message/linked_message_body.dart';
 import 'package:daily_postbox/main.dart';
 import 'package:daily_postbox/services/mail_api_client.dart';
@@ -490,6 +491,66 @@ void main() {
     await tester.pump();
 
     expect(openedUri, Uri.parse(url));
+  });
+
+  test('swaps the signature only when the user has not edited it', () {
+    expect(swapSignature('', '', 'A'), '\n\n-- \nA');
+    expect(swapSignature('hi', '', ''), 'hi');
+    expect(swapSignature('hi\n\n-- \nA', 'A', 'B'), 'hi\n\n-- \nB');
+    expect(swapSignature('hi\n\n-- \nA', 'A', ''), 'hi');
+    expect(
+      swapSignature('hi\n\n-- \nA edited', 'A', 'B'),
+      'hi\n\n-- \nA edited',
+    );
+  });
+
+  testWidgets('compose appends the account signature and swaps it', (
+    WidgetTester tester,
+  ) async {
+    const accounts = [
+      MailAccountSummary(
+        id: 'a',
+        providerId: 'gmail',
+        emailAddress: 'a@example.com',
+        incomingProtocol: 'imap',
+        authMode: 'oauth2',
+        syncStatus: 'idle',
+        syncError: null,
+        initialSync: InitialSyncOption.recommended,
+        lastSyncedAtLabel: 'now',
+        signature: 'Sig A',
+      ),
+      MailAccountSummary(
+        id: 'b',
+        providerId: 'gmail',
+        emailAddress: 'b@example.com',
+        incomingProtocol: 'imap',
+        authMode: 'oauth2',
+        syncStatus: 'idle',
+        syncError: null,
+        initialSync: InitialSyncOption.recommended,
+        lastSyncedAtLabel: 'now',
+      ),
+    ];
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          composeAccountsProvider.overrideWith((ref) async => accounts),
+        ],
+        child: const MaterialApp(home: ComposePage()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    String body() =>
+        tester.widget<TextField>(find.byType(TextField).last).controller!.text;
+    expect(body(), '\n\n-- \nSig A');
+
+    await tester.tap(find.byType(DropdownButtonFormField<String>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('b@example.com').last);
+    await tester.pumpAndSettle();
+    expect(body(), '');
   });
 
   test('merges word boxes into one continuous underline per line', () {

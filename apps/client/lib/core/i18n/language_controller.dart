@@ -189,6 +189,12 @@ class AppStrings {
   String get deleteAccountDescription => _ko
       ? '이 앱에 저장된 계정과 동기화된 메일 목록이 삭제됩니다.'
       : 'This removes the account and synced mail list from this app.';
+  String get signature => _ko ? '서명' : 'Signature';
+  String get signatureHint => _ko
+      ? '새 메일 끝에 자동으로 붙습니다. 비워 두면 서명을 붙이지 않습니다.'
+      : 'Added to the end of new messages. Leave empty for no signature.';
+  String get signatureSaved => _ko ? '서명을 저장했습니다.' : 'Signature saved.';
+  String get save => _ko ? '저장' : 'Save';
   String get cancel => _ko ? '취소' : 'Cancel';
   String get statusIdle => _ko ? '대기' : 'Idle';
   String get statusValidating => _ko ? '검증 중' : 'Validating';

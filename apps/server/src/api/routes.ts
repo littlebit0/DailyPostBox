@@ -166,6 +166,24 @@ export async function registerRoutes(
     return reply.code(204).send();
   });
 
+  app.put("/accounts/:id/signature", async (request, reply) => {
+    const params = z.object({ id: z.string() }).parse(request.params);
+    const body = z.object({ signature: z.string().max(2000) }).parse(request.body);
+    const account = await deps.accounts.getAccount(params.id);
+
+    if (!account || account.userId !== demoUserId) {
+      return reply.code(404).send({ error: "Account not found" });
+    }
+
+    const signature = body.signature.trim();
+    account.signature = signature || undefined;
+    account.updatedAt = new Date();
+    await deps.accounts.updateAccount(account);
+
+    const { encryptedSecretRef: _secret, ...publicAccount } = account;
+    return publicAccount;
+  });
+
   app.post("/accounts/:id/validate", async (request, reply) => {
     const params = z.object({ id: z.string() }).parse(request.params);
     const account = await deps.accounts.getAccount(params.id);

@@ -7,6 +7,7 @@ import '../../core/i18n/language_controller.dart';
 import '../../services/browser_launcher.dart';
 import '../../services/mail_api_client.dart';
 import '../../widgets/app_shell.dart';
+import '../message/compose_page.dart' show composeAccountsProvider;
 import 'account_providers.dart';
 
 export 'account_providers.dart' show accountsProvider, accountMessagesProvider;
@@ -454,6 +455,8 @@ class _AccountDetail extends ConsumerWidget {
               ? strings.neverSynced
               : account.lastSyncedAtLabel,
         ),
+        const SizedBox(height: 24),
+        _SignatureEditor(key: ValueKey(account.id), account: account),
         if (account.syncError != null) ...[
           const SizedBox(height: 12),
           Text(
@@ -461,6 +464,73 @@ class _AccountDetail extends ConsumerWidget {
             style: TextStyle(color: Theme.of(context).colorScheme.error),
           ),
         ],
+      ],
+    );
+  }
+}
+
+class _SignatureEditor extends ConsumerStatefulWidget {
+  const _SignatureEditor({super.key, required this.account});
+
+  final MailAccountSummary account;
+
+  @override
+  ConsumerState<_SignatureEditor> createState() => _SignatureEditorState();
+}
+
+class _SignatureEditorState extends ConsumerState<_SignatureEditor> {
+  late final _controller = TextEditingController(text: widget.account.signature);
+  bool _saving = false;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    final strings = ref.read(appStringsProvider);
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    setState(() => _saving = true);
+    try {
+      await ref.read(mailApiClientProvider).updateAccountSignature(
+            accountId: widget.account.id,
+            signature: _controller.text,
+          );
+      ref.invalidate(accountsProvider);
+      ref.invalidate(composeAccountsProvider);
+      messenger?.showSnackBar(SnackBar(content: Text(strings.signatureSaved)));
+    } catch (error) {
+      messenger?.showSnackBar(
+        SnackBar(content: Text(friendlyError(error, strings))),
+      );
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final strings = ref.watch(appStringsProvider);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        TextField(
+          controller: _controller,
+          minLines: 3,
+          maxLines: 8,
+          maxLength: 2000,
+          decoration: InputDecoration(
+            labelText: strings.signature,
+            helperText: strings.signatureHint,
+            border: const OutlineInputBorder(),
+          ),
+        ),
+        const SizedBox(height: 8),
+        FilledButton(
+          onPressed: _saving ? null : _save,
+          child: Text(strings.save),
+        ),
       ],
     );
   }
