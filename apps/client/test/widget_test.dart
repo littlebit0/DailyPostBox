@@ -328,7 +328,10 @@ void main() {
     final loadsBeforeReconnect = messageLoads;
     await tester.tap(find.widgetWithText(TextButton, '다시 연결'));
     await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextField), 'new-app-password');
+    await tester.enterText(
+        find.descendant(
+            of: find.byType(AlertDialog), matching: find.byType(TextField)),
+        'new-app-password');
     await tester.tap(find.widgetWithText(FilledButton, '다시 연결'));
     await tester.pumpAndSettle();
 

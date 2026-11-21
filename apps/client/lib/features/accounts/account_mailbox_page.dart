@@ -11,10 +11,7 @@ import 'account_providers.dart';
 import 'accounts_page.dart' show reconnectAccount;
 
 class AccountMailboxPage extends ConsumerWidget {
-  const AccountMailboxPage({
-    super.key,
-    required this.accountId,
-  });
+  const AccountMailboxPage({super.key, required this.accountId});
 
   final String accountId;
 
@@ -43,9 +40,8 @@ class AccountMailboxPage extends ConsumerWidget {
           return _MailboxContent(account: account);
         },
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (error, stackTrace) => Center(
-          child: Text(strings.accountLoadFailedTitle),
-        ),
+        error: (error, stackTrace) =>
+            Center(child: Text(strings.accountLoadFailedTitle)),
       ),
     );
   }
@@ -63,6 +59,8 @@ class _MailboxContent extends ConsumerStatefulWidget {
 class _MailboxContentState extends ConsumerState<_MailboxContent> {
   Timer? _refreshTimer;
   bool _refreshing = false;
+  final _searchController = TextEditingController();
+  Future<List<MailSummary>>? _search;
 
   bool get _isSyncing =>
       const {'syncing', 'validating'}.contains(widget.account.syncStatus);
@@ -76,8 +74,10 @@ class _MailboxContentState extends ConsumerState<_MailboxContent> {
   @override
   void didUpdateWidget(covariant _MailboxContent oldWidget) {
     super.didUpdateWidget(oldWidget);
-    final wasSyncing =
-        const {'syncing', 'validating'}.contains(oldWidget.account.syncStatus);
+    final wasSyncing = const {
+      'syncing',
+      'validating',
+    }.contains(oldWidget.account.syncStatus);
     if (oldWidget.account.id == widget.account.id &&
         wasSyncing &&
         !_isSyncing) {
@@ -96,7 +96,24 @@ class _MailboxContentState extends ConsumerState<_MailboxContent> {
   @override
   void dispose() {
     _refreshTimer?.cancel();
+    _searchController.dispose();
     super.dispose();
+  }
+
+  void _runSearch(String value) {
+    final query = value.trim();
+    setState(() {
+      _search = query.isEmpty
+          ? null
+          : ref
+              .read(mailApiClientProvider)
+              .searchAccountMessages(widget.account.id, query);
+    });
+  }
+
+  void _clearSearch() {
+    _searchController.clear();
+    setState(() => _search = null);
   }
 
   void _configureRefreshTimer() {
@@ -132,6 +149,40 @@ class _MailboxContentState extends ConsumerState<_MailboxContent> {
       _refreshing = false;
     }
     if (mounted && _isSyncing && _refreshTimer == null) _scheduleRefresh();
+  }
+
+  Widget _messageList(List<MailSummary> items) {
+    final account = widget.account;
+    return ListView.separated(
+      itemCount: items.length,
+      separatorBuilder: (context, index) => const Divider(height: 1),
+      itemBuilder: (context, index) {
+        final message = items[index];
+        return ListTile(
+          minLeadingWidth: 28,
+          leading: Icon(
+            message.unread
+                ? Icons.mark_email_unread_outlined
+                : Icons.mail_outline,
+          ),
+          title: Text(
+            message.subject,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          subtitle: Text(
+            '${message.sender}\n${message.snippet}',
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+          ),
+          trailing: Text(message.receivedAtLabel),
+          onTap: () => context.go(
+            '/accounts/${account.id}/messages/${Uri.encodeComponent(message.id)}',
+            extra: const {'disableTransition': true},
+          ),
+        );
+      },
+    );
   }
 
   @override
@@ -189,81 +240,92 @@ class _MailboxContentState extends ConsumerState<_MailboxContent> {
               ),
             ],
           ),
-        Expanded(
-          child: messages.when(
-            data: (items) {
-              if (items.isEmpty) {
-                return Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      if (_isSyncing)
-                        const SizedBox.square(
-                          dimension: 44,
-                          child: CircularProgressIndicator(strokeWidth: 3),
-                        )
-                      else
-                        Icon(
-                          Icons.inbox_outlined,
-                          size: 56,
-                          color: Theme.of(context).colorScheme.secondary,
-                        ),
-                      const SizedBox(height: 16),
-                      Text(
-                        _isSyncing
-                            ? strings.loadingAccountMail
-                            : strings.noMessagesForAccount,
-                        style: Theme.of(context).textTheme.titleLarge,
-                        textAlign: TextAlign.center,
-                      ),
-                      if (_isSyncing) ...[
-                        const SizedBox(height: 8),
-                        Text(
-                          strings.loadingAccountMailDescription,
-                          textAlign: TextAlign.center,
-                        ),
-                      ],
-                    ],
-                  ),
-                );
-              }
-
-              return ListView.separated(
-                itemCount: items.length,
-                separatorBuilder: (context, index) => const Divider(height: 1),
-                itemBuilder: (context, index) {
-                  final message = items[index];
-                  return ListTile(
-                    minLeadingWidth: 28,
-                    leading: Icon(
-                      message.unread
-                          ? Icons.mark_email_unread_outlined
-                          : Icons.mail_outline,
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+          child: TextField(
+            controller: _searchController,
+            textInputAction: TextInputAction.search,
+            onSubmitted: _runSearch,
+            decoration: InputDecoration(
+              isDense: true,
+              border: const OutlineInputBorder(),
+              prefixIcon: const Icon(Icons.search),
+              hintText: strings.searchHint,
+              suffixIcon: _search == null
+                  ? null
+                  : IconButton(
+                      tooltip: strings.clearSearch,
+                      onPressed: _clearSearch,
+                      icon: const Icon(Icons.close),
                     ),
-                    title: Text(
-                      message.subject,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    subtitle: Text(
-                      '${message.sender}\n${message.snippet}',
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    trailing: Text(message.receivedAtLabel),
-                    onTap: () => context.go(
-                      '/accounts/${account.id}/messages/${Uri.encodeComponent(message.id)}',
-                      extra: const {'disableTransition': true},
-                    ),
-                  );
-                },
-              );
-            },
-            loading: () => const Center(child: CircularProgressIndicator()),
-            error: (error, stackTrace) => Center(
-              child: Text(strings.mailLoadFailedTitle),
             ),
           ),
+        ),
+        Expanded(
+          child: _search != null
+              ? FutureBuilder<List<MailSummary>>(
+                  future: _search,
+                  builder: (context, snapshot) {
+                    if (snapshot.hasError) {
+                      return Center(child: Text(strings.searchFailedTitle));
+                    }
+                    final results = snapshot.data;
+                    if (results == null) {
+                      return const Center(child: CircularProgressIndicator());
+                    }
+                    if (results.isEmpty) {
+                      return Center(child: Text(strings.noSearchResults));
+                    }
+                    return _messageList(results);
+                  },
+                )
+              : messages.when(
+                  data: (items) {
+                    if (items.isEmpty) {
+                      return Center(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (_isSyncing)
+                              const SizedBox.square(
+                                dimension: 44,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 3,
+                                ),
+                              )
+                            else
+                              Icon(
+                                Icons.inbox_outlined,
+                                size: 56,
+                                color: Theme.of(context).colorScheme.secondary,
+                              ),
+                            const SizedBox(height: 16),
+                            Text(
+                              _isSyncing
+                                  ? strings.loadingAccountMail
+                                  : strings.noMessagesForAccount,
+                              style: Theme.of(context).textTheme.titleLarge,
+                              textAlign: TextAlign.center,
+                            ),
+                            if (_isSyncing) ...[
+                              const SizedBox(height: 8),
+                              Text(
+                                strings.loadingAccountMailDescription,
+                                textAlign: TextAlign.center,
+                              ),
+                            ],
+                          ],
+                        ),
+                      );
+                    }
+
+                    return _messageList(items);
+                  },
+                  loading: () =>
+                      const Center(child: CircularProgressIndicator()),
+                  error: (error, stackTrace) =>
+                      Center(child: Text(strings.mailLoadFailedTitle)),
+                ),
         ),
       ],
     );
