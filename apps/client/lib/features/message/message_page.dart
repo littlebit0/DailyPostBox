@@ -72,9 +72,12 @@ class MessagePage extends ConsumerWidget {
             data: (item) => ListView(
               padding: const EdgeInsets.all(24),
               children: [
-                Text(
-                  item.subject,
-                  style: Theme.of(context).textTheme.headlineSmall,
+                Semantics(
+                  header: true,
+                  child: Text(
+                    item.subject,
+                    style: Theme.of(context).textTheme.headlineSmall,
+                  ),
                 ),
                 const SizedBox(height: 12),
                 Text('${strings.from}: ${item.sender}'),
