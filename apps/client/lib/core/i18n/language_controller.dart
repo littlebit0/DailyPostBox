@@ -46,6 +46,17 @@ class AppStrings {
   String get message => _ko ? '메일' : 'Message';
   String get reply => _ko ? '답장' : 'Reply';
   String get archive => _ko ? '보관' : 'Archive';
+  String get snooze => _ko ? '다시 알림' : 'Snooze';
+  String get snoozeTonight => _ko ? '오늘 저녁 (오후 6시)' : 'This evening (6 PM)';
+  String get snoozeTomorrow =>
+      _ko ? '내일 아침 (오전 9시)' : 'Tomorrow morning (9 AM)';
+  String get snoozeNextWeek =>
+      _ko ? '다음 주 (월요일 오전 9시)' : 'Next week (Mon 9 AM)';
+  String get snoozeCustom => _ko ? '직접 지정...' : 'Pick date and time...';
+  String get snoozeFailed =>
+      _ko ? '다시 알림을 설정하지 못했습니다' : 'Could not set the snooze';
+  String snoozed(String when) =>
+      _ko ? '$when에 다시 알려드립니다' : 'Snoozed until $when';
   String get back => _ko ? '뒤로' : 'Back';
   String get from => _ko ? '보낸 사람' : 'From';
   String get to => _ko ? '받는 사람' : 'To';
