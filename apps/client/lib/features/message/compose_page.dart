@@ -7,6 +7,7 @@ import 'package:go_router/go_router.dart';
 import '../../core/i18n/language_controller.dart';
 import '../../services/mail_api_client.dart';
 import '../../widgets/app_shell.dart';
+import 'failed_sends.dart';
 
 final composeAccountsProvider = FutureProvider<List<MailAccountSummary>>((ref) {
   return ref.watch(mailApiClientProvider).fetchAccounts();
@@ -149,6 +150,7 @@ class _ComposePageState extends ConsumerState<ComposePage> {
     final delay = ref.read(undoSendDelayProvider);
     final messenger = ScaffoldMessenger.of(context);
     final router = GoRouter.of(context);
+    final failedSends = ProviderScope.containerOf(context).read(failedSendsProvider.notifier);
     final receipt = await client.sendMail(
       accountId: accountId,
       to: _toController.text.split(',').map((item) => item.trim()).toList(),
@@ -185,7 +187,7 @@ class _ComposePageState extends ConsumerState<ComposePage> {
     }
 
     // Detached from this page on purpose: the composer closes right after sending.
-    unawaited(_reportFailure(client, receipt, strings, messenger, router));
+    unawaited(_reportFailure(client, receipt, strings, messenger, router, failedSends));
 
     // Pushed pages (recovery compose) pop so the composer underneath keeps its input.
     if (!mounted) return;
@@ -204,16 +206,20 @@ Future<void> _reportFailure(
   AppStrings strings,
   ScaffoldMessengerState messenger,
   GoRouter router,
+  FailedSendsNotifier failedSends,
 ) async {
   final outcome = await awaitSendOutcome(client, receipt);
   final draft = outcome?.draft;
   if (outcome == null || draft == null) return;
+  final item = FailedSend(id: receipt.id, draft: draft, error: outcome.error ?? '');
+  // Also kept in the app-level list: a later send's clearSnackBars() must not lose it.
+  failedSends.add(item);
   messenger.showSnackBar(SnackBar(
     content: Text(strings.sendDeliveryFailed(outcome.error ?? '')),
     duration: const Duration(seconds: 15),
     action: SnackBarAction(
       label: strings.rewriteMail,
-      onPressed: () => router.push('/compose/recover', extra: draft),
+      onPressed: () => rewriteFailedSend(router, failedSends, item),
     ),
   ));
 }

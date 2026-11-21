@@ -4,7 +4,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 
 import 'package:daily_postbox/features/message/compose_page.dart';
+import 'package:daily_postbox/features/accounts/account_providers.dart';
 import 'package:daily_postbox/services/mail_api_client.dart';
+import 'package:daily_postbox/widgets/app_shell.dart';
 
 const _draft = ComposeDraft(
   accountId: 'a1',
@@ -42,6 +44,7 @@ class _SendApi extends MailApiClient {
 }
 
 void main() {
+  _failedSendsTests();
   const receipt = SendReceipt('id', Duration.zero);
   const tick = Duration(milliseconds: 1);
 
@@ -163,5 +166,90 @@ void main() {
     // Let the snackbar and the detached outcome poll finish before teardown.
     await tester.pump(const Duration(seconds: 6));
     await tester.pump(const Duration(seconds: 3));
+  });
+}
+
+class _FailApi extends _SendApi {
+  @override
+  Future<SendOutcome> fetchSendOutcome(String id) async =>
+      const SendOutcome(status: 'failed', error: 'auth', draft: _draft);
+}
+
+void _failedSendsTests() {
+  Future<GoRouter> pumpApp(WidgetTester tester) async {
+    Widget shell(Widget child) => AppShell(selectedDestinationId: 'x', child: child);
+    final router = GoRouter(routes: [
+      GoRoute(
+        path: '/',
+        builder: (_, __) => const ComposePage(initialAccountId: 'a1'),
+      ),
+      GoRoute(
+        path: '/accounts/:id/mail',
+        builder: (_, __) => shell(const Text('mailbox')),
+      ),
+      GoRoute(
+        path: '/compose/recover',
+        builder: (_, state) => ComposePage(initialDraft: state.extra as ComposeDraft),
+      ),
+    ]);
+    await tester.pumpWidget(ProviderScope(
+      overrides: [
+        mailApiClientProvider.overrideWithValue(_FailApi()),
+        accountsProvider.overrideWith((ref) async => const []),
+        composeAccountsProvider.overrideWith((ref) async => const [
+              MailAccountSummary(
+                id: 'a1',
+                providerId: 'p',
+                emailAddress: 'me@example.test',
+                incomingProtocol: 'imap',
+                authMode: 'password',
+                syncStatus: 'idle',
+                syncError: null,
+                initialSync: null,
+                lastSyncedAtLabel: '',
+              ),
+            ]),
+      ],
+      child: MaterialApp.router(routerConfig: router),
+    ));
+    await tester.pump();
+    return router;
+  }
+
+  testWidgets('failed draft stays recoverable from banner after snackbars are cleared',
+      (tester) async {
+    final router = await pumpApp(tester);
+    await tester.tap(find.byIcon(Icons.send_outlined));
+    await tester.pumpAndSettle(const Duration(milliseconds: 100));
+    // Undo window (5s) + first poll (2s), then the failure surfaces.
+    await tester.pump(const Duration(seconds: 6));
+    await tester.pump(const Duration(seconds: 3));
+    expect(find.text('발송 실패 1건'), findsOneWidget);
+    expect(find.byType(SnackBarAction), findsOneWidget);
+
+    // A new send does this to the earlier failure snackbar.
+    ScaffoldMessenger.of(tester.element(find.text('mailbox'))).clearSnackBars();
+    await tester.pumpAndSettle();
+    expect(find.byType(SnackBar), findsNothing);
+    expect(find.text('발송 실패 1건'), findsOneWidget);
+
+    await tester.tap(find.text('다시 작성'));
+    await tester.pumpAndSettle();
+    expect(router.state.uri.path, '/compose/recover');
+    expect(find.text('Hello'), findsOneWidget);
+    router.pop();
+    await tester.pumpAndSettle();
+    expect(find.text('발송 실패 1건'), findsNothing);
+  });
+
+  testWidgets('banner delete drops the failed draft', (tester) async {
+    await pumpApp(tester);
+    await tester.tap(find.byIcon(Icons.send_outlined));
+    await tester.pumpAndSettle(const Duration(milliseconds: 100));
+    await tester.pump(const Duration(seconds: 6));
+    await tester.pump(const Duration(seconds: 3));
+    await tester.tap(find.text('삭제'));
+    await tester.pumpAndSettle();
+    expect(find.text('발송 실패 1건'), findsNothing);
   });
 }

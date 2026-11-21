@@ -216,6 +216,8 @@ class AppStrings {
       ? '메일을 보내지 못했습니다: $reason'
       : 'The mail could not be delivered: $reason';
   String get sendFailedShort => _ko ? '발송에 실패했습니다.' : 'Sending failed.';
+  String failedSendsCount(int n) => _ko ? '발송 실패 $n건' : '$n failed to send';
+  String get deleteFailedSend => _ko ? '삭제' : 'Delete';
   String get rewriteMail => _ko ? '다시 작성' : 'Rewrite';
   String get undoSendSetting => _ko ? '보내기 취소 시간' : 'Undo send delay';
   String get undoSendSettingDescription => _ko
