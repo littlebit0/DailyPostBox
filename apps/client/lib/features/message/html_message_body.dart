@@ -181,23 +181,23 @@ class _Renderer {
 
   /// Style declarations of an element, parsed once and capped in size.
   List<(String, String)> _decls(dom.Element el) => _declCache[el] ??= () {
-        final raw = el.attributes['style'] ?? '';
-        final out = <(String, String)>[];
-        final parts = raw
-            .substring(0, math.min(raw.length, maxHtmlStyleLength))
-            .split(';');
-        for (final declaration in parts) {
-          _tick();
-          if (out.length >= maxHtmlStyleDeclarations) break;
-          final index = declaration.indexOf(':');
-          if (index < 0) continue;
-          out.add((
-            declaration.substring(0, index).trim().toLowerCase(),
-            declaration.substring(index + 1).trim().toLowerCase(),
-          ));
-        }
-        return out;
-      }();
+    final raw = el.attributes['style'] ?? '';
+    final out = <(String, String)>[];
+    final parts = raw
+        .substring(0, math.min(raw.length, maxHtmlStyleLength))
+        .split(';');
+    for (final declaration in parts) {
+      _tick();
+      if (out.length >= maxHtmlStyleDeclarations) break;
+      final index = declaration.indexOf(':');
+      if (index < 0) continue;
+      out.add((
+        declaration.substring(0, index).trim().toLowerCase(),
+        declaration.substring(index + 1).trim().toLowerCase(),
+      ));
+    }
+    return out;
+  }();
 
   /// [bg] is the background actually painted behind the content: the nearest
   /// widget/decoration color passed down, overridden for text by an inline
@@ -375,8 +375,9 @@ class _Renderer {
           child: _column(el, style, bg, align, recognizer),
         );
       default:
-        final spacing =
-            (tag == 'p' || (tag?.startsWith('h') ?? false)) ? 6.0 : 0.0;
+        final spacing = (tag == 'p' || (tag?.startsWith('h') ?? false))
+            ? 6.0
+            : 0.0;
         return _paint(
           el,
           Padding(
@@ -704,13 +705,13 @@ class _Renderer {
 
   /// Whitespace mode of an element, inherited and computed once per element.
   String _whiteSpace(dom.Element el) => _whiteSpaceCache[el] ??= () {
-        var mode = el.localName == 'pre' ? 'pre' : null;
-        for (final (prop, value) in _decls(el)) {
-          if (prop == 'white-space') mode = value;
-        }
-        final parent = el.parent;
-        return mode ?? (parent == null ? 'normal' : _whiteSpace(parent));
-      }();
+    var mode = el.localName == 'pre' ? 'pre' : null;
+    for (final (prop, value) in _decls(el)) {
+      if (prop == 'white-space') mode = value;
+    }
+    final parent = el.parent;
+    return mode ?? (parent == null ? 'normal' : _whiteSpace(parent));
+  }();
 
   /// Collapses whitespace unless the element is `<pre>` or `white-space: pre*`.
   String _collapse(dom.Text node) {
@@ -754,19 +755,20 @@ class _Renderer {
         height: height,
         // Keep alt text (or a marker) so the enclosing link stays usable.
         errorBuilder: (_, __, ___) => Text(
-          (img.attributes['alt'] ?? '').trim().isEmpty
-              ? '[이미지]'
-              : img.attributes['alt']!,
+          _altText(img, inLink: recognizer != null),
           style: _leaf(style, bg),
         ),
       );
     }
     if (image == null) {
+      // Blocked, data:, unsupported scheme and count cap all land here and
+      // keep the enclosing link's tap handler.
+      final alt = _altText(img, inLink: recognizer != null);
       return TextSpan(
-        text: tooMany
-            ? '${img.attributes['alt'] ?? ''} [이미지 생략 / omitted]'
-            : img.attributes['alt'] ?? '',
+        text: tooMany ? '$alt [이미지 생략 / omitted]' : alt,
         style: _leaf(style, bg),
+        recognizer: recognizer,
+        mouseCursor: recognizer == null ? null : SystemMouseCursors.click,
       );
     }
     final onTap = recognizer?.onTap;
@@ -794,6 +796,12 @@ class _Renderer {
         'thead',
         'tfoot',
       }.contains(el.localName);
+
+  /// Alt text; a marker when empty inside a link so there is something to tap.
+  String _altText(dom.Element img, {required bool inLink}) {
+    final alt = img.attributes['alt'] ?? '';
+    return alt.trim().isEmpty && inLink ? '[이미지]' : alt;
+  }
 
   /// Finite positive size, capped; anything else (NaN, Infinity, 0, negative,
   /// percentages) is ignored.
@@ -862,7 +870,8 @@ class _Renderer {
             style = style.copyWith(backgroundColor: color);
           }
         case 'font-weight':
-          final bold = value == 'bold' ||
+          final bold =
+              value == 'bold' ||
               value == 'bolder' ||
               (int.tryParse(value) ?? 0) >= 600;
           style = style.copyWith(

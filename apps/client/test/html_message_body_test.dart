@@ -677,6 +677,30 @@ void main() {
     expect(find.textContaining('a${maxHtmlImages + 4}'), findsOneWidget);
   });
 
+  testWidgets('linked image beyond the count cap stays tappable', (
+    tester,
+  ) async {
+    Uri? opened;
+    final imgs = List.generate(
+      maxHtmlImages + 1,
+      (i) => '<a href="https://example.com/l$i">'
+          '<img alt="a$i" src="https://cdn.example.com/$i.png"></a>',
+    ).join();
+    await pump(
+      tester,
+      imgs,
+      launcher: (uri) async {
+        opened = uri;
+        return true;
+      },
+    );
+    final last = find.textContaining('a$maxHtmlImages', findRichText: true);
+    await tester.ensureVisible(last);
+    // The paragraph is full width; tap inside its first characters.
+    await tester.tapAt(tester.getTopLeft(last) + const Offset(5, 5));
+    expect(opened, Uri.parse('https://example.com/l$maxHtmlImages'));
+  });
+
   testWidgets('remote image decode is bounded in both dimensions', (
     tester,
   ) async {
