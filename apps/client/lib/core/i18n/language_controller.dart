@@ -229,4 +229,10 @@ class AppStrings {
       : 'Choose the display language for the app.';
   String failedToLoadInbox(Object error) =>
       _ko ? '받은편지함을 불러오지 못했습니다: $error' : 'Failed to load inbox: $error';
+  String authFailureWarning(List<String> failures) {
+    final names = failures.map((name) => name.toUpperCase()).join(', ');
+    return _ko
+        ? '발신자 인증 실패($names): 보낸 사람을 사칭한 메일일 수 있습니다. 링크와 첨부를 열지 마세요.'
+        : 'Sender authentication failed ($names): this message may be spoofed. Do not open links or attachments.';
+  }
 }

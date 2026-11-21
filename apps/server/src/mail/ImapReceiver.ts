@@ -1,6 +1,7 @@
 import { ImapFlow } from "imapflow";
 import type { FetchMessageObject, MessageStructureObject } from "imapflow";
 import { simpleParser } from "mailparser";
+import { parseAuthenticationFailures } from "./authenticationResults.js";
 import type { OAuthTokenManager } from "../auth/OAuthTokenManager.js";
 import type {
   IncomingMessageContent,
@@ -115,12 +116,16 @@ export class ImapReceiver implements MailReceiver {
       await client.mailboxOpen(mailbox, { readOnly: true });
       const message = await client.fetchOne(
         providerMessageId,
-        { bodyStructure: true },
+        { bodyStructure: true, headers: ["authentication-results"] },
         { uid: true }
       );
       if (!message || !message.bodyStructure) {
         throw new Error("Message body was not found on the IMAP server.");
       }
+      const authenticationFailures = parseAuthenticationFailures(
+        message.headers?.toString("utf8") ?? "",
+        account.providerId
+      );
 
       const bodyParts = selectBodyParts(message.bodyStructure);
       let htmlFallback: IncomingMessageContent | null = null;
@@ -141,7 +146,7 @@ export class ImapReceiver implements MailReceiver {
 
         if (bodyPart.type.toLowerCase() !== "text/html") {
           const text = cleanMessageText(decoded);
-          if (text) return { text, truncated, links: htmlLinks };
+          if (text) return { text, truncated, links: htmlLinks, authenticationFailures };
           continue;
         }
 
@@ -167,13 +172,19 @@ export class ImapReceiver implements MailReceiver {
           htmlFallback = {
             text,
             truncated,
-            links: htmlLinks
+            links: htmlLinks,
+            authenticationFailures
           };
         }
       }
 
       if (htmlFallback) return { ...htmlFallback, links: htmlLinks };
-      return { text: "", truncated: false, links: [] };
+      return {
+        text: "",
+        truncated: false,
+        links: [],
+        authenticationFailures
+      };
     } finally {
       await client.logout().catch(() => undefined);
     }

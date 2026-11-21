@@ -302,7 +302,8 @@ export async function registerRoutes(
       receivedAt: message.receivedAt.toISOString(),
       body: content.text,
       bodyTruncated: content.truncated,
-      bodyLinks: content.links
+      bodyLinks: content.links,
+      authenticationFailures: content.authenticationFailures ?? []
     };
   });
 
@@ -334,7 +335,8 @@ export async function registerRoutes(
       receivedAt: message.receivedAt.toISOString(),
       body: content.text,
       bodyTruncated: content.truncated,
-      bodyLinks: content.links
+      bodyLinks: content.links,
+      authenticationFailures: content.authenticationFailures ?? []
     };
   });
 
