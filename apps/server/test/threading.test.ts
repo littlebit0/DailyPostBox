@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { IncomingMessageSummary } from "../src/domain/types.js";
 import {
+  MAX_REFERENCES,
+  boundMessageId,
   computeThreadId,
   parseMessageIds,
   withThreadInfo
@@ -70,4 +72,25 @@ test("resolves In-Reply-To ancestry to a common root without References", () => 
 test("keeps the thread id short for very long message ids", () => {
   const id = computeThreadId({ messageId: `<${"a".repeat(300)}@x>` })!;
   assert.ok(id.length <= 100);
+});
+
+test("bounds a 4 MiB References header", () => {
+  const huge = "<a>".repeat((4 * 1024 * 1024) / 3);
+  const ids = parseMessageIds(huge);
+  assert.ok(ids.length <= MAX_REFERENCES);
+  assert.ok(JSON.stringify(ids).length < 4096);
+});
+
+test("keeps root and latest ids of a long chain, drops over-long ids", () => {
+  const chain = Array.from({ length: 100 }, (_, i) => `<m${i}@x>`).join(" ");
+  const ids = parseMessageIds(chain);
+  assert.equal(ids.length, MAX_REFERENCES);
+  assert.equal(ids[0], "<m0@x>");
+  assert.equal(ids.at(-1), "<m99@x>");
+  assert.deepEqual(parseMessageIds(`<${"a".repeat(2000)}> <ok@x>`), ["<ok@x>"]);
+});
+
+test("boundMessageId drops over-long values", () => {
+  assert.equal(boundMessageId("<a@x>"), "<a@x>");
+  assert.equal(boundMessageId(`<${"a".repeat(5000)}>`), undefined);
 });

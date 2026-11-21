@@ -18,7 +18,7 @@ import {
 } from "./imapSequenceRanges.js";
 import { isAuthenticationFailure } from "./authenticationFailure.js";
 import { extractMessageLinks } from "./messageLinks.js";
-import { parseMessageIds } from "./threading.js";
+import { MAX_HEADER_BYTES, boundMessageId, parseMessageIds } from "./threading.js";
 
 export class ImapReceiver implements MailReceiver {
   private static readonly maxBodyBytes = 2 * 1024 * 1024;
@@ -359,9 +359,11 @@ function toIncomingMessage(
     subject: envelope.subject ?? "",
     receivedAt: envelope.date instanceof Date ? envelope.date : new Date(),
     hasAttachments: false,
-    messageId: envelope.messageId,
-    inReplyTo: envelope.inReplyTo,
-    references: parseMessageIds(message.headers?.toString("utf8")),
+    messageId: boundMessageId(envelope.messageId),
+    inReplyTo: boundMessageId(envelope.inReplyTo),
+    references: parseMessageIds(
+      message.headers?.subarray(0, MAX_HEADER_BYTES).toString("utf8")
+    ),
     gmailThreadId: message.threadId
   };
 }

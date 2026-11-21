@@ -40,8 +40,24 @@ function resolveRoot(
   return root;
 }
 
+// Bounds on untrusted header input: raw bytes parsed, one id's length (RFC 5322
+// line limit) and ids kept. Threading needs only the root (first) and the
+// nearest ancestors (last), so the middle of a huge chain is dropped.
+export const MAX_HEADER_BYTES = 16 * 1024;
+export const MAX_MESSAGE_ID_LENGTH = 998;
+export const MAX_REFERENCES = 20;
+
 export function parseMessageIds(value: string | undefined): string[] {
-  return value?.match(/<[^<>\s]+>/g) ?? [];
+  const ids =
+    value?.slice(0, MAX_HEADER_BYTES).match(/<[^<>\s]{1,996}>/g) ?? [];
+  return ids.length > MAX_REFERENCES
+    ? [ids[0]!, ...ids.slice(ids.length - (MAX_REFERENCES - 1))]
+    : ids;
+}
+
+// Single Message-ID / In-Reply-To value; over-long ones are dropped.
+export function boundMessageId(value: string | undefined): string | undefined {
+  return value && value.length <= MAX_MESSAGE_ID_LENGTH ? value : undefined;
 }
 
 // Adds threadId and a per-thread message count to each summary.
