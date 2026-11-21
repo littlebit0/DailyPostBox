@@ -52,18 +52,17 @@ export class ImapReceiver implements MailReceiver {
     account: MailAccount,
     mailbox: string,
     limit: number | "all",
-    onBatch: (messages: IncomingMessageSummary[]) => Promise<void>
+    onBatch: (messages: IncomingMessageSummary[]) => Promise<void>,
+    afterUid?: number
   ): Promise<void> {
     const initial = await this.withConnectionRetry(async () => {
       return this.withConnectedClient(account, async (client) => {
         const openedMailbox = await client.mailboxOpen(mailbox, {
           readOnly: true
         });
-        const uids = await this.searchLatestUids(
-          client,
-          openedMailbox.exists,
-          limit
-        );
+        const uids = afterUid === undefined
+          ? await this.searchLatestUids(client, openedMailbox.exists, limit)
+          : await this.searchUidsAfter(client, afterUid);
         const batches = newestFirstUidBatches(uids, limit);
         const firstUids = batches.at(0);
 
@@ -287,6 +286,15 @@ export class ImapReceiver implements MailReceiver {
     const query = latestUidSearchQuery(exists, limit);
     if (!query) return [];
     return (await client.search(query, { uid: true })) || [];
+  }
+
+  private async searchUidsAfter(
+    client: ImapFlow,
+    afterUid: number
+  ): Promise<number[]> {
+    // "n:*" always matches the newest message even when its UID is below n.
+    const uids = (await client.search({ uid: `${afterUid + 1}:*` }, { uid: true })) || [];
+    return uids.filter((uid) => uid > afterUid);
   }
 
   private async fetchUids(

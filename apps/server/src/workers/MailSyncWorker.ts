@@ -88,6 +88,9 @@ export class MailSyncWorker {
   private async performSync(account: MailAccount, token: object): Promise<void> {
     const isCurrent = () => this.syncTokens.get(account.id) === token;
     const limit = this.initialSyncLimit(account);
+    const afterUid = account.lastSyncedAt
+      ? await this.newestStoredUid(account)
+      : undefined;
     account.syncStatus = "syncing";
     account.syncError = undefined;
     account.syncErrorCode = undefined;
@@ -106,7 +109,8 @@ export class MailSyncWorker {
                   this.handleIncoming(account, message, false)
                 )
               );
-            }
+            },
+            afterUid
           );
         } else {
           const messages = await this.pop3.fetchLatest(
@@ -208,6 +212,7 @@ export class MailSyncWorker {
       }, delayMs);
     };
 
+    let connectedBefore = false;
     const connect = async (): Promise<void> => {
       if (stopped) return;
 
@@ -219,6 +224,9 @@ export class MailSyncWorker {
           scheduleReconnect
         );
         reconnectDelay = this.options.imapReconnectBaseDelayMs;
+        // Mail that arrived while disconnected raised no IDLE event.
+        if (connectedBefore) void this.syncAccount(account).catch(() => undefined);
+        connectedBefore = true;
       } catch (error) {
         scheduleReconnect(error instanceof Error ? error : new Error(String(error)));
       }
@@ -262,6 +270,21 @@ export class MailSyncWorker {
         error: error instanceof Error ? error.message : String(error)
       });
     });
+  }
+
+  // Resyncs continue after the newest saved UID so no gap is skipped,
+  // however many messages arrived while the server was disconnected.
+  private async newestStoredUid(account: MailAccount): Promise<number | undefined> {
+    const uids = (await this.accounts.listInbox(account.userId))
+      .filter((message) =>
+        message.accountId === account.id && message.mailbox === this.options.mailbox
+      )
+      .map((message) => Number(message.providerMessageId))
+      .filter(Number.isSafeInteger);
+    // reduce, not Math.max(...uids): full imports can exceed the arg limit.
+    return uids.length > 0
+      ? uids.reduce((newest, uid) => Math.max(newest, uid))
+      : undefined;
   }
 
   private initialSyncLimit(account: MailAccount): number | "all" | 0 {

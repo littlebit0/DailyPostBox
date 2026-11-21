@@ -219,3 +219,108 @@ test("a failing push does not disturb mail handling", async () => {
     await syncWorker.stop();
   }
 });
+
+function storedMessage(accountId: string, uid: string): IncomingMessageSummary {
+  return {
+    accountId,
+    providerMessageId: uid,
+    mailbox: "INBOX",
+    from: "a@example.com",
+    subject: `message ${uid}`,
+    receivedAt: new Date(),
+    hasAttachments: false
+  };
+}
+
+test("a resync fetches everything after the newest saved UID", async () => {
+  const repository = new InMemoryAccountRepository();
+  const mailAccount = account();
+  await repository.addAccount(mailAccount);
+  await repository.saveIncomingMessage(storedMessage(mailAccount.id, "40"));
+  await repository.saveIncomingMessage(storedMessage(mailAccount.id, "41"));
+  await repository.saveIncomingMessage(storedMessage("other-account", "900"));
+  const calls: Array<{ limit: unknown; afterUid: unknown }> = [];
+  const imap = {
+    watch: async () => async () => undefined,
+    fetchLatestBatches: async (
+      _account: MailAccount,
+      _mailbox: string,
+      limit: number | "all",
+      _onBatch: unknown,
+      afterUid?: number
+    ) => {
+      calls.push({ limit, afterUid });
+    }
+  };
+  const syncWorker = worker(repository, imap);
+
+  try {
+    await syncWorker.syncAccount(mailAccount);
+    assert.deepEqual(calls, [{ limit: 25, afterUid: 41 }]);
+  } finally {
+    await syncWorker.stop();
+  }
+});
+
+test("the first import keeps the chosen limit", async () => {
+  const repository = new InMemoryAccountRepository();
+  const mailAccount = account();
+  mailAccount.lastSyncedAt = undefined;
+  mailAccount.initialSync = { includePreviousMessages: true, limit: 500 };
+  await repository.addAccount(mailAccount);
+  const calls: Array<{ limit: unknown; afterUid: unknown }> = [];
+  const imap = {
+    watch: async () => async () => undefined,
+    fetchLatestBatches: async (
+      _account: MailAccount,
+      _mailbox: string,
+      limit: number | "all",
+      _onBatch: unknown,
+      afterUid?: number
+    ) => {
+      calls.push({ limit, afterUid });
+    }
+  };
+  const syncWorker = worker(repository, imap);
+
+  try {
+    await syncWorker.syncAccount(mailAccount);
+    assert.deepEqual(calls, [{ limit: 500, afterUid: undefined }]);
+  } finally {
+    await syncWorker.stop();
+  }
+});
+
+test("an IDLE reconnect syncs the mail that arrived while disconnected", async () => {
+  const repository = new InMemoryAccountRepository();
+  const mailAccount = account();
+  await repository.addAccount(mailAccount);
+  let disconnect: ((error: Error) => void) | undefined;
+  let syncs = 0;
+  const imap = {
+    watch: async (
+      _account: MailAccount,
+      _mailbox: string,
+      _onMessage: unknown,
+      onDisconnect: (error: Error) => void
+    ) => {
+      disconnect = onDisconnect;
+      return async () => undefined;
+    },
+    fetchLatestBatches: async () => {
+      syncs += 1;
+    }
+  };
+  const syncWorker = worker(repository, imap);
+
+  try {
+    await syncWorker.startAccount(mailAccount);
+    assert.equal(syncs, 1);
+
+    disconnect!(new Error("IMAP connection closed."));
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.equal(syncs, 2);
+  } finally {
+    await syncWorker.stop();
+  }
+});
