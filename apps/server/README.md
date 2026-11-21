@@ -102,7 +102,6 @@ Gmail 전체 메일 접근 권한으로 공개 배포하려면 Google의 OAuth �
 - `GET /auth/sessions/:state`
 - `POST /auth/sessions/:state/complete`
 - `GET /mail/inbox`
-- `GET /mail/messages/:id`
 - `POST /mail/send`
 - `POST /devices/push-token`
 
