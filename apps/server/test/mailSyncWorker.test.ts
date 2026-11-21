@@ -379,3 +379,34 @@ test("an IDLE reconnect syncs the mail that arrived while disconnected", async (
     await syncWorker.stop();
   }
 });
+
+test("a reconnect after a failed first watch still catches up", async () => {
+  const repository = new InMemoryAccountRepository();
+  const mailAccount = account();
+  await repository.addAccount(mailAccount);
+  let watchCalls = 0;
+  let syncs = 0;
+  const imap = {
+    watch: async () => {
+      watchCalls += 1;
+      if (watchCalls === 1) throw new Error("Connection refused");
+      return async () => undefined;
+    },
+    fetchLatestBatches: async () => {
+      syncs += 1;
+      // The server is still down for the initial sync too.
+      if (syncs === 1) throw new Error("Connection refused");
+      return { uidValidity: "7", highestUid: 41 };
+    }
+  };
+  const syncWorker = worker(repository, imap);
+
+  try {
+    await syncWorker.startAccount(mailAccount);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.equal(watchCalls, 2);
+    assert.equal(syncs, 2);
+  } finally {
+    await syncWorker.stop();
+  }
+});

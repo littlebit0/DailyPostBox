@@ -222,9 +222,13 @@ export class MailSyncWorker {
       }, delayMs);
     };
 
-    let connectedBefore = false;
+    // startAccount syncs right after the first attempt; every later attempt
+    // (a reconnect, even if the first one failed) must catch up itself.
+    let firstAttempt = true;
     const connect = async (): Promise<void> => {
       if (stopped) return;
+      const catchUp = !firstAttempt;
+      firstAttempt = false;
 
       try {
         activeStop = await this.imap.watch?.(
@@ -235,8 +239,7 @@ export class MailSyncWorker {
         );
         reconnectDelay = this.options.imapReconnectBaseDelayMs;
         // Mail that arrived while disconnected raised no IDLE event.
-        if (connectedBefore) void this.syncAccount(account).catch(() => undefined);
-        connectedBefore = true;
+        if (catchUp) void this.syncAccount(account).catch(() => undefined);
       } catch (error) {
         scheduleReconnect(error instanceof Error ? error : new Error(String(error)));
       }
