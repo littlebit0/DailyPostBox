@@ -176,6 +176,12 @@ class MailApiClient {
     await _dio.post('/accounts/$accountId/sync');
   }
 
+  Future<void> setAccountNotifications(String accountId, bool enabled) async {
+    await _dio.patch('/accounts/$accountId/notifications', data: {
+      'enabled': enabled,
+    });
+  }
+
   Future<void> deleteAccount(String accountId) async {
     await _dio.delete('/accounts/$accountId');
   }
@@ -338,6 +344,7 @@ class MailAccountSummary {
     this.syncErrorCode,
     required this.initialSync,
     required this.lastSyncedAtLabel,
+    this.notificationsEnabled = true,
   });
 
   final String id;
@@ -350,6 +357,7 @@ class MailAccountSummary {
   final String? syncErrorCode;
   final InitialSyncOption? initialSync;
   final String lastSyncedAtLabel;
+  final bool notificationsEnabled;
 
   factory MailAccountSummary.fromJson(Map<String, dynamic> json) {
     return MailAccountSummary(
@@ -366,6 +374,7 @@ class MailAccountSummary {
               json['initialSync'] as Map<String, dynamic>)
           : null,
       lastSyncedAtLabel: _formatReceivedAt(json['lastSyncedAt'] as String?),
+      notificationsEnabled: json['notificationsEnabled'] as bool? ?? true,
     );
   }
 }

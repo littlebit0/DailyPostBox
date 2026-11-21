@@ -448,6 +448,17 @@ class _AccountDetail extends ConsumerWidget {
           ],
         ),
         const SizedBox(height: 16),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: Text(strings.accountNotifications),
+          value: account.notificationsEnabled,
+          onChanged: (enabled) async {
+            await ref
+                .read(mailApiClientProvider)
+                .setAccountNotifications(account.id, enabled);
+            ref.invalidate(accountsProvider);
+          },
+        ),
         _InfoRow(
           label: strings.lastSynced,
           value: account.lastSyncedAtLabel.isEmpty
