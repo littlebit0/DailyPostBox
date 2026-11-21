@@ -791,15 +791,18 @@ class _OAuthSetupDialogState extends ConsumerState<_OAuthSetupDialog> {
               const SizedBox(height: 6),
               Text(strings.finishSetupDescription),
               const SizedBox(height: 16),
-              SegmentedButton<String>(
-                segments: const [
-                  ButtonSegment(value: 'imap', label: Text('IMAP')),
-                  ButtonSegment(value: 'pop3', label: Text('POP3')),
-                ],
-                selected: {_protocol},
-                onSelectionChanged: _busy
-                    ? null
-                    : (value) => setState(() => _protocol = value.first),
+              Semantics(
+                label: strings.protocol,
+                child: SegmentedButton<String>(
+                  segments: const [
+                    ButtonSegment(value: 'imap', label: Text('IMAP')),
+                    ButtonSegment(value: 'pop3', label: Text('POP3')),
+                  ],
+                  selected: {_protocol},
+                  onSelectionChanged: _busy
+                      ? null
+                      : (value) => setState(() => _protocol = value.first),
+                ),
               ),
               const SizedBox(height: 20),
               Text(strings.importPreviousMail,

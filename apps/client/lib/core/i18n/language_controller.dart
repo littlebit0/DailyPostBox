@@ -51,6 +51,16 @@ class AppStrings {
   String get to => _ko ? '받는 사람' : 'To';
   String get subject => _ko ? '제목' : 'Subject';
   String get body => _ko ? '내용' : 'Message';
+  String get unreadState => _ko ? '안 읽음' : 'Unread';
+  String get readState => _ko ? '읽음' : 'Read';
+  String get sidebarLabel => _ko ? '사이드바' : 'Sidebar';
+  String mailRowLabel({
+    required bool unread,
+    required String sender,
+    required String subject,
+    required String receivedAt,
+  }) =>
+      '${unread ? unreadState : readState}, $sender, $subject, $receivedAt';
   String get emptyInboxTitle => _ko ? '받은 메일이 없습니다' : 'No messages yet';
   String get emptyInboxDescription => _ko
       ? '계정을 추가하면 IMAP 실시간 수신 또는 POP3 동기화로 새 메일이 여기에 표시됩니다.'

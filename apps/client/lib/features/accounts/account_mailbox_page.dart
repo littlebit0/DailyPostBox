@@ -233,27 +233,40 @@ class _MailboxContentState extends ConsumerState<_MailboxContent> {
                 separatorBuilder: (context, index) => const Divider(height: 1),
                 itemBuilder: (context, index) {
                   final message = items[index];
-                  return ListTile(
-                    minLeadingWidth: 28,
-                    leading: Icon(
-                      message.unread
-                          ? Icons.mark_email_unread_outlined
-                          : Icons.mail_outline,
+                  void open() => context.go(
+                        '/accounts/${account.id}/messages/${Uri.encodeComponent(message.id)}',
+                        extra: const {'disableTransition': true},
+                      );
+                  // One spoken label: state, sender, subject, time.
+                  return Semantics(
+                    button: true,
+                    label: strings.mailRowLabel(
+                      unread: message.unread,
+                      sender: message.sender,
+                      subject: message.subject,
+                      receivedAt: message.receivedAtLabel,
                     ),
-                    title: Text(
-                      message.subject,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    subtitle: Text(
-                      '${message.sender}\n${message.snippet}',
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    trailing: Text(message.receivedAtLabel),
-                    onTap: () => context.go(
-                      '/accounts/${account.id}/messages/${Uri.encodeComponent(message.id)}',
-                      extra: const {'disableTransition': true},
+                    onTap: open,
+                    excludeSemantics: true,
+                    child: ListTile(
+                      minLeadingWidth: 28,
+                      leading: Icon(
+                        message.unread
+                            ? Icons.mark_email_unread_outlined
+                            : Icons.mail_outline,
+                      ),
+                      title: Text(
+                        message.subject,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      subtitle: Text(
+                        '${message.sender}\n${message.snippet}',
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      trailing: Text(message.receivedAtLabel),
+                      onTap: open,
                     ),
                   );
                 },
