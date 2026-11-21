@@ -28,7 +28,8 @@ void main() {
       const MaterialApp(
         home: Scaffold(
           body: HtmlMessageBody(
-            html: '<h1>Receipt</h1><p>Hello <b>bold</b></p>'
+            html:
+                '<h1>Receipt</h1><p>Hello <b>bold</b></p>'
                 '<table><tr><td>Item</td><td>1,000</td></tr></table>'
                 '<ul><li>one</li></ul>',
           ),
@@ -52,7 +53,8 @@ void main() {
       MaterialApp(
         home: Scaffold(
           body: HtmlMessageBody(
-            html: '<a href="javascript:alert(1)">bad</a> '
+            html:
+                '<a href="javascript:alert(1)">bad</a> '
                 '<a href="https://example.com/x">good</a>',
             linkLauncher: (uri) async {
               opened = uri;
@@ -269,7 +271,8 @@ void main() {
   testWidgets('wide colspan tables over the slot budget fall back to text', (
     tester,
   ) async {
-    final html = '<table><tr>${'<td colspan="20">a</td>' * 1000}</tr>'
+    final html =
+        '<table><tr>${'<td colspan="20">a</td>' * 1000}</tr>'
         '${'<tr><td>b</td></tr>' * 1000}</table>';
     await pump(tester, html);
     expect(tester.takeException(), isNull);
@@ -462,9 +465,8 @@ void main() {
     return out;
   }
 
-  TextStyle? leafStyle(WidgetTester tester, String text) => allSpans(
-        tester,
-      ).lastWhere((s) => s.text == text).style;
+  TextStyle? leafStyle(WidgetTester tester, String text) =>
+      allSpans(tester).lastWhere((s) => s.text == text).style;
 
   testWidgets('auto-detected url keeps contrast against its background', (
     tester,
@@ -475,8 +477,9 @@ void main() {
       tester,
       '<div style="background-color:#$hex"><p>https://example.com/a</p></div>',
     );
-    final style =
-        allSpans(tester).firstWhere((s) => s.recognizer != null).style!;
+    final style = allSpans(
+      tester,
+    ).firstWhere((s) => s.recognizer != null).style!;
     expect(style.color, isNot(primary));
     expect(style.decorationColor, isNot(primary));
     expect(style.decoration, TextDecoration.underline);
@@ -539,7 +542,8 @@ void main() {
   testWidgets('table slots count toward the whole-body work budget', (
     tester,
   ) async {
-    final table = '<table><tr>${'<td>a</td>' * 99}</tr>'
+    final table =
+        '<table><tr>${'<td>a</td>' * 99}</tr>'
         '${'<tr><td>b</td></tr>' * 99}</table>';
     await pump(tester, table);
     expect(find.byType(Table), findsOneWidget);
@@ -565,6 +569,29 @@ void main() {
       tester.widget<Text>(find.text('x' * 4000)).style?.color,
       Colors.black87,
     );
+  });
+
+  testWidgets('oversized table fallback corrects text against outer bg', (
+    tester,
+  ) async {
+    final html =
+        '<table style="background-color:#000000;color:#ffffff">'
+        '<tr>${'<td colspan="20">a</td>' * 1000}</tr>'
+        '${'<tr><td>b</td></tr>' * 1000}</table>';
+    await pump(tester, html);
+    expect(find.byType(Table), findsNothing);
+    final text = tester.widget<Text>(find.byType(Text));
+    expect(text.style?.color, Colors.black87);
+  });
+
+  testWidgets('image alt text keeps contrast against its background', (
+    tester,
+  ) async {
+    await pump(
+      tester,
+      '<p style="color:#ffffff"><img alt="altx" src="cid:1"></p>',
+    );
+    expect(textColor(tester, 'altx'), Colors.black87);
   });
 
   testWidgets('image scheme check ignores case', (tester) async {

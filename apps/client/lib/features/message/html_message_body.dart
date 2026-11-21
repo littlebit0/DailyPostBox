@@ -174,23 +174,23 @@ class _Renderer {
 
   /// Style declarations of an element, parsed once and capped in size.
   List<(String, String)> _decls(dom.Element el) => _declCache[el] ??= () {
-        final raw = el.attributes['style'] ?? '';
-        final out = <(String, String)>[];
-        final parts = raw
-            .substring(0, math.min(raw.length, maxHtmlStyleLength))
-            .split(';');
-        for (final declaration in parts) {
-          _tick();
-          if (out.length >= maxHtmlStyleDeclarations) break;
-          final index = declaration.indexOf(':');
-          if (index < 0) continue;
-          out.add((
-            declaration.substring(0, index).trim().toLowerCase(),
-            declaration.substring(index + 1).trim().toLowerCase(),
-          ));
-        }
-        return out;
-      }();
+    final raw = el.attributes['style'] ?? '';
+    final out = <(String, String)>[];
+    final parts = raw
+        .substring(0, math.min(raw.length, maxHtmlStyleLength))
+        .split(';');
+    for (final declaration in parts) {
+      _tick();
+      if (out.length >= maxHtmlStyleDeclarations) break;
+      final index = declaration.indexOf(':');
+      if (index < 0) continue;
+      out.add((
+        declaration.substring(0, index).trim().toLowerCase(),
+        declaration.substring(index + 1).trim().toLowerCase(),
+      ));
+    }
+    return out;
+  }();
 
   /// [bg] is the background actually painted behind the content: the nearest
   /// widget/decoration color passed down, overridden for text by an inline
@@ -368,8 +368,9 @@ class _Renderer {
           child: _column(el, style, bg, align, recognizer),
         );
       default:
-        final spacing =
-            (tag == 'p' || (tag?.startsWith('h') ?? false)) ? 6.0 : 0.0;
+        final spacing = (tag == 'p' || (tag?.startsWith('h') ?? false))
+            ? 6.0
+            : 0.0;
         return _paint(
           el,
           Padding(
@@ -443,7 +444,8 @@ class _Renderer {
     // Every row builds `columns` children, so spans can blow up the count
     // even when the element count is small.
     if (rows.length * columns > maxHtmlTableSlots) {
-      return Text(table.text, style: style);
+      // The table background is dropped here, so correct against [outer].
+      return Text(table.text, style: _fix(style, outer));
     }
     // Slots count toward the whole-body budget, not just this table.
     _tick(rows.length * columns);
@@ -611,7 +613,7 @@ class _Renderer {
       case 'br':
         out.add(const TextSpan(text: '\n'));
       case 'img':
-        out.add(_image(node, recognizer));
+        out.add(_image(node, style, bg, recognizer));
       case 'a':
         final (linkStyle, linkRecognizer) = _link(node, style);
         if (_hasBlock(node)) {
@@ -648,13 +650,13 @@ class _Renderer {
 
   /// Whitespace mode of an element, inherited and computed once per element.
   String _whiteSpace(dom.Element el) => _whiteSpaceCache[el] ??= () {
-        var mode = el.localName == 'pre' ? 'pre' : null;
-        for (final (prop, value) in _decls(el)) {
-          if (prop == 'white-space') mode = value;
-        }
-        final parent = el.parent;
-        return mode ?? (parent == null ? 'normal' : _whiteSpace(parent));
-      }();
+    var mode = el.localName == 'pre' ? 'pre' : null;
+    for (final (prop, value) in _decls(el)) {
+      if (prop == 'white-space') mode = value;
+    }
+    final parent = el.parent;
+    return mode ?? (parent == null ? 'normal' : _whiteSpace(parent));
+  }();
 
   /// Collapses whitespace unless the element is `<pre>` or `white-space: pre*`.
   String _collapse(dom.Text node) {
@@ -670,7 +672,12 @@ class _Renderer {
     return node.text.replaceAll(RegExp(r'\s+'), ' ');
   }
 
-  InlineSpan _image(dom.Element img, TapGestureRecognizer? recognizer) {
+  InlineSpan _image(
+    dom.Element img,
+    TextStyle style,
+    Color bg,
+    TapGestureRecognizer? recognizer,
+  ) {
     final src = img.attributes['src'] ?? '';
     final width = _imageSize(img.attributes['width']);
     final height = _imageSize(img.attributes['height']);
@@ -688,7 +695,12 @@ class _Renderer {
         errorBuilder: (_, __, ___) => const SizedBox.shrink(),
       );
     }
-    if (image == null) return TextSpan(text: img.attributes['alt'] ?? '');
+    if (image == null) {
+      return TextSpan(
+        text: img.attributes['alt'] ?? '',
+        style: _leaf(style, bg),
+      );
+    }
     final onTap = recognizer?.onTap;
     return WidgetSpan(
       alignment: PlaceholderAlignment.middle,
@@ -782,7 +794,8 @@ class _Renderer {
             style = style.copyWith(backgroundColor: color);
           }
         case 'font-weight':
-          final bold = value == 'bold' ||
+          final bold =
+              value == 'bold' ||
               value == 'bolder' ||
               (int.tryParse(value) ?? 0) >= 600;
           style = style.copyWith(
