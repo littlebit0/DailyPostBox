@@ -1,5 +1,3 @@
-import 'dart:convert';
-
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:html/dom.dart' as dom;
@@ -483,25 +481,18 @@ class _Renderer {
     final height = double.tryParse(img.attributes['height'] ?? '');
     Widget? image;
 
-    if (src.startsWith('data:image/')) {
-      final comma = src.indexOf(',');
-      try {
-        final bytes = base64.decode(
-          src.substring(comma + 1).replaceAll(RegExp(r'\s'), ''),
-        );
-        image = Image.memory(bytes, width: width, height: height);
-      } on FormatException {
-        image = null;
-      }
-    } else if (src.startsWith('http://') || src.startsWith('https://')) {
+    // data: URIs are never decoded: a tiny PNG can claim a huge pixel size.
+    if (src.startsWith('http://') || src.startsWith('https://')) {
       image = Image.network(
         src,
         width: width,
         height: height,
+        // Caps decoded size (2x the 600px max layout width); keeps aspect ratio.
+        cacheWidth: 1200,
         errorBuilder: (_, __, ___) => const SizedBox.shrink(),
       );
     }
-    if (image == null) return const TextSpan();
+    if (image == null) return TextSpan(text: img.attributes['alt'] ?? '');
     final onTap = recognizer?.onTap;
     return WidgetSpan(
       alignment: PlaceholderAlignment.middle,

@@ -47,7 +47,6 @@ const allowedStyleProps = new Set([
   "text-transform", "border", "border-top", "border-bottom", "border-left",
   "border-right", "border-collapse", "border-radius"
 ]);
-const dataImagePattern = /^data:image\/(?:png|gif|jpe?g|webp);base64,[a-z0-9+/=\s]+$/i;
 const safeAttrValue = /^[\w\s#%.,:/()\-+]*$/;
 const maxDepth = 100;
 // More elements than this means a pathological mail: return no HTML so the
@@ -110,16 +109,13 @@ function serializeElement(el: Element, state: State, depth: number): string {
 function serializeImage(el: Element, state: State): string {
   const src = (el.attribs.src ?? "").trim();
   const alt = el.attribs.alt ?? "";
-  if (dataImagePattern.test(src)) {
-    return `<img src="${escapeAttr(src)}"${serializeAttributes("img", el.attribs)}>`;
-  }
   if (/^(?:https?:)?\/\//i.test(src)) {
     state.remoteImageCount += 1;
     if (state.allowRemote && /^https?:\/\//i.test(src)) {
       return `<img src="${escapeAttr(src)}"${serializeAttributes("img", el.attribs)}>`;
     }
   }
-  // Blocked, cid: and unknown sources: keep only the alt text.
+  // Blocked, data:, cid: and unknown sources (data: can claim a huge decoded size): keep only the alt text.
   return escapeText(alt);
 }
 

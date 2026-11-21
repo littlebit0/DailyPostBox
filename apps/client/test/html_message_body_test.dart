@@ -142,9 +142,8 @@ void main() {
     Uri? opened;
     await pump(
       tester,
-      '<a href="https://example.com/go"><img src="data:image/png;base64,'
-      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/'
-      'iZk9HQAAAABJRU5ErkJggg==" width="40" height="40"></a>',
+      '<a href="https://example.com/go">'
+      '<img src="https://img.example/a.png" width="40" height="40"></a>',
       launcher: (uri) async {
         opened = uri;
         return true;
@@ -152,6 +151,15 @@ void main() {
     );
     await tester.tap(find.byType(Image));
     expect(opened, Uri.parse('https://example.com/go'));
+  });
+
+  testWidgets('data uri image is not decoded, alt text is shown', (tester) async {
+    await pump(
+      tester,
+      '<p><img src="data:image/png;base64,iVBORw0KGgo=" alt="pic"></p>',
+    );
+    expect(find.byType(Image), findsNothing);
+    expect(find.textContaining('pic', findRichText: true), findsOneWidget);
   });
 
   testWidgets('pre keeps line breaks and spacing, normal text collapses', (

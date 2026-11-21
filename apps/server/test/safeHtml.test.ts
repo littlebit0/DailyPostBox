@@ -75,10 +75,11 @@ test("remote http(s) images survive only when explicitly allowed", () => {
   assert.equal(html, '<img src="https://t.example/p.png">');
 });
 
-test("keeps inline data images and drops svg data images", () => {
+test("strips data images to alt text and does not count them as remote", () => {
   const png = "data:image/png;base64,iVBORw0KGgo=";
-  assert.equal(clean(`<img src="${png}" alt="x">`).html, `<img src="${png}" alt="x">`);
-  assert.equal(clean('<img src="data:image/svg+xml;base64,PHN2Zz4=">').html, "");
+  const r = clean(`<img src="${png}" alt="x"><img src="data:image/svg+xml;base64,PHN2Zz4=">`);
+  assert.equal(r.html, "x");
+  assert.equal(r.remoteImageCount, 0);
 });
 
 test("escapes entities so decoded markup cannot reappear", () => {
