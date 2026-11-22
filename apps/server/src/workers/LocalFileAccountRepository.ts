@@ -2,7 +2,7 @@ import { dirname } from "node:path";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import type { IncomingMessageSummary, MailAccount } from "../domain/types.js";
 import type { PushTarget } from "../notifications/PushNotifier.js";
-import type { AccountRepository } from "./AccountRepository.js";
+import { addSentRecipients, type AccountRepository, type SentRecipient } from "./AccountRepository.js";
 
 type StoredAccount = Omit<MailAccount, "createdAt" | "updatedAt" | "lastSyncedAt"> & {
   createdAt: string;
@@ -14,16 +14,20 @@ type StoredMessage = Omit<IncomingMessageSummary, "receivedAt"> & {
   receivedAt: string;
 };
 
+type StoredSentRecipient = Omit<SentRecipient, "lastSentAt"> & { lastSentAt: string };
+
 interface StoredState {
   accounts: StoredAccount[];
   messages: StoredMessage[];
   pushTargets: PushTarget[];
+  sentRecipients?: StoredSentRecipient[];
 }
 
 export class LocalFileAccountRepository implements AccountRepository {
   private accounts: MailAccount[] = [];
   private readonly messages = new Map<string, IncomingMessageSummary>();
   private pushTargets: PushTarget[] = [];
+  private readonly sentRecipients = new Map<string, SentRecipient>();
   private loadPromise?: Promise<void>;
   private persistPromise?: Promise<void>;
   private dirty = false;
@@ -66,6 +70,9 @@ export class LocalFileAccountRepository implements AccountRepository {
 
     for (const [key, message] of this.messages) {
       if (message.accountId === accountId) this.messages.delete(key);
+    }
+    for (const [key, item] of this.sentRecipients) {
+      if (item.accountId === accountId) this.sentRecipients.delete(key);
     }
     await this.persist();
   }
@@ -125,6 +132,20 @@ export class LocalFileAccountRepository implements AccountRepository {
     return isNew;
   }
 
+  async recordSentRecipients(accountId: string, addresses: string[], sentAt: Date): Promise<void> {
+    await this.ensureLoaded();
+    addSentRecipients(this.sentRecipients, accountId, addresses, sentAt);
+    await this.persist();
+  }
+
+  async listSentRecipients(userId: string): Promise<SentRecipient[]> {
+    await this.ensureLoaded();
+    const accountIds = new Set(
+      this.accounts.filter((account) => account.userId === userId).map((account) => account.id)
+    );
+    return [...this.sentRecipients.values()].filter((item) => accountIds.has(item.accountId));
+  }
+
   private async ensureLoaded(): Promise<void> {
     this.loadPromise ??= this.load();
     await this.loadPromise;
@@ -141,6 +162,12 @@ export class LocalFileAccountRepository implements AccountRepository {
         lastSyncedAt: account.lastSyncedAt ? new Date(account.lastSyncedAt) : undefined
       }));
       this.pushTargets = state.pushTargets ?? [];
+      for (const item of state.sentRecipients ?? []) {
+        this.sentRecipients.set(`${item.accountId}:${item.address}`, {
+          ...item,
+          lastSentAt: new Date(item.lastSentAt)
+        });
+      }
       for (const message of state.messages ?? []) {
         if (message.providerMessageId === `welcome-${message.accountId}`) {
           continue;
@@ -184,7 +211,11 @@ export class LocalFileAccountRepository implements AccountRepository {
           ...message,
           receivedAt: message.receivedAt.toISOString()
         })),
-        pushTargets: this.pushTargets
+        pushTargets: this.pushTargets,
+        sentRecipients: [...this.sentRecipients.values()].map((item) => ({
+          ...item,
+          lastSentAt: item.lastSentAt.toISOString()
+        }))
       };
 
       await mkdir(dirname(this.filePath), { recursive: true, mode: 0o700 });

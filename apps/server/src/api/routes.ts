@@ -341,8 +341,7 @@ export async function registerRoutes(
 
   app.get("/contacts/suggest", async (request) => {
     const { q } = z.object({ q: z.string().default("") }).parse(request.query);
-    const messages = await deps.accounts.listInbox(demoUserId);
-    return suggestContacts(messages, q);
+    return suggestContacts(await deps.accounts.listSentRecipients(demoUserId), q);
   });
 
   app.post("/mail/send", async (request, reply) => {
@@ -354,6 +353,7 @@ export async function registerRoutes(
     }
 
     const result = await deps.sender.send(account, draft);
+    await deps.accounts.recordSentRecipients(account.id, result.accepted, new Date());
     return reply.code(202).send(result);
   });
 

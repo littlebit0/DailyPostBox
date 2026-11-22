@@ -1,29 +1,20 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { IncomingMessageSummary } from "../src/domain/types.js";
+import Fastify from "fastify";
+import type { IncomingMessageSummary, MailAccount } from "../src/domain/types.js";
 import { suggestContacts } from "../src/contacts/suggestContacts.js";
+import { InMemoryAccountRepository, type SentRecipient } from "../src/workers/AccountRepository.js";
 
-function message(from: string, day: number): IncomingMessageSummary {
-  return {
-    accountId: "a",
-    providerMessageId: `${from}-${day}`,
-    mailbox: "INBOX",
-    from,
-    subject: "",
-    receivedAt: new Date(Date.UTC(2026, 10, day)),
-    hasAttachments: false
-  };
+process.env.GOOGLE_OAUTH_CLIENT_ID ??= "test-client";
+const { registerRoutes } = await import("../src/api/routes.js");
+
+function sent(address: string, day: number, count = 1): SentRecipient {
+  return { accountId: "a", address, count, lastSentAt: new Date(Date.UTC(2026, 10, day)) };
 }
 
 test("ranks by frequency then recency and matches substrings case-insensitively", () => {
   const result = suggestContacts(
-    [
-      message("Alice@example.test", 1),
-      message("alice@example.test", 2),
-      message("alan@example.test", 20),
-      message("bob@example.test", 21),
-      message("carol@example.test, ALAN@example.test", 22)
-    ],
+    [sent("alice@example.test", 2, 2), sent("alan@example.test", 22, 2), sent("bob@example.test", 21)],
     "AL"
   );
   assert.deepEqual(
@@ -33,22 +24,80 @@ test("ranks by frequency then recency and matches substrings case-insensitively"
   assert.equal(result[0].lastSeenAt, "2026-11-22T00:00:00.000Z");
 });
 
-test("empty query, empty from and limit", () => {
-  assert.deepEqual(suggestContacts([message("a@example.test", 1)], " "), []);
-  assert.deepEqual(suggestContacts([message("", 1)], "a"), []);
-  const many = Array.from({ length: 5 }, (_, i) => message(`u${i}@example.test`, i + 1));
+test("empty query and limit", () => {
+  assert.deepEqual(suggestContacts([sent("a@example.test", 1)], " "), []);
+  const many = Array.from({ length: 5 }, (_, i) => sent(`u${i}@example.test`, i + 1));
   assert.equal(suggestContacts(many, "u", 3).length, 3);
 });
 
 test("excludes non-repliable addresses but keeps normal ones", () => {
   const blocked = [
-    "no_reply@email.apple.com", "noreply@x.test", "NoReply+tag@x.test", "no-reply@x.test",
+    "no_reply@email.apple.com", "noreply@x.test", "noreply+tag@x.test", "no-reply@x.test",
     "do.not.reply@x.test", "donotreply@x.test", "do-not-reply@x.test", "notreply@x.test",
-    "Mailer-Daemon@x.test", "postmaster@x.test", "bounce@x.test", "bounces+abc123@x.test"
+    "mailer-daemon@x.test", "postmaster@x.test", "bounce@x.test", "bounces+abc123@x.test"
   ];
   const result = suggestContacts(
-    [...blocked.map((from, i) => message(from, i + 1)), message("ann@example.test", 1), message("replyguy@x.test", 2)],
+    [...blocked.map((address, i) => sent(address, i + 1)), sent("ann@example.test", 1), sent("replyguy@x.test", 2)],
     "@"
   );
   assert.deepEqual(result.map((item) => item.address).sort(), ["ann@example.test", "replyguy@x.test"]);
+});
+
+test("suggests only sent recipients, never inbound senders", async () => {
+  const now = new Date();
+  const account: MailAccount = {
+    id: "account-1",
+    userId: "demo-user",
+    providerId: "custom",
+    emailAddress: "me@example.test",
+    authMode: "app-password",
+    incomingProtocol: "imap",
+    encryptedSecretRef: "secret",
+    syncStatus: "idle",
+    createdAt: now,
+    updatedAt: now
+  };
+  const accounts = new InMemoryAccountRepository();
+  await accounts.addAccount(account);
+  const inbound: IncomingMessageSummary = {
+    accountId: account.id,
+    providerMessageId: "m1",
+    mailbox: "INBOX",
+    from: "alice@company.test.evil.example",
+    subject: "",
+    receivedAt: now,
+    hasAttachments: false
+  };
+  await accounts.saveIncomingMessage(inbound);
+
+  const app = Fastify();
+  await registerRoutes(app, {
+    accounts,
+    validateAccount: async () => {},
+    startAccountSync: async () => {},
+    resumeAccountSync: async () => {},
+    stopAccountSync: async () => {},
+    sender: {
+      testConnection: async () => {},
+      send: async (_account, draft) => ({ accepted: draft.to, rejected: [] })
+    },
+    fetchMessageContent: async () => {
+      throw new Error("unused");
+    }
+  });
+
+  const suggest = async () =>
+    (await app.inject({ method: "GET", url: "/contacts/suggest?q=alice" })).json() as Array<{ address: string }>;
+  assert.deepEqual(await suggest(), []);
+
+  const send = await app.inject({
+    method: "POST",
+    url: "/mail/send",
+    payload: { accountId: account.id, to: ["Alice@company.test"], subject: "hi", text: "hi" }
+  });
+  assert.equal(send.statusCode, 202);
+  assert.deepEqual((await suggest()).map((item) => item.address), ["alice@company.test"]);
+
+  await accounts.deleteAccount(account.id);
+  assert.deepEqual(await accounts.listSentRecipients("demo-user"), []);
 });

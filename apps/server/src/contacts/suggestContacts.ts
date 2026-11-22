@@ -1,4 +1,4 @@
-import type { IncomingMessageSummary } from "../domain/types.js";
+import type { SentRecipient } from "../workers/AccountRepository.js";
 
 export interface ContactSuggestion {
   address: string;
@@ -13,9 +13,10 @@ function isNonRepliable(address: string): boolean {
   return /^(noreply|donotreply|notreply)/.test(local) || /^(mailerdaemon|postmaster|bounces?)$/.test(local);
 }
 
-// shortcut: only sender addresses of stored messages (no display names, no sent-mail recipients); add them when summaries store names.
+// Only addresses the user has sent to: inbound `From` is attacker-controlled and must not be suggested.
+// shortcut: no display names or saved address book; add them when the server stores them.
 export function suggestContacts(
-  messages: IncomingMessageSummary[],
+  recipients: SentRecipient[],
   query: string,
   limit = 8
 ): ContactSuggestion[] {
@@ -23,16 +24,14 @@ export function suggestContacts(
   if (!needle) return [];
 
   const stats = new Map<string, { count: number; last: Date }>();
-  for (const message of messages) {
-    for (const raw of message.from.split(",")) {
-      const address = raw.trim().toLowerCase();
-      if (!address.includes("@") || !address.includes(needle) || isNonRepliable(address)) continue;
-      const current = stats.get(address);
-      stats.set(address, {
-        count: (current?.count ?? 0) + 1,
-        last: current && current.last > message.receivedAt ? current.last : message.receivedAt
-      });
-    }
+  for (const recipient of recipients) {
+    const address = recipient.address;
+    if (!address.includes(needle) || isNonRepliable(address)) continue;
+    const current = stats.get(address);
+    stats.set(address, {
+      count: (current?.count ?? 0) + recipient.count,
+      last: current && current.last > recipient.lastSentAt ? current.last : recipient.lastSentAt
+    });
   }
 
   return [...stats.entries()]

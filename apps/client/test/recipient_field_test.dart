@@ -55,6 +55,31 @@ void main() {
     expect(addresses, ['alan@example.test']);
   });
 
+  testWidgets('Enter keeps a fully typed address over a lookalike suggestion',
+      (tester) async {
+    final addresses = <String>[];
+    final controller = TextEditingController();
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: RecipientField(
+          label: 'To',
+          errorText: 'bad',
+          suggest: (q) async => ['alice@company.test.evil.example'],
+          addresses: addresses,
+          controller: controller,
+        ),
+      ),
+    ));
+
+    await tester.enterText(find.byType(TextField), 'alice@company.test');
+    await tester.pumpAndSettle();
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pumpAndSettle();
+    await tester.pumpAndSettle();
+    expect(addresses, ['alice@company.test']);
+  });
+
   testWidgets('scrolls the keyboard-highlighted suggestion into view',
       (tester) async {
     final suggestions = [for (var i = 0; i < 8; i++) 'user$i@example.test'];

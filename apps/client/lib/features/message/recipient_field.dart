@@ -71,7 +71,12 @@ class _RecipientFieldState extends State<RecipientField> {
     try {
       final result = await widget.suggest(query);
       if (request != _request) return const [];
-      return result.where((item) => !_addresses.contains(item));
+      final options = result.where((item) => !_addresses.contains(item));
+      // A fully typed address stays first so Enter never swaps it for a lookalike.
+      if (!isValidEmailAddress(query) || _addresses.contains(query)) {
+        return options;
+      }
+      return [query, ...options.where((item) => item != query)];
     } catch (_) {
       return const [];
     }
