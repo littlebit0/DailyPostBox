@@ -16,3 +16,10 @@ export function resolveOutgoingSettings(account: MailAccount) {
     ...account.connectionOverride?.outgoing
   };
 }
+
+// Account overrides win: a custom server may support IDLE even though the
+// generic custom provider entry does not assume it.
+export function supportsImapIdle(account: MailAccount): boolean {
+  return account.incomingProtocol === "imap" &&
+    resolveIncomingSettings(account).supportsIdle === true;
+}
