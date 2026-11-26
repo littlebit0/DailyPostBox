@@ -250,7 +250,8 @@ test("backfills thread metadata for stored messages once, in bounded batches", a
       return { uidValidity: "1", messages: uids.filter((uid) => uid !== 1).map((uid) => ({
         ...stored(uid),
         messageId: `<m${uid}@example.com>`,
-        references: ["<root@example.com>"]
+        references: ["<root@example.com>"],
+        seen: uid === 2
       })) };
     }
   };
@@ -261,6 +262,8 @@ test("backfills thread metadata for stored messages once, in bounded batches", a
   assert.deepEqual(requests.map((r) => r.length), [50, 50, 20]);
   const inbox = await repository.listInbox(mailAccount.userId);
   assert.equal(inbox.find((m) => m.providerMessageId === "2")?.messageId, "<m2@example.com>");
+  // A read flag set on the server during the backfill is not reverted.
+  assert.equal(inbox.find((m) => m.providerMessageId === "2")?.seen, true);
   assert.deepEqual(inbox.find((m) => m.providerMessageId === "1")?.references, []);
 
   await syncWorker.syncAccount(mailAccount);
@@ -564,6 +567,56 @@ test("backfill target grouping stays linear for 60,000 stored messages", async (
   await syncWorker.syncAccount(mailAccount);
   await syncWorker.backfillSettled(mailAccount.id);
   assert.ok(Date.now() - startedAt < 3000, "grouping 60,000 targets should be fast");
+});
+
+test("skips push but still stores mail when account notifications are off", async () => {
+  const repository = new InMemoryAccountRepository();
+  const mailAccount = account();
+  mailAccount.notificationsEnabled = false;
+  await repository.addAccount(mailAccount);
+  let deliver: ((message: IncomingMessageSummary) => Promise<void>) | undefined;
+  const imap = {
+    watch: async (
+      _account: MailAccount,
+      _mailbox: string,
+      onMessage: (message: IncomingMessageSummary) => Promise<void>
+    ) => {
+      deliver = onMessage;
+      return async () => undefined;
+    },
+    fetchLatestBatches: async () => undefined
+  };
+  let pushes = 0;
+  const syncWorker = new MailSyncWorker(
+    repository,
+    imap as unknown as ImapReceiver,
+    {} as Pop3Receiver,
+    { notifyNewMessage: async () => { pushes += 1; } },
+    { mailbox: "INBOX", pop3PollIntervalMs: 60_000, imapReconnectBaseDelayMs: 1, imapReconnectMaxDelayMs: 1 }
+  );
+  const message = (id: string): IncomingMessageSummary => ({
+    accountId: mailAccount.id,
+    providerMessageId: id,
+    mailbox: "INBOX",
+    from: "a@example.com",
+    subject: "hi",
+    receivedAt: new Date(),
+    hasAttachments: false
+  });
+
+  try {
+    await syncWorker.startAccount(mailAccount);
+    await deliver!(message("1"));
+    assert.equal(pushes, 0);
+    assert.equal((await repository.listInbox("demo-user")).length, 1);
+
+    // Accounts stored before the setting existed (undefined) still notify.
+    mailAccount.notificationsEnabled = undefined;
+    await deliver!(message("2"));
+    assert.equal(pushes, 1);
+  } finally {
+    await syncWorker.stop();
+  }
 });
 
 function storedMessage(accountId: string, uid: string): IncomingMessageSummary {

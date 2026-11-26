@@ -53,11 +53,25 @@ class SettingsPage extends ConsumerWidget {
                   title: Text(strings.threadView),
                   subtitle: Text(strings.threadViewDescription),
                 ),
-                SwitchListTile(
-                  value: true,
-                  onChanged: (_) {},
-                  title: Text(strings.pushNotifications),
-                  subtitle: Text(strings.pushNotificationsDescription),
+                ListTile(
+                  leading: const Icon(Icons.undo),
+                  title: Text(strings.undoSendSetting),
+                  subtitle: Text(strings.undoSendSettingDescription),
+                  trailing: DropdownButton<int>(
+                    value: ref.watch(undoSendDelayProvider),
+                    items: [
+                      for (final seconds in undoSendDelayOptions)
+                        DropdownMenuItem(
+                          value: seconds,
+                          child: Text(strings.secondsLabel(seconds)),
+                        ),
+                    ],
+                    onChanged: (value) {
+                      if (value != null) {
+                        ref.read(undoSendDelayProvider.notifier).state = value;
+                      }
+                    },
+                  ),
                 ),
                 ListTile(
                   leading: const Icon(Icons.notifications_active_outlined),

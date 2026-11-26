@@ -7,7 +7,9 @@ import '../features/accounts/accounts_page.dart';
 import '../features/accounts/thread_page.dart';
 import '../features/message/compose_page.dart';
 import '../features/message/message_page.dart';
+import '../features/message/reply_draft.dart';
 import '../features/settings/settings_page.dart';
+import '../services/mail_api_client.dart';
 
 final appRouterProvider = Provider<GoRouter>((ref) {
   return GoRouter(
@@ -61,8 +63,21 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           state: state,
           child: ComposePage(
             initialAccountId: state.pathParameters['accountId'],
+            reply: state.extra is ReplyDraft ? state.extra as ReplyDraft : null,
           ),
         ),
+      ),
+      GoRoute(
+        // Pushed on top of any open composer so its input survives; popping returns to it.
+        path: '/compose/recover',
+        redirect: (context, state) => state.extra is ComposeDraft ? null : '/accounts',
+        pageBuilder: (context, state) {
+          final draft = state.extra! as ComposeDraft;
+          return _verticalPage(
+            state: state,
+            child: ComposePage(initialAccountId: draft.accountId, initialDraft: draft),
+          );
+        },
       ),
       GoRoute(
         path: '/compose',
