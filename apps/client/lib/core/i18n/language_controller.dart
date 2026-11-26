@@ -122,6 +122,16 @@ class AppStrings {
   String get deleteAccount => _ko ? '삭제' : 'Delete';
   String get more => _ko ? '더보기' : 'More';
   String get serverSettings => _ko ? '서버 설정' : 'Server settings';
+  String get incomingServer =>
+      _ko ? '받는 메일 서버 (IMAP)' : 'Incoming mail server (IMAP)';
+  String get outgoingServer =>
+      _ko ? '보내는 메일 서버 (SMTP)' : 'Outgoing mail server (SMTP)';
+  String get serverHost => _ko ? '서버 주소' : 'Server address';
+  String get serverPort => _ko ? '포트' : 'Port';
+  String get serverUsesSsl => _ko ? 'SSL/TLS 사용' : 'Use SSL/TLS';
+  String get customServerRequired => _ko
+      ? '받는·보내는 서버 주소와 포트(1~65535)를 입력하세요.'
+      : 'Enter both server addresses and ports (1-65535).';
   String get syncRange => _ko ? '동기화 범위' : 'Sync range';
   String get comingSoon => _ko ? '준비 중' : 'Coming soon';
   String get noAccountSelected => _ko ? '계정을 선택하세요' : 'Select an account';

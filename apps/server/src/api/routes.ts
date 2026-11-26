@@ -70,6 +70,15 @@ const accountSchema = z.object({
       message: `${provider.displayName} does not support ${account.authMode} authentication.`
     });
   }
+  // The custom provider has no default host to fall back on.
+  if (account.providerId === "custom" &&
+    (!account.connectionOverride?.incoming || !account.connectionOverride.outgoing)) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["connectionOverride"],
+      message: "사용자 지정 메일 서버는 수신(IMAP)·발신(SMTP) 서버 주소와 포트가 필요합니다."
+    });
+  }
 });
 
 const demoUserId = "demo-user";
