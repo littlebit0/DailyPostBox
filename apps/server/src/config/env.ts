@@ -10,7 +10,8 @@ try {
 
 const envSchema = z.object({
   PORT: z.coerce.number().default(4000),
-  HOST: z.string().default("0.0.0.0"),
+  // Local only by default; containers set HOST=0.0.0.0 (see Dockerfile).
+  HOST: z.string().default("127.0.0.1"),
   DATABASE_URL: z.string().optional(),
   DATA_FILE_PATH: z.string().optional(),
   ENCRYPTION_MASTER_KEY: z.string().optional(),
