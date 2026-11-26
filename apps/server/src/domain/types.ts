@@ -88,6 +88,9 @@ export interface IncomingMessageSummary {
   subject: string;
   snippet?: string;
   receivedAt: Date;
+  // When the mail server stored the message (IMAP INTERNALDATE), unlike
+  // receivedAt, which is the sender-set Date header.
+  arrivedAt?: Date;
   hasAttachments: boolean;
 }
 
