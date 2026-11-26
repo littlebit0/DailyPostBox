@@ -49,6 +49,8 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           state: state,
           child: ComposePage(
             initialAccountId: state.pathParameters['accountId'],
+            initialTo: state.uri.queryParameters['to'],
+            initialSubject: state.uri.queryParameters['subject'],
           ),
         ),
       ),
@@ -56,7 +58,10 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         path: '/compose',
         pageBuilder: (context, state) => _verticalPage(
           state: state,
-          child: const ComposePage(),
+          child: ComposePage(
+            initialTo: state.uri.queryParameters['to'],
+            initialSubject: state.uri.queryParameters['subject'],
+          ),
         ),
       ),
       GoRoute(
