@@ -47,6 +47,7 @@ export interface MailAccount {
   providerId: ProviderId;
   emailAddress: string;
   displayName?: string;
+  signature?: string;
   authMode: AuthMode;
   incomingProtocol: MailProtocol;
   encryptedSecretRef: string;

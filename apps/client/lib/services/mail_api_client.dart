@@ -264,6 +264,15 @@ class MailApiClient {
     });
   }
 
+  Future<void> updateAccountSignature({
+    required String accountId,
+    required String signature,
+  }) async {
+    await _dio.put('/accounts/$accountId/signature', data: {
+      'signature': signature,
+    });
+  }
+
   Future<void> validateStoredAccount(String accountId) async {
     await _dio.post('/accounts/$accountId/validate');
   }
@@ -588,6 +597,7 @@ class MailAccountSummary {
     this.syncErrorCode,
     required this.initialSync,
     required this.lastSyncedAtLabel,
+    this.signature = '',
     this.threadBackfilling = false,
     this.idleSupported,
     this.capabilitiesCheckedAtLabel = '',
@@ -597,6 +607,7 @@ class MailAccountSummary {
   final String id;
   final String providerId;
   final String emailAddress;
+  final String signature;
   final String incomingProtocol;
   final String authMode;
   final String syncStatus;
@@ -630,6 +641,7 @@ class MailAccountSummary {
               json['initialSync'] as Map<String, dynamic>)
           : null,
       lastSyncedAtLabel: _formatReceivedAt(json['lastSyncedAt'] as String?),
+      signature: json['signature'] as String? ?? '',
       threadBackfilling: json['threadBackfill'] == 'running',
       idleSupported: capabilities?['idle'] as bool?,
       capabilitiesCheckedAtLabel:
