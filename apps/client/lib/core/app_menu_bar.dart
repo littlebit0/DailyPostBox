@@ -22,12 +22,12 @@ class MailboxMenuCommands {
 }
 
 /// The mounted mailbox registers its commands here; null hides the Mail menu.
+// Not disposed with the scope: a disposing mailbox clears it after the last
+// frame, which may run after the ProviderScope itself is gone.
 final mailboxMenuCommandsProvider =
-    Provider<ValueNotifier<MailboxMenuCommands?>>((ref) {
-  final notifier = ValueNotifier<MailboxMenuCommands?>(null);
-  ref.onDispose(notifier.dispose);
-  return notifier;
-});
+    Provider<ValueNotifier<MailboxMenuCommands?>>(
+  (ref) => ValueNotifier<MailboxMenuCommands?>(null),
+);
 
 /// Native macOS menu bar mounted once above the router, so route changes
 /// never dispose it (disposal clears every native menu, Quit included).
