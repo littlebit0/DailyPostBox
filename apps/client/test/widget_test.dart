@@ -418,7 +418,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.widgetWithText(FilledButton, '계정 추가').last);
+    await tester.tap(find.widgetWithText(FilledButton, '계정 추가'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Naver Mail'));
     await tester.pumpAndSettle();
@@ -505,6 +505,38 @@ void main() {
     ]);
   });
 
+  testWidgets('does not offer the unimplemented POP3 protocol',
+      (WidgetTester tester) async {
+    const daum = MailProviderSummary(
+      id: 'daum',
+      displayName: 'Daum / Kakao Mail',
+      authModes: ['password', 'app-password'],
+      defaultProtocol: 'imap',
+      supportsOAuth: false,
+    );
+    tester.view.physicalSize = const Size(1400, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          accountsProvider.overrideWith((ref) async => const []),
+          providersProvider.overrideWith((ref) async => const [daum]),
+        ],
+        child: const DailyPostBoxApp(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('계정 추가').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Daum / Kakao Mail'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(TextField), findsWidgets);
+    expect(find.text('POP3'), findsNothing);
+  });
   testWidgets('adds a custom mail server account with its server settings',
       (WidgetTester tester) async {
     const custom = MailProviderSummary(
