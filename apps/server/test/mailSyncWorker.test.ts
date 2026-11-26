@@ -3,13 +3,13 @@ import test from "node:test";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { LocalFileAccountRepository } from "../src/workers/LocalFileAccountRepository.js";
 import type { IncomingMessageSummary, MailAccount } from "../src/domain/types.js";
 import type { ImapReceiver } from "../src/mail/ImapReceiver.js";
 import type { Pop3Receiver } from "../src/mail/Pop3Receiver.js";
 import type { PushNotifier } from "../src/notifications/PushNotifier.js";
 import { authenticationFailure } from "../src/mail/authenticationFailure.js";
 import { InMemoryAccountRepository } from "../src/workers/AccountRepository.js";
+import { LocalFileAccountRepository } from "../src/workers/LocalFileAccountRepository.js";
 import { MailSyncWorker } from "../src/workers/MailSyncWorker.js";
 
 function account(): MailAccount {
@@ -28,7 +28,7 @@ function account(): MailAccount {
   };
 }
 
-function worker(repository: InMemoryAccountRepository, imap: object) {
+function worker(repository: InMemoryAccountRepository | LocalFileAccountRepository, imap: object) {
   return new MailSyncWorker(
     repository,
     imap as ImapReceiver,
@@ -852,6 +852,65 @@ test("a reconnect during a running import queues another sync", async () => {
   } finally {
     await syncWorker.stop();
   }
+});
+
+test("one backfill fetch fills missing categories and thread metadata separately", async () => {
+  const repository = new InMemoryAccountRepository();
+  const mailAccount = account();
+  await repository.addAccount(mailAccount);
+  const stored = (uid: number): IncomingMessageSummary => ({
+    accountId: mailAccount.id,
+    providerMessageId: String(uid),
+    mailbox: "INBOX",
+    from: "a@example.com",
+    subject: "old",
+    receivedAt: new Date(uid * 1000),
+    hasAttachments: false
+  });
+  // 1..100: neither; 101..110: thread done, no category; 111..120: category done, no thread.
+  for (let uid = 1; uid <= 120; uid += 1) {
+    await repository.saveIncomingMessage({
+      ...stored(uid),
+      ...(uid > 100 && uid <= 110 && { messageId: `<old${uid}@example.com>`, references: [] }),
+      ...(uid > 110 && { category: "notification" as const })
+    });
+  }
+  const requests: number[][] = [];
+  const imap = {
+    fetchLatestBatches: async () => undefined,
+    fetchSummariesByUid: async (_a: MailAccount, _m: string, uids: number[]) => {
+      requests.push(uids);
+      // uid 1 is gone from the server; even uids are newsletters.
+      return { uidValidity: "1", messages: uids.filter((uid) => uid !== 1).map((uid) => ({
+        ...stored(uid),
+        messageId: `<m${uid}@example.com>`,
+        references: ["<root@example.com>"],
+        category: uid % 2 === 0 ? "newsletter" as const : "person" as const
+      })) };
+    }
+  };
+  const syncWorker = worker(repository, imap);
+
+  await syncWorker.syncAccount(mailAccount);
+  await syncWorker.backfillSettled(mailAccount.id);
+  assert.deepEqual(requests.map((r) => r.length), [50, 50, 20]);
+  const byUid = new Map(
+    (await repository.listInbox(mailAccount.userId)).map((m) => [m.providerMessageId, m])
+  );
+  assert.equal(byUid.get("2")?.category, "newsletter");
+  assert.equal(byUid.get("2")?.messageId, "<m2@example.com>");
+  assert.equal(byUid.get("1")?.category, "person");
+  assert.deepEqual(byUid.get("1")?.references, []);
+  // Thread metadata already stored is kept; only the category is added.
+  assert.equal(byUid.get("102")?.messageId, "<old102@example.com>");
+  assert.equal(byUid.get("102")?.category, "newsletter");
+  // A stored category is kept; only thread metadata is added.
+  assert.equal(byUid.get("112")?.category, "notification");
+  assert.equal(byUid.get("112")?.messageId, "<m112@example.com>");
+
+  await syncWorker.syncAccount(mailAccount);
+  await syncWorker.backfillSettled(mailAccount.id);
+  assert.equal(requests.length, 3);
 });
 
 function customAccount(supportsIdle?: boolean): MailAccount {

@@ -365,10 +365,12 @@ export class MailSyncWorker {
     await this.backfills.get(accountId)?.done;
   }
 
-  // Messages stored before threading existed have no header metadata and the
-  // 25-message sync never revisits them. Backfill runs in the background in
+  // Messages stored before threading or classification existed have no header
+  // metadata (or no category) and the 25-message sync never revisits them. One
+  // fetch fills both. Backfill runs in the background in
   // 50-message batches until none is left. Progress is the stored metadata
-  // itself (a message the server no longer has gets `references: []`), so a
+  // itself (a message the server no longer has gets `references: []` and
+  // category "person"), so a
   // restart or the next sync simply continues with what is still missing.
   private startBackfill(account: MailAccount): void {
     if (this.backfills.has(account.id)) return;
@@ -404,12 +406,14 @@ export class MailSyncWorker {
     entry: { saving?: Promise<unknown> }
   ): Promise<void> {
     const active = () => this.backfills.get(account.id)?.token === token;
+    const needsThread = (message: IncomingMessageSummary) =>
+      message.messageId === undefined &&
+      message.gmailThreadId === undefined &&
+      message.references === undefined;
     const pending = (await this.accounts.listInbox(account.userId))
       .filter((message) =>
         message.accountId === account.id &&
-        message.messageId === undefined &&
-        message.gmailThreadId === undefined &&
-        message.references === undefined &&
+        (needsThread(message) || message.category === undefined) &&
         /^\d+$/.test(message.providerMessageId));
 
     const byMailbox = new Map<string, typeof pending>();
@@ -436,7 +440,7 @@ export class MailSyncWorker {
         expectedUidValidity ??= uidValidity;
         // Same UIDs under a new UIDVALIDITY are other messages; never copy their headers.
         if (uidValidity !== expectedUidValidity) {
-          throw new Error("Mailbox UIDVALIDITY changed during thread backfill");
+          throw new Error("Mailbox UIDVALIDITY changed during backfill");
         }
         const fetched = new Map(messages.map((m) => [m.providerMessageId, m]));
         if (!active()) return;
@@ -447,10 +451,15 @@ export class MailSyncWorker {
           const found = fetched.get(message.providerMessageId);
           return this.accounts.saveIncomingMessage({
             ...message,
-            messageId: found?.messageId,
-            inReplyTo: found?.inReplyTo,
-            references: found?.references ?? [],
-            gmailThreadId: found?.gmailThreadId,
+            // Only the missing part is filled, so each marker stays exact.
+            ...(needsThread(message) && {
+              messageId: found?.messageId,
+              inReplyTo: found?.inReplyTo,
+              references: found?.references ?? [],
+              gmailThreadId: found?.gmailThreadId
+            }),
+            // Gone from the server: "person", so it is not fetched again.
+            category: message.category ?? found?.category ?? "person",
             // The snapshot predates this batch; the server's flags are newer.
             seen: found?.seen ?? message.seen,
             flagged: found?.flagged ?? message.flagged

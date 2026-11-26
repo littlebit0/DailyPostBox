@@ -61,6 +61,7 @@ class _MailboxContentState extends ConsumerState<_MailboxContent> {
   bool _refreshing = false;
   final _searchController = TextEditingController();
   Future<List<MailSummary>>? _search;
+  String? _category;
 
   static bool _busy(MailAccountSummary account) =>
       account.threadBackfilling ||
@@ -286,6 +287,25 @@ class _MailboxContentState extends ConsumerState<_MailboxContent> {
             ),
           ),
         ),
+        Wrap(
+          spacing: 8,
+          children: [
+            for (final (value, label) in [
+              (null, strings.categoryAll),
+              ('person', strings.categoryPerson),
+              ('notification', strings.categoryNotification),
+              ('newsletter', strings.categoryNewsletter),
+            ])
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+                child: ChoiceChip(
+                  label: Text(label),
+                  selected: _category == value,
+                  onSelected: (_) => setState(() => _category = value),
+                ),
+              ),
+          ],
+        ),
         Expanded(
           child: _search != null
               ? FutureBuilder<List<MailSummary>>(
@@ -299,7 +319,7 @@ class _MailboxContentState extends ConsumerState<_MailboxContent> {
                     if (snapshot.hasError) {
                       return Center(child: Text(strings.searchFailedTitle));
                     }
-                    final results = snapshot.data!;
+                    final results = filterByCategory(snapshot.data!, _category);
                     if (results.isEmpty) {
                       return Center(child: Text(strings.noSearchResults));
                     }
@@ -308,7 +328,9 @@ class _MailboxContentState extends ConsumerState<_MailboxContent> {
                 )
               : messages.when(
                   data: (all) {
-                    final items = threaded ? groupByThread(all) : all;
+                    // Filter first so a thread row shows its newest mail in the category.
+                    final filtered = filterByCategory(all, _category);
+                    final items = threaded ? groupByThread(filtered) : filtered;
                     if (items.isEmpty) {
                       return Center(
                         child: Column(

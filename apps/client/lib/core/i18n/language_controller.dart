@@ -186,6 +186,10 @@ class AppStrings {
   String get syncRange => _ko ? '동기화 범위' : 'Sync range';
   String get comingSoon => _ko ? '준비 중' : 'Coming soon';
   String get noAccountSelected => _ko ? '계정을 선택하세요' : 'Select an account';
+  String get categoryAll => _ko ? '전체' : 'All';
+  String get categoryPerson => _ko ? '사람' : 'People';
+  String get categoryNotification => _ko ? '알림' : 'Notifications';
+  String get categoryNewsletter => _ko ? '뉴스레터' : 'Newsletters';
   String get searchMail => _ko ? '메일 검색' : 'Search mail';
   String get searchHint => _ko
       ? '검색: 제목·보낸 사람, from: subject: after: before:'

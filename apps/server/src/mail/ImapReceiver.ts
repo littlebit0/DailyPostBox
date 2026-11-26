@@ -30,6 +30,11 @@ import {
   newestFirstUidBatches
 } from "./imapSequenceRanges.js";
 import { isAuthenticationFailure } from "./authenticationFailure.js";
+import {
+  classificationHeaderNames,
+  classifyMessage,
+  parseRawHeaders
+} from "./classifyMessage.js";
 import { Readable } from "node:stream";
 import {
   decodeTransferEncoding,
@@ -512,7 +517,7 @@ export class ImapReceiver implements MailReceiver {
       internalDate: true,
       uid: true,
       threadId: true,
-      headers: ["references"]
+      headers: [...classificationHeaderNames, "references"]
     }, { uid: true })) {
       const summary = toIncomingMessage(account, mailbox, message);
       if (summary) batch.push(summary);
@@ -546,23 +551,25 @@ function toIncomingMessage(
   const envelope = message.envelope;
   if (!envelope) return null;
 
+  const from = envelope.from?.map((item) => item.address).filter(Boolean).join(", ") ?? "";
+  const headers = parseRawHeaders(message.headers?.subarray(0, MAX_HEADER_BYTES));
   return {
     accountId: account.id,
     providerMessageId: String(message.uid),
     mailbox,
-    from: envelope.from?.map((item) => item.address).filter(Boolean).join(", ") ?? "",
+    from,
     subject: envelope.subject ?? "",
     receivedAt: envelope.date instanceof Date ? envelope.date : new Date(),
     arrivedAt: message.internalDate instanceof Date ? message.internalDate : undefined,
     hasAttachments: false,
     messageId: boundMessageId(envelope.messageId),
     inReplyTo: boundMessageId(envelope.inReplyTo),
-    references: parseMessageIds(
-      message.headers?.subarray(0, MAX_HEADER_BYTES).toString("utf8")
-    ),
+    // Only the References value: List-Id/List-Unsubscribe also carry <...> tokens.
+    references: parseMessageIds(headers["references"]),
     gmailThreadId: message.threadId,
     seen: message.flags?.has("\\Seen") ?? false,
-    flagged: message.flags?.has("\\Flagged") ?? false
+    flagged: message.flags?.has("\\Flagged") ?? false,
+    category: classifyMessage(headers, from)
   };
 }
 

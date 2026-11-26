@@ -249,6 +249,53 @@ void main() {
     expect(find.text('invoice'), findsNothing);
   });
 
+  testWidgets('category chips also filter search results',
+      (WidgetTester tester) async {
+    const account = MailAccountSummary(
+      id: 'account-a',
+      providerId: 'gmail',
+      emailAddress: 'first@example.com',
+      incomingProtocol: 'imap',
+      authMode: 'oauth2',
+      syncStatus: 'idle',
+      syncError: null,
+      initialSync: InitialSyncOption.recommended,
+      lastSyncedAtLabel: 'now',
+    );
+    await tester.binding.setSurfaceSize(const Size(1200, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          mailApiClientProvider.overrideWithValue(_SearchApi()),
+          accountsProvider.overrideWith((ref) async => const [account]),
+          providersProvider.overrideWith((ref) async => const []),
+          accountMessagesProvider.overrideWith((ref, accountId) async => const []),
+        ],
+        child: const DailyPostBoxApp(),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text(account.emailAddress).first);
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.descendant(
+        of: find.byType(Scaffold).last,
+        matching: find.byType(TextField),
+      ).first,
+      'invoice',
+    );
+    await tester.testTextInput.receiveAction(TextInputAction.search);
+    await tester.pumpAndSettle();
+    expect(find.text(_SearchApi.resultSubject), findsOneWidget);
+
+    // The result is unclassified, so the newsletter chip hides it.
+    await tester.tap(find.byType(ChoiceChip).at(3));
+    await tester.pumpAndSettle();
+    expect(find.text(_SearchApi.resultSubject), findsNothing);
+  });
+
   testWidgets('shows loading instead of previous results for a new search',
       (WidgetTester tester) async {
     const account = MailAccountSummary(
@@ -844,6 +891,22 @@ void main() {
       Rect.fromLTRB(0, 0, 88, 20),
       Rect.fromLTRB(0, 24, 36, 44),
     ]);
+  });
+
+  test('unclassified mail appears only under All', () {
+    MailSummary mail(String id, String? category) => MailSummary(
+          id: id,
+          sender: '',
+          subject: '',
+          snippet: '',
+          receivedAtLabel: '',
+          unread: true,
+          category: category,
+        );
+    final items = [mail('1', null), mail('2', 'person'), mail('3', 'newsletter')];
+
+    expect(filterByCategory(items, null).map((m) => m.id), ['1', '2', '3']);
+    expect(filterByCategory(items, 'person').map((m) => m.id), ['2']);
   });
 
   test('groups mail by thread id and keeps unthreaded mail', () {

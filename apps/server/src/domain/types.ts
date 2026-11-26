@@ -98,6 +98,7 @@ export interface IncomingMessageSummary {
   // receivedAt, which is the sender-set Date header.
   arrivedAt?: Date;
   hasAttachments: boolean;
+  category?: "person" | "notification" | "newsletter";
   messageId?: string;
   inReplyTo?: string;
   references?: string[];

@@ -408,11 +408,14 @@ class MailSummary {
     required this.snippet,
     required this.receivedAtLabel,
     required this.unread,
+    this.category,
     this.threadId,
     this.threadCount = 1,
     this.flagged = false,
   });
 
+  /// Null until the server has classified the message.
+  final String? category;
   final String id;
   final String sender;
   final String subject;
@@ -430,6 +433,7 @@ class MailSummary {
       subject: json['subject'] as String? ?? '',
       snippet: json['snippet'] as String? ?? '',
       receivedAtLabel: _formatReceivedAt(json['receivedAt'] as String?),
+      category: json['category'] as String?,
       threadId: json['threadId'] as String?,
       threadCount: json['threadCount'] as int? ?? 1,
       unread: !(json['seen'] as bool? ?? false),
@@ -437,6 +441,12 @@ class MailSummary {
     );
   }
 }
+
+/// Unclassified mail (null category) shows only under "All".
+List<MailSummary> filterByCategory(List<MailSummary> items, String? category) =>
+    category == null
+        ? items
+        : items.where((m) => m.category == category).toList();
 
 /// Keeps the first (newest) message of each thread. Mail without a thread id
 /// stays as its own row.
