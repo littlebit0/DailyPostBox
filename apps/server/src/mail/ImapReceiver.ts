@@ -69,7 +69,10 @@ export class ImapReceiver implements MailReceiver {
     mailbox: string,
     limit: number | "all",
     onBatch: (messages: IncomingMessageSummary[]) => Promise<void>,
-    cursor?: ImapSyncCursor
+    cursor?: ImapSyncCursor,
+    // Runs on the fetching connection before any message is read; it may
+    // return a new limit (a fresh import after the numbering changed).
+    onMailboxOpened?: (uidValidity: string) => Promise<number | "all" | undefined>
   ): Promise<ImapSyncResult> {
     const initial = await this.withConnectionRetry(async () => {
       return this.withConnectedClient(account, async (client) => {
@@ -77,13 +80,15 @@ export class ImapReceiver implements MailReceiver {
           readOnly: true
         });
         const uidValidity = String(openedMailbox.uidValidity);
+        const effectiveLimit = (await onMailboxOpened?.(uidValidity)) ?? limit;
+        // A cursor from another numbering is dropped (see cursorUid).
         const afterUid = cursorUid(cursor, uidValidity);
         const uids = afterUid === undefined
-          ? await this.searchLatestUids(client, openedMailbox.exists, limit)
+          ? await this.searchLatestUids(client, openedMailbox.exists, effectiveLimit)
           : await this.searchUidsAfter(client, afterUid);
         const batches = newestFirstUidBatches(
           uids,
-          batchLimit(afterUid, limit)
+          batchLimit(afterUid, effectiveLimit)
         );
         const firstUids = batches.at(0);
         const newestSeen = uids.reduce(
