@@ -280,6 +280,9 @@ export class MailSyncWorker {
           scheduleReconnect
         );
         reconnectDelay = this.options.imapReconnectBaseDelayMs;
+        if (account.incomingCapabilities) {
+          await this.accounts.updateAccount(account).catch(() => undefined);
+        }
         // Mail that arrived while disconnected raised no IDLE event. A sync
         // already running may have taken its UID snapshot before the outage,
         // so a fresh one starts after it instead of joining it.
@@ -330,7 +333,7 @@ export class MailSyncWorker {
     notify = true
   ): Promise<void> {
     const isNew = await this.accounts.saveIncomingMessage(message);
-    if (!notify || !isNew) return;
+    if (!notify || !isNew || account.notificationsEnabled === false) return;
     const targets = await this.accounts.listPushTargets(account.userId);
     // Push delivery must never block or tear down the IMAP watcher.
     void this.push.notifyNewMessage(targets, message).catch((error: unknown) => {

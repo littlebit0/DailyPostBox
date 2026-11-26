@@ -39,6 +39,9 @@ class _SendApi extends MailApiClient {
     required String subject,
     required String body,
     int delaySeconds = 5,
+    List<String> cc = const [],
+    String? inReplyTo,
+    List<String> references = const [],
   }) async =>
       const SendReceipt('id', Duration(seconds: 5));
 
@@ -264,6 +267,7 @@ void _failedSendsTests() {
       'failed draft stays recoverable from banner after snackbars are cleared',
       (tester) async {
     final router = await pumpApp(tester);
+    await tester.enterText(find.byType(TextField).first, 'x@example.test');
     await tester.tap(find.byIcon(Icons.send_outlined));
     await tester.pumpAndSettle(const Duration(milliseconds: 100));
     // Undo window (5s) + first poll (2s), then the failure surfaces.
@@ -291,6 +295,7 @@ void _failedSendsTests() {
 
   testWidgets('banner delete drops the failed draft', (tester) async {
     await pumpApp(tester);
+    await tester.enterText(find.byType(TextField).first, 'x@example.test');
     await tester.tap(find.byIcon(Icons.send_outlined));
     await tester.pumpAndSettle(const Duration(milliseconds: 100));
     await tester.pump(const Duration(seconds: 6));
@@ -359,6 +364,9 @@ class _UndoApi extends _SendApi {
     required String subject,
     required String body,
     int delaySeconds = 5,
+    List<String> cc = const [],
+    String? inReplyTo,
+    List<String> references = const [],
   }) async =>
       SendReceipt('s${++sent}', const Duration(seconds: 30));
 
@@ -410,6 +418,7 @@ void _pendingSendsTests() {
     for (final subject in ['First', 'Second']) {
       router.go('/');
       await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField).first, 'x@example.test');
       await tester.enterText(find.byType(TextField).at(1), subject);
       await tester.tap(find.byIcon(Icons.send_outlined));
       await tester.pumpAndSettle(const Duration(milliseconds: 100));

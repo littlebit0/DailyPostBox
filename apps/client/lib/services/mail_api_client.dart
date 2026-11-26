@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -19,11 +21,17 @@ class ComposeDraft {
     required this.to,
     required this.subject,
     required this.body,
+    this.cc = '',
+    this.inReplyTo,
+    this.references = const [],
   });
   final String accountId;
   final String to;
+  final String cc;
   final String subject;
   final String body;
+  final String? inReplyTo;
+  final List<String> references;
 }
 
 class SendOutcome {
@@ -73,17 +81,24 @@ class MailApiClient {
 
   final Dio _dio;
 
-  Future<List<MailSummary>> fetchInbox() async {
-    final response = await _dio.get<List<dynamic>>('/mail/inbox');
+  Future<List<MailSummary>> fetchAccountMessages(String accountId) async {
+    final response =
+        await _dio.get<List<dynamic>>('/accounts/$accountId/messages');
     final data = response.data ?? [];
     return data
         .map((item) => MailSummary.fromJson(item as Map<String, dynamic>))
         .toList();
   }
 
-  Future<List<MailSummary>> fetchAccountMessages(String accountId) async {
-    final response =
-        await _dio.get<List<dynamic>>('/accounts/$accountId/messages');
+  Future<List<MailSummary>> searchAccountMessages(
+    String accountId,
+    String query,
+  ) async {
+    final response = await _dio.get<List<dynamic>>(
+      '/accounts/$accountId/search',
+      queryParameters: {'q': query},
+      options: Options(receiveTimeout: const Duration(seconds: 60)),
+    );
     final data = response.data ?? [];
     return data
         .map((item) => MailSummary.fromJson(item as Map<String, dynamic>))
@@ -108,12 +123,6 @@ class MailApiClient {
         .toList();
   }
 
-  Future<MessageDetail> fetchMessage(String messageId) async {
-    final response =
-        await _dio.get<Map<String, dynamic>>('/mail/messages/$messageId');
-    return MessageDetail.fromJson(response.data ?? {});
-  }
-
   Future<MessageDetail> fetchAccountMessage({
     required String accountId,
     required String messageId,
@@ -124,6 +133,43 @@ class MailApiClient {
     return MessageDetail.fromJson(response.data ?? {});
   }
 
+  Future<void> setMessageFlags({
+    required String accountId,
+    required String messageId,
+    bool? seen,
+    bool? flagged,
+  }) async {
+    await _dio.post(
+      '/accounts/$accountId/messages/${Uri.encodeComponent(messageId)}/flags',
+      data: {
+        if (seen != null) 'seen': seen,
+        if (flagged != null) 'flagged': flagged,
+      },
+    );
+  }
+
+  Future<void> downloadAttachment({
+    required String accountId,
+    required String messageId,
+    required String part,
+    required String savePath,
+  }) async {
+    // Download into a unique app-accessible temp dir (the sandbox may deny
+    // writes next to the selected file); touch the destination only on success.
+    final tempDir = await Directory.systemTemp.createTemp('attachment_');
+    try {
+      final temp = File('${tempDir.path}/download');
+      await _dio.download(
+        '/accounts/$accountId/messages/$messageId/attachments/$part',
+        temp.path,
+        options: Options(receiveTimeout: const Duration(minutes: 2)),
+      );
+      await temp.copy(savePath);
+    } finally {
+      await tempDir.delete(recursive: true);
+    }
+  }
+
   Future<void> addAccount({
     required String providerId,
     required String emailAddress,
@@ -131,6 +177,7 @@ class MailApiClient {
     required String incomingProtocol,
     required String secret,
     required InitialSyncOption initialSync,
+    ConnectionOverride? connectionOverride,
   }) async {
     await _dio.post('/accounts', data: {
       'providerId': providerId,
@@ -139,6 +186,8 @@ class MailApiClient {
       'incomingProtocol': incomingProtocol,
       'secret': secret,
       'initialSync': initialSync.toJson(),
+      if (connectionOverride != null)
+        'connectionOverride': connectionOverride.toJson(),
     });
   }
 
@@ -149,6 +198,7 @@ class MailApiClient {
     required String incomingProtocol,
     required String secret,
     required InitialSyncOption initialSync,
+    ConnectionOverride? connectionOverride,
   }) async {
     await _dio.post('/accounts/validate', data: {
       'providerId': providerId,
@@ -157,6 +207,8 @@ class MailApiClient {
       'incomingProtocol': incomingProtocol,
       'secret': secret,
       'initialSync': initialSync.toJson(),
+      if (connectionOverride != null)
+        'connectionOverride': connectionOverride.toJson(),
     });
   }
 
@@ -207,6 +259,12 @@ class MailApiClient {
     await _dio.post('/accounts/$accountId/sync');
   }
 
+  Future<void> setAccountNotifications(String accountId, bool enabled) async {
+    await _dio.patch('/accounts/$accountId/notifications', data: {
+      'enabled': enabled,
+    });
+  }
+
   Future<void> deleteAccount(String accountId) async {
     await _dio.delete('/accounts/$accountId');
   }
@@ -228,14 +286,20 @@ class MailApiClient {
     required String subject,
     required String body,
     int delaySeconds = 5,
+    List<String> cc = const [],
+    String? inReplyTo,
+    List<String> references = const [],
   }) async {
     final elapsed = Stopwatch()..start();
     final response = await _dio.post('/mail/send', data: {
       'accountId': accountId,
       'to': to,
+      if (cc.isNotEmpty) 'cc': cc,
       'subject': subject,
       'text': body,
       'delaySeconds': delaySeconds,
+      if (inReplyTo != null) 'inReplyTo': inReplyTo,
+      if (inReplyTo != null && references.isNotEmpty) 'references': references,
     });
     final data = response.data as Map<String, dynamic>;
     // remaining = sendAt - server now, so client clock skew does not matter. The whole
@@ -267,8 +331,11 @@ class MailApiClient {
           : ComposeDraft(
               accountId: draft['accountId'] as String,
               to: (draft['to'] as List).cast<String>().join(', '),
+              cc: ((draft['cc'] as List?) ?? const []).cast<String>().join(', '),
               subject: draft['subject'] as String? ?? '',
               body: draft['text'] as String? ?? '',
+              inReplyTo: draft['inReplyTo'] as String?,
+              references: ((draft['references'] as List?) ?? const []).cast<String>(),
             ),
     );
   }
@@ -328,6 +395,7 @@ class MailSummary {
     required this.snippet,
     required this.receivedAtLabel,
     required this.unread,
+    this.flagged = false,
   });
 
   final String id;
@@ -336,6 +404,7 @@ class MailSummary {
   final String snippet;
   final String receivedAtLabel;
   final bool unread;
+  final bool flagged;
 
   factory MailSummary.fromJson(Map<String, dynamic> json) {
     return MailSummary(
@@ -344,7 +413,8 @@ class MailSummary {
       subject: json['subject'] as String? ?? '',
       snippet: json['snippet'] as String? ?? '',
       receivedAtLabel: _formatReceivedAt(json['receivedAt'] as String?),
-      unread: true,
+      unread: !(json['seen'] as bool? ?? false),
+      flagged: json['flagged'] as bool? ?? false,
     );
   }
 }
@@ -357,14 +427,34 @@ class MessageDetail {
     required this.body,
     required this.links,
     required this.receivedAtLabel,
+    this.seen = false,
+    this.flagged = false,
+    this.attachments = const [],
+    this.receivedAt,
+    this.accountId,
+    this.messageId,
+    this.references = const [],
+    this.replyTo = const [],
+    this.replyAllTo = const [],
+    this.replyAllCc = const [],
   });
 
+  final bool seen;
+  final bool flagged;
+  final String? accountId;
+  final String? messageId;
+  final List<String> references;
+  final List<String> replyTo;
+  final List<String> replyAllTo;
+  final List<String> replyAllCc;
   final String id;
   final String sender;
   final String subject;
   final String body;
   final List<MessageLink> links;
   final String receivedAtLabel;
+  final List<MessageAttachment> attachments;
+  final DateTime? receivedAt;
 
   factory MessageDetail.fromJson(Map<String, dynamic> json) {
     return MessageDetail(
@@ -377,9 +467,61 @@ class MessageDetail {
           .map(MessageLink.fromJson)
           .toList(growable: false),
       receivedAtLabel: _formatReceivedAt(json['receivedAt'] as String?),
+      seen: json['seen'] as bool? ?? false,
+      flagged: json['flagged'] as bool? ?? false,
+      attachments: (json['attachments'] as List<dynamic>? ?? const [])
+          .whereType<Map<String, dynamic>>()
+          .map(MessageAttachment.fromJson)
+          .toList(growable: false),
+      receivedAt:
+          DateTime.tryParse(json['receivedAt'] as String? ?? '')?.toLocal(),
+      accountId: json['accountId'] as String?,
+      messageId: json['messageId'] as String?,
+      references: _strings(json['references']),
+      replyTo: _strings(json['replyTo']),
+      replyAllTo: _strings(json['replyAllTo']),
+      replyAllCc: _strings(json['replyAllCc']),
     );
   }
 }
+
+class MessageAttachment {
+  const MessageAttachment({
+    required this.part,
+    required this.filename,
+    required this.contentType,
+    required this.size,
+  });
+
+  final String part;
+  final String filename;
+  final String contentType;
+  final int size;
+
+  factory MessageAttachment.fromJson(Map<String, dynamic> json) {
+    return MessageAttachment(
+      part: json['part'] as String? ?? '',
+      filename: json['filename'] as String? ?? '',
+      contentType: json['contentType'] as String? ?? '',
+      size: (json['size'] as num?)?.toInt() ?? 0,
+    );
+  }
+}
+
+String formatAttachmentSize(int bytes) {
+  if (bytes < 1024) return '$bytes B';
+  const units = ['KB', 'MB', 'GB'];
+  var value = bytes / 1024;
+  var unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return '${value.toStringAsFixed(value < 10 ? 1 : 0)} ${units[unit]}';
+}
+
+List<String> _strings(Object? value) =>
+    (value as List<dynamic>? ?? const []).whereType<String>().toList();
 
 class MessageLink {
   const MessageLink({required this.url, required this.label});
@@ -407,6 +549,9 @@ class MailAccountSummary {
     this.syncErrorCode,
     required this.initialSync,
     required this.lastSyncedAtLabel,
+    this.idleSupported,
+    this.capabilitiesCheckedAtLabel = '',
+    this.notificationsEnabled = true,
   });
 
   final String id;
@@ -419,8 +564,16 @@ class MailAccountSummary {
   final String? syncErrorCode;
   final InitialSyncOption? initialSync;
   final String lastSyncedAtLabel;
+  final bool notificationsEnabled;
+
+  /// Null until the server has logged in and read the IMAP capabilities.
+  final bool? idleSupported;
+  final String capabilitiesCheckedAtLabel;
 
   factory MailAccountSummary.fromJson(Map<String, dynamic> json) {
+    final capabilities = json['incomingCapabilities'] is Map<String, dynamic>
+        ? json['incomingCapabilities'] as Map<String, dynamic>
+        : null;
     return MailAccountSummary(
       id: json['id'] as String,
       providerId: json['providerId'] as String,
@@ -435,8 +588,40 @@ class MailAccountSummary {
               json['initialSync'] as Map<String, dynamic>)
           : null,
       lastSyncedAtLabel: _formatReceivedAt(json['lastSyncedAt'] as String?),
+      idleSupported: capabilities?['idle'] as bool?,
+      capabilitiesCheckedAtLabel:
+          _formatReceivedAt(capabilities?['checkedAt'] as String?),
+      notificationsEnabled: json['notificationsEnabled'] as bool? ?? true,
     );
   }
+}
+
+/// Incoming (IMAP) and outgoing (SMTP) servers of a custom mail account.
+class ConnectionOverride {
+  const ConnectionOverride({required this.incoming, required this.outgoing});
+
+  final ServerEndpoint incoming;
+  final ServerEndpoint outgoing;
+
+  Map<String, Object> toJson() => {
+        'incoming': incoming.toJson(),
+        'outgoing': outgoing.toJson(),
+      };
+}
+
+class ServerEndpoint {
+  const ServerEndpoint({
+    required this.host,
+    required this.port,
+    required this.secure,
+  });
+
+  final String host;
+  final int port;
+  final bool secure;
+
+  Map<String, Object> toJson() =>
+      {'host': host, 'port': port, 'secure': secure};
 }
 
 class InitialSyncOption {

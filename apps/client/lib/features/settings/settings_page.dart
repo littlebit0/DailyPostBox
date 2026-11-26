@@ -66,12 +66,6 @@ class SettingsPage extends ConsumerWidget {
                     },
                   ),
                 ),
-                SwitchListTile(
-                  value: true,
-                  onChanged: (_) {},
-                  title: Text(strings.pushNotifications),
-                  subtitle: Text(strings.pushNotificationsDescription),
-                ),
                 ListTile(
                   leading: const Icon(Icons.notifications_active_outlined),
                   title: Text(strings.registerThisDevice),
