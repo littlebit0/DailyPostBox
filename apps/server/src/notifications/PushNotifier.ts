@@ -12,10 +12,10 @@ export interface PushNotifier {
 
 export class NoopPushNotifier implements PushNotifier {
   async notifyNewMessage(targets: PushTarget[], message: IncomingMessageSummary): Promise<void> {
+    // Mail content (subject, sender) never goes to logs.
     console.info("push:new-message", {
       targets: targets.length,
-      accountId: message.accountId,
-      subject: message.subject
+      accountId: message.accountId
     });
   }
 }
