@@ -121,3 +121,77 @@ test("a connection retry after the reset keeps the initial import limit", async 
 
   assert.deepEqual(limits, [100, 100]);
 });
+
+async function recover(stored: MailAccount, notified: string[]) {
+  const repository = new InMemoryAccountRepository();
+  await repository.addAccount(stored);
+  await repository.savePushTarget({ userId: "demo-user", platform: "macos", deviceToken: "token" });
+  const limits: unknown[] = [];
+  const delivered = (uid: string, arrivedAt: string): IncomingMessageSummary => ({
+    ...message(uid, uid),
+    receivedAt: new Date(arrivedAt),
+    arrivedAt: new Date(arrivedAt)
+  });
+  const imap = {
+    watch: async () => async () => undefined,
+    fetchLatestBatches: async (
+      _account: MailAccount,
+      _mailbox: string,
+      limit: number | "all",
+      onBatch: (messages: IncomingMessageSummary[]) => Promise<void>,
+      _cursor: unknown,
+      onMailboxOpened: (uidValidity: string) => Promise<number | "all" | undefined>
+    ) => {
+      // Reconciled twice, like a retried connection.
+      limits.push((await onMailboxOpened("200")) ?? limit);
+      limits.push((await onMailboxOpened("200")) ?? limit);
+      await onBatch([
+        delivered("1", "2026-11-01T00:00:00Z"),
+        delivered("2", "2026-11-23T00:00:00Z")
+      ]);
+    }
+  };
+  const worker = new MailSyncWorker(
+    repository,
+    imap as unknown as ImapReceiver,
+    {} as Pop3Receiver,
+    {
+      notifyNewMessage: async (_targets, item) => {
+        notified.push(item.providerMessageId);
+      }
+    },
+    { mailbox: "INBOX", pop3PollIntervalMs: 60_000, imapReconnectBaseDelayMs: 1, imapReconnectMaxDelayMs: 1 }
+  );
+  await worker.syncAccount(stored);
+  await worker.stop();
+  const subjects = (await repository.listInbox("demo-user")).map((item) => item.subject);
+  return { limits, subjects };
+}
+
+test("an opted-out account gets back mail since it was added after a reset", async () => {
+  const stored = account("100");
+  stored.initialSync = { includePreviousMessages: false, limit: 100 };
+  stored.createdAt = new Date("2026-11-22T00:00:00Z");
+
+  const result = await recover(stored, []);
+
+  assert.deepEqual(result.limits, ["all", "all"]);
+  assert.deepEqual(result.subjects, ["2"]);
+});
+
+test("mail restored after a reset sends no notifications", async () => {
+  const stored: MailAccount = {
+    ...account("100"),
+    providerId: "custom",
+    connectionOverride: {
+      incoming: { host: "imap.example.com", port: 993, secure: true }
+    },
+    createdAt: new Date("2026-11-22T00:00:00Z")
+  };
+  const notified: string[] = [];
+
+  const result = await recover(stored, notified);
+
+  assert.deepEqual(result.subjects.sort(), ["1", "2"]);
+  assert.deepEqual(notified, []);
+});

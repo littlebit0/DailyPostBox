@@ -109,8 +109,12 @@ export class MailSyncWorker {
     const polled = account.lastSyncedAt !== undefined &&
       account.incomingProtocol === "imap" &&
       !supportsImapIdle(account);
+    // Set once a changed UIDVALIDITY dropped the saved mail; the re-import
+    // restores mail the user already had, so it announces nothing.
+    let recovering = false;
     const notifies = (message: IncomingMessageSummary) =>
-      polled && (message.arrivedAt ?? message.receivedAt) >= account.createdAt;
+      !recovering && polled &&
+      (message.arrivedAt ?? message.receivedAt) >= account.createdAt;
     // An account that opted out of previous mail keeps only mail that
     // reached the server after it was added. The server's arrival time is
     // used, not the sender's Date header, so delayed new mail is kept.
@@ -144,7 +148,15 @@ export class MailSyncWorker {
             );
           },
           cursor,
-          (uidValidity) => this.reconcileUidValidity(account, uidValidity)
+          async (uidValidity) => {
+            if (await this.reconcileUidValidity(account, uidValidity)) {
+              recovering = true;
+            }
+            // An opted-out account takes back everything since it was added
+            // (isWanted drops older mail) instead of a zero-message import.
+            // Derived on every call so a connection retry keeps it.
+            return recovering && skipHistory ? "all" : this.initialSyncLimit(account);
+          }
         );
       } else if (limit !== 0) {
         const messages = await this.pop3.fetchLatest(
@@ -330,23 +342,22 @@ export class MailSyncWorker {
   }
 
   // Saved UIDs point at other messages once the mailbox's UIDVALIDITY
-  // changes, so the account's mail is dropped and imported again with the
-  // account's initial import choice. The limit is derived from the account
-  // on every call, so a connection retry after the reset keeps that choice.
+  // changes, so the account's mail is dropped to be imported again.
+  // Returns true when it dropped the mail.
   private async reconcileUidValidity(
     account: MailAccount,
     current: string
-  ): Promise<number | "all"> {
-    if (account.uidValidity !== current) {
-      if (account.uidValidity !== undefined) {
-        console.warn("imap:uidvalidity-changed", { accountId: account.id });
-        await this.accounts.deleteMessages(account.id);
-        account.lastSyncedAt = undefined;
-      }
-      account.uidValidity = current;
-      await this.accounts.updateAccount(account);
+  ): Promise<boolean> {
+    if (account.uidValidity === current) return false;
+    const changed = account.uidValidity !== undefined;
+    if (changed) {
+      console.warn("imap:uidvalidity-changed", { accountId: account.id });
+      await this.accounts.deleteMessages(account.id);
+      account.lastSyncedAt = undefined;
     }
-    return this.initialSyncLimit(account);
+    account.uidValidity = current;
+    await this.accounts.updateAccount(account);
+    return changed;
   }
 
   // Resyncs continue after the last completed sync, however many messages
