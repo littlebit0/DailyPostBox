@@ -44,17 +44,24 @@ class MailApiClient {
 
   final Dio _dio;
 
-  Future<List<MailSummary>> fetchInbox() async {
-    final response = await _dio.get<List<dynamic>>('/mail/inbox');
+  Future<List<MailSummary>> fetchAccountMessages(String accountId) async {
+    final response =
+        await _dio.get<List<dynamic>>('/accounts/$accountId/messages');
     final data = response.data ?? [];
     return data
         .map((item) => MailSummary.fromJson(item as Map<String, dynamic>))
         .toList();
   }
 
-  Future<List<MailSummary>> fetchAccountMessages(String accountId) async {
-    final response =
-        await _dio.get<List<dynamic>>('/accounts/$accountId/messages');
+  Future<List<MailSummary>> searchAccountMessages(
+    String accountId,
+    String query,
+  ) async {
+    final response = await _dio.get<List<dynamic>>(
+      '/accounts/$accountId/search',
+      queryParameters: {'q': query},
+      options: Options(receiveTimeout: const Duration(seconds: 60)),
+    );
     final data = response.data ?? [];
     return data
         .map((item) => MailSummary.fromJson(item as Map<String, dynamic>))
@@ -77,12 +84,6 @@ class MailApiClient {
         .map((item) =>
             MailProviderSummary.fromJson(item as Map<String, dynamic>))
         .toList();
-  }
-
-  Future<MessageDetail> fetchMessage(String messageId) async {
-    final response =
-        await _dio.get<Map<String, dynamic>>('/mail/messages/$messageId');
-    return MessageDetail.fromJson(response.data ?? {});
   }
 
   Future<MessageDetail> fetchAccountMessage({
@@ -124,6 +125,7 @@ class MailApiClient {
     required String incomingProtocol,
     required String secret,
     required InitialSyncOption initialSync,
+    ConnectionOverride? connectionOverride,
   }) async {
     await _dio.post('/accounts', data: {
       'providerId': providerId,
@@ -132,6 +134,8 @@ class MailApiClient {
       'incomingProtocol': incomingProtocol,
       'secret': secret,
       'initialSync': initialSync.toJson(),
+      if (connectionOverride != null)
+        'connectionOverride': connectionOverride.toJson(),
     });
   }
 
@@ -142,6 +146,7 @@ class MailApiClient {
     required String incomingProtocol,
     required String secret,
     required InitialSyncOption initialSync,
+    ConnectionOverride? connectionOverride,
   }) async {
     await _dio.post('/accounts/validate', data: {
       'providerId': providerId,
@@ -150,6 +155,8 @@ class MailApiClient {
       'incomingProtocol': incomingProtocol,
       'secret': secret,
       'initialSync': initialSync.toJson(),
+      if (connectionOverride != null)
+        'connectionOverride': connectionOverride.toJson(),
     });
   }
 
@@ -200,6 +207,12 @@ class MailApiClient {
     await _dio.post('/accounts/$accountId/sync');
   }
 
+  Future<void> setAccountNotifications(String accountId, bool enabled) async {
+    await _dio.patch('/accounts/$accountId/notifications', data: {
+      'enabled': enabled,
+    });
+  }
+
   Future<void> deleteAccount(String accountId) async {
     await _dio.delete('/accounts/$accountId');
   }
@@ -219,12 +232,18 @@ class MailApiClient {
     required List<String> to,
     required String subject,
     required String body,
+    List<String> cc = const [],
+    String? inReplyTo,
+    List<String> references = const [],
   }) async {
     await _dio.post('/mail/send', data: {
       'accountId': accountId,
       'to': to,
+      if (cc.isNotEmpty) 'cc': cc,
       'subject': subject,
       'text': body,
+      if (inReplyTo != null) 'inReplyTo': inReplyTo,
+      if (inReplyTo != null && references.isNotEmpty) 'references': references,
     });
   }
 }
@@ -313,8 +332,21 @@ class MessageDetail {
     required this.links,
     required this.receivedAtLabel,
     this.attachments = const [],
+    this.receivedAt,
+    this.accountId,
+    this.messageId,
+    this.references = const [],
+    this.replyTo = const [],
+    this.replyAllTo = const [],
+    this.replyAllCc = const [],
   });
 
+  final String? accountId;
+  final String? messageId;
+  final List<String> references;
+  final List<String> replyTo;
+  final List<String> replyAllTo;
+  final List<String> replyAllCc;
   final String id;
   final String sender;
   final String subject;
@@ -322,6 +354,7 @@ class MessageDetail {
   final List<MessageLink> links;
   final String receivedAtLabel;
   final List<MessageAttachment> attachments;
+  final DateTime? receivedAt;
 
   factory MessageDetail.fromJson(Map<String, dynamic> json) {
     return MessageDetail(
@@ -338,6 +371,14 @@ class MessageDetail {
           .whereType<Map<String, dynamic>>()
           .map(MessageAttachment.fromJson)
           .toList(growable: false),
+      receivedAt:
+          DateTime.tryParse(json['receivedAt'] as String? ?? '')?.toLocal(),
+      accountId: json['accountId'] as String?,
+      messageId: json['messageId'] as String?,
+      references: _strings(json['references']),
+      replyTo: _strings(json['replyTo']),
+      replyAllTo: _strings(json['replyAllTo']),
+      replyAllCc: _strings(json['replyAllCc']),
     );
   }
 }
@@ -377,6 +418,9 @@ String formatAttachmentSize(int bytes) {
   return '${value.toStringAsFixed(value < 10 ? 1 : 0)} ${units[unit]}';
 }
 
+List<String> _strings(Object? value) =>
+    (value as List<dynamic>? ?? const []).whereType<String>().toList();
+
 class MessageLink {
   const MessageLink({required this.url, required this.label});
 
@@ -403,6 +447,7 @@ class MailAccountSummary {
     this.syncErrorCode,
     required this.initialSync,
     required this.lastSyncedAtLabel,
+    this.notificationsEnabled = true,
   });
 
   final String id;
@@ -415,6 +460,7 @@ class MailAccountSummary {
   final String? syncErrorCode;
   final InitialSyncOption? initialSync;
   final String lastSyncedAtLabel;
+  final bool notificationsEnabled;
 
   factory MailAccountSummary.fromJson(Map<String, dynamic> json) {
     return MailAccountSummary(
@@ -431,8 +477,37 @@ class MailAccountSummary {
               json['initialSync'] as Map<String, dynamic>)
           : null,
       lastSyncedAtLabel: _formatReceivedAt(json['lastSyncedAt'] as String?),
+      notificationsEnabled: json['notificationsEnabled'] as bool? ?? true,
     );
   }
+}
+
+/// Incoming (IMAP) and outgoing (SMTP) servers of a custom mail account.
+class ConnectionOverride {
+  const ConnectionOverride({required this.incoming, required this.outgoing});
+
+  final ServerEndpoint incoming;
+  final ServerEndpoint outgoing;
+
+  Map<String, Object> toJson() => {
+        'incoming': incoming.toJson(),
+        'outgoing': outgoing.toJson(),
+      };
+}
+
+class ServerEndpoint {
+  const ServerEndpoint({
+    required this.host,
+    required this.port,
+    required this.secure,
+  });
+
+  final String host;
+  final int port;
+  final bool secure;
+
+  Map<String, Object> toJson() =>
+      {'host': host, 'port': port, 'secure': secure};
 }
 
 class InitialSyncOption {

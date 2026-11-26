@@ -1,5 +1,9 @@
 import { ImapFlow } from "imapflow";
-import type { FetchMessageObject, MessageStructureObject } from "imapflow";
+import type {
+  FetchMessageObject,
+  MessageStructureObject,
+  SearchObject
+} from "imapflow";
 import { simpleParser } from "mailparser";
 import type { OAuthTokenManager } from "../auth/OAuthTokenManager.js";
 import type {
@@ -8,7 +12,8 @@ import type {
   IncomingMessageContent,
   IncomingMessageLink,
   IncomingMessageSummary,
-  MailAccount
+  MailAccount,
+  MessageThreadHeaders
 } from "../domain/types.js";
 import { getProvider } from "../providers/providerRegistry.js";
 import {
@@ -146,6 +151,38 @@ export class ImapReceiver implements MailReceiver {
     return initial.result;
   }
 
+  // Searches the server, so messages that were never imported are found too.
+  async search(
+    account: MailAccount,
+    query: SearchObject,
+    limit = 50
+  ): Promise<IncomingMessageSummary[]> {
+    return this.withConnectedClient(account, async (client) => {
+      await client.mailboxOpen("INBOX", { readOnly: true });
+      const found = (await client.search(query, { uid: true })) || [];
+      const newest = found.sort((a, b) => b - a).slice(0, limit);
+      if (newest.length === 0) return [];
+      const summaries = await this.fetchUids(client, account, "INBOX", newest);
+      return summaries.sort(
+        (a, b) => b.receivedAt.getTime() - a.receivedAt.getTime()
+      );
+    });
+  }
+
+  async fetchSummary(
+    account: MailAccount,
+    mailbox: string,
+    providerMessageId: string
+  ): Promise<IncomingMessageSummary | null> {
+    const uid = Number(providerMessageId);
+    if (!Number.isInteger(uid) || uid <= 0) return null;
+    return this.withConnectedClient(account, async (client) => {
+      await client.mailboxOpen(mailbox, { readOnly: true });
+      const [summary] = await this.fetchUids(client, account, mailbox, [uid]);
+      return summary ?? null;
+    });
+  }
+
   async fetchMessageContent(
     account: MailAccount,
     mailbox: string,
@@ -158,7 +195,7 @@ export class ImapReceiver implements MailReceiver {
       await client.mailboxOpen(mailbox, { readOnly: true });
       const message = await client.fetchOne(
         providerMessageId,
-        { bodyStructure: true },
+        { bodyStructure: true, envelope: true, headers: ["references"] },
         { uid: true }
       );
       if (!message || !message.bodyStructure) {
@@ -166,6 +203,7 @@ export class ImapReceiver implements MailReceiver {
       }
 
       const attachments = extractAttachments(message.bodyStructure);
+      const thread = toThreadHeaders(message);
       const bodyParts = selectBodyParts(message.bodyStructure);
       let htmlFallback: IncomingMessageContent | null = null;
       let htmlLinks: IncomingMessageLink[] = [];
@@ -185,7 +223,9 @@ export class ImapReceiver implements MailReceiver {
 
         if (bodyPart.type.toLowerCase() !== "text/html") {
           const text = cleanMessageText(decoded);
-          if (text) return { text, truncated, links: htmlLinks, attachments };
+          if (text) {
+            return { text, truncated, links: htmlLinks, attachments, thread };
+          }
           continue;
         }
 
@@ -212,15 +252,14 @@ export class ImapReceiver implements MailReceiver {
             text,
             truncated,
             links: htmlLinks,
-            attachments
+            attachments,
+            thread
           };
         }
       }
 
-      if (htmlFallback) {
-        return { ...htmlFallback, links: htmlLinks, attachments };
-      }
-      return { text: "", truncated: false, links: [], attachments };
+      if (htmlFallback) return { ...htmlFallback, links: htmlLinks };
+      return { text: "", truncated: false, links: [], attachments, thread };
     } finally {
       await client.logout().catch(() => undefined);
     }
@@ -462,6 +501,21 @@ function toIncomingMessage(
     receivedAt: envelope.date instanceof Date ? envelope.date : new Date(),
     arrivedAt: message.internalDate instanceof Date ? message.internalDate : undefined,
     hasAttachments: false
+  };
+}
+
+function toThreadHeaders(message: FetchMessageObject): MessageThreadHeaders {
+  const envelope = message.envelope;
+  const addresses = (list?: Array<{ address?: string }>) =>
+    list?.map((item) => item.address).filter((a): a is string => Boolean(a)) ?? [];
+  // Unfold continuation lines, then collect every <msg-id> in the header.
+  const raw = message.headers?.toString("utf8").replace(/\r?\n[ \t]+/g, " ") ?? "";
+  return {
+    messageId: envelope?.messageId,
+    references: raw.match(/<[^<>\s]+>/g) ?? [],
+    replyTo: addresses(envelope?.replyTo),
+    to: addresses(envelope?.to),
+    cc: addresses(envelope?.cc)
   };
 }
 

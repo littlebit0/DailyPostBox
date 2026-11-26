@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
+import type { SearchObject } from "imapflow";
 import type { MailSender } from "../mail/MailSender.js";
 import type {
   AttachmentDownload,
@@ -13,11 +14,17 @@ import type {
   ProviderId
 } from "../domain/types.js";
 import type { AccountRepository } from "../workers/AccountRepository.js";
+import { replyFields } from "../mail/replyRecipients.js";
 import { providerRegistry } from "../providers/providerRegistry.js";
 import {
   applySyncFailure,
   isAuthenticationFailure
 } from "../mail/authenticationFailure.js";
+import {
+  SearchQueryError,
+  parseSearchQuery,
+  toImapSearch
+} from "../mail/searchQuery.js";
 
 const sendSchema = z.object({
   accountId: z.string(),
@@ -26,7 +33,9 @@ const sendSchema = z.object({
   bcc: z.array(z.string().email()).optional(),
   subject: z.string().default(""),
   html: z.string().optional(),
-  text: z.string().optional()
+  text: z.string().optional(),
+  inReplyTo: z.string().regex(/^<[^<>\s]+>$/).optional(),
+  references: z.array(z.string().regex(/^<[^<>\s]+>$/)).optional()
 });
 
 const pushTokenSchema = z.object({
@@ -70,19 +79,40 @@ const accountSchema = z.object({
       message: `${provider.displayName} does not support ${account.authMode} authentication.`
     });
   }
+  // The custom provider has no default host to fall back on.
+  if (account.providerId === "custom" &&
+    (!account.connectionOverride?.incoming || !account.connectionOverride.outgoing)) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["connectionOverride"],
+      message: "사용자 지정 메일 서버는 수신(IMAP)·발신(SMTP) 서버 주소와 포트가 필요합니다."
+    });
+  }
 });
 
 const demoUserId = "demo-user";
 
-// shortcut: no real auth yet (issue #20), so attachment downloads are
-// loopback-only unless ALLOW_REMOTE_MAIL_ACCESS=true. Host and Origin checks
-// also block DNS rebinding and cross-site browser requests to localhost.
-function canReadAttachments(request: FastifyRequest): boolean {
-  if (process.env.ALLOW_REMOTE_MAIL_ACCESS === "true") return true;
+// shortcut: no real auth yet (issue #20), so mail search, the IMAP fallback
+// and attachment downloads require a loopback peer, a loopback Host (blocks
+// DNS rebinding) and no Origin header (browsers send one, the native client
+// does not), unless their opt-out flag is "true".
+function isLocalMailRequest(
+  request: FastifyRequest,
+  optOutFlag: "ALLOW_REMOTE_MAIL_SEARCH" | "ALLOW_REMOTE_MAIL_ACCESS"
+): boolean {
+  if (process.env[optOutFlag] === "true") return true;
   const host = (request.headers.host ?? "").replace(/:\d+$/, "").toLowerCase();
   return ["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(request.ip) &&
     ["127.0.0.1", "localhost", "[::1]"].includes(host) &&
     request.headers.origin === undefined;
+}
+
+function canReadUnstoredMail(request: FastifyRequest): boolean {
+  return isLocalMailRequest(request, "ALLOW_REMOTE_MAIL_SEARCH");
+}
+
+function canReadAttachments(request: FastifyRequest): boolean {
+  return isLocalMailRequest(request, "ALLOW_REMOTE_MAIL_ACCESS");
 }
 
 export async function registerRoutes(
@@ -100,6 +130,14 @@ export async function registerRoutes(
       message: IncomingMessageSummary,
       part: string
     ) => Promise<AttachmentDownload | null>;
+    searchMessages: (
+      account: MailAccount,
+      query: SearchObject
+    ) => Promise<IncomingMessageSummary[]>;
+    fetchMessageSummary: (
+      account: MailAccount,
+      providerMessageId: string
+    ) => Promise<IncomingMessageSummary | null>;
     startAccountSync: (account: MailAccount) => Promise<void>;
     resumeAccountSync: (account: MailAccount) => Promise<void>;
     stopAccountSync: (accountId: string) => Promise<void>;
@@ -185,6 +223,23 @@ export async function registerRoutes(
     await deps.stopAccountSync(params.id);
     await deps.accounts.deleteAccount(params.id);
     return reply.code(204).send();
+  });
+
+  app.patch("/accounts/:id/notifications", async (request, reply) => {
+    const params = z.object({ id: z.string() }).parse(request.params);
+    const body = z.object({ enabled: z.boolean() }).parse(request.body);
+    const account = await deps.accounts.getAccount(params.id);
+
+    if (!account || account.userId !== demoUserId) {
+      return reply.code(404).send({ error: "Account not found" });
+    }
+
+    account.notificationsEnabled = body.enabled;
+    account.updatedAt = new Date();
+    await deps.accounts.updateAccount(account);
+
+    const { encryptedSecretRef: _secret, ...publicAccount } = account;
+    return publicAccount;
   });
 
   app.post("/accounts/:id/validate", async (request, reply) => {
@@ -295,6 +350,39 @@ export async function registerRoutes(
       }));
   });
 
+  app.get("/accounts/:id/search", async (request, reply) => {
+    if (!canReadUnstoredMail(request)) {
+      return reply.code(403).send({ error: "Search is only available locally." });
+    }
+    const params = z.object({ id: z.string() }).parse(request.params);
+    const { q } = z.object({ q: z.string().max(500) }).parse(request.query);
+    const account = await deps.accounts.getAccount(params.id);
+
+    if (!account || account.userId !== demoUserId) {
+      return reply.code(404).send({ error: "Account not found" });
+    }
+    if (account.incomingProtocol !== "imap") {
+      return reply.code(400).send({ error: "Search needs an IMAP account." });
+    }
+
+    let query: SearchObject;
+    try {
+      query = toImapSearch(parseSearchQuery(q));
+    } catch (error) {
+      if (error instanceof SearchQueryError) {
+        return reply.code(400).send({ error: error.message });
+      }
+      throw error;
+    }
+
+    const messages = await deps.searchMessages(account, query);
+    return messages.map((message) => ({
+      ...message,
+      id: message.providerMessageId,
+      receivedAt: message.receivedAt.toISOString()
+    }));
+  });
+
   app.get("/accounts/:accountId/messages/:messageId", async (request, reply) => {
     const params = z.object({
       accountId: z.string(),
@@ -307,10 +395,13 @@ export async function registerRoutes(
     }
 
     const messages = await deps.accounts.listInbox(demoUserId);
+    // Search results can point at mail that was never imported.
     const message = messages.find(
       (item) => item.accountId === params.accountId &&
         item.providerMessageId === params.messageId
-    );
+    ) ?? (account.incomingProtocol === "imap" && canReadUnstoredMail(request)
+      ? await deps.fetchMessageSummary(account, params.messageId)
+      : null);
     if (!message) {
       return reply.code(404).send({ error: "Message not found" });
     }
@@ -324,7 +415,8 @@ export async function registerRoutes(
       body: content.text,
       bodyTruncated: content.truncated,
       bodyLinks: content.links,
-      attachments: content.attachments
+      attachments: content.attachments,
+      ...replyFields(message, content, account)
     };
   });
 
@@ -346,10 +438,14 @@ export async function registerRoutes(
       }
 
       const messages = await deps.accounts.listInbox(demoUserId);
+      // Search results can point at mail that was never imported; this route
+      // is already local-only, and canReadUnstoredMail keeps the search gate.
       const message = messages.find(
         (item) => item.accountId === params.accountId &&
           item.providerMessageId === params.messageId
-      );
+      ) ?? (account.incomingProtocol === "imap" && canReadUnstoredMail(request)
+        ? await deps.fetchMessageSummary(account, params.messageId)
+        : null);
       if (!message) {
         return reply.code(404).send({ error: "Message not found" });
       }
@@ -384,30 +480,6 @@ export async function registerRoutes(
       id: message.providerMessageId,
       receivedAt: message.receivedAt.toISOString()
     }));
-  });
-
-  app.get("/mail/messages/:id", async (request, reply) => {
-    const params = z.object({ id: z.string() }).parse(request.params);
-    const message = await deps.accounts.getMessage(demoUserId, params.id);
-
-    if (!message) {
-      return reply.code(404).send({ error: "Message not found" });
-    }
-    const account = await deps.accounts.getAccount(message.accountId);
-    if (!account || account.userId !== demoUserId) {
-      return reply.code(404).send({ error: "Account not found" });
-    }
-    const content = await deps.fetchMessageContent(account, message);
-
-    return {
-      ...message,
-      id: message.providerMessageId,
-      receivedAt: message.receivedAt.toISOString(),
-      body: content.text,
-      bodyTruncated: content.truncated,
-      bodyLinks: content.links,
-      attachments: content.attachments
-    };
   });
 
   app.post("/mail/send", async (request, reply) => {

@@ -7,31 +7,28 @@ import '../../services/mail_api_client.dart';
 import '../../widgets/app_shell.dart';
 import 'attachment_list.dart';
 import 'linked_message_body.dart';
+import 'reply_draft.dart';
 
-typedef MessageRequest = ({String messageId, String? accountId});
+typedef MessageRequest = ({String messageId, String accountId});
 
+// Messages are looked up per account: IMAP UIDs repeat across accounts.
 final messageProvider =
     FutureProvider.family<MessageDetail, MessageRequest>((ref, request) {
-  final api = ref.watch(mailApiClientProvider);
-  final accountId = request.accountId;
-  if (accountId != null) {
-    return api.fetchAccountMessage(
-      accountId: accountId,
-      messageId: request.messageId,
-    );
-  }
-  return api.fetchMessage(request.messageId);
+  return ref.watch(mailApiClientProvider).fetchAccountMessage(
+        accountId: request.accountId,
+        messageId: request.messageId,
+      );
 });
 
 class MessagePage extends ConsumerWidget {
   const MessagePage({
     super.key,
     required this.messageId,
-    this.accountId,
+    required this.accountId,
   });
 
   final String messageId;
-  final String? accountId;
+  final String accountId;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -39,8 +36,7 @@ class MessagePage extends ConsumerWidget {
       messageProvider((messageId: messageId, accountId: accountId)),
     );
     final strings = ref.watch(appStringsProvider);
-    final mailboxPath =
-        accountId == null ? '/accounts' : '/accounts/$accountId/mail';
+    final mailboxPath = '/accounts/$accountId/mail';
 
     final content = Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -56,16 +52,18 @@ class MessagePage extends ConsumerWidget {
           ),
           title: Text(strings.message),
           actions: [
-            IconButton(
-              tooltip: strings.reply,
-              onPressed: () {},
-              icon: const Icon(Icons.reply),
-            ),
-            IconButton(
-              tooltip: strings.archive,
-              onPressed: () {},
-              icon: const Icon(Icons.archive_outlined),
-            ),
+            if (message.value case final item?) ...[
+              IconButton(
+                tooltip: strings.reply,
+                onPressed: () => _reply(context, item, strings, all: false),
+                icon: const Icon(Icons.reply),
+              ),
+              IconButton(
+                tooltip: strings.replyAll,
+                onPressed: () => _reply(context, item, strings, all: true),
+                icon: const Icon(Icons.reply_all),
+              ),
+            ],
           ],
         ),
         Expanded(
@@ -82,9 +80,9 @@ class MessagePage extends ConsumerWidget {
                 Text(item.receivedAtLabel),
                 const Divider(height: 32),
                 LinkedMessageBody(body: item.body, links: item.links),
-                if (item.attachments.isNotEmpty && accountId != null)
+                if (item.attachments.isNotEmpty)
                   AttachmentList(
-                    accountId: accountId!,
+                    accountId: accountId,
                     messageId: messageId,
                     attachments: item.attachments,
                   ),
@@ -99,13 +97,21 @@ class MessagePage extends ConsumerWidget {
       ],
     );
 
-    final selectedAccountId = accountId;
-    if (selectedAccountId == null) {
-      return Scaffold(body: content);
-    }
     return AppShell(
-      selectedDestinationId: AppShell.accountDestinationId(selectedAccountId),
+      selectedDestinationId: AppShell.accountDestinationId(accountId),
       child: content,
+    );
+  }
+
+  void _reply(
+    BuildContext context,
+    MessageDetail item,
+    AppStrings strings, {
+    required bool all,
+  }) {
+    context.go(
+      '/accounts/${item.accountId ?? accountId}/compose',
+      extra: ReplyDraft.from(item, strings, all: all),
     );
   }
 }

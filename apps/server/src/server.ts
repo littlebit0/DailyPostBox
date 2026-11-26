@@ -75,6 +75,9 @@ await registerRoutes(app, {
       part
     );
   },
+  searchMessages: async (account, query) => imap.search(account, query),
+  fetchMessageSummary: async (account, providerMessageId) =>
+    imap.fetchSummary(account, "INBOX", providerMessageId),
   startAccountSync: async (account) => worker.startAccount(account),
   resumeAccountSync: async (account) => worker.resumeAccount(account),
   stopAccountSync: async (accountId) => worker.stopAccount(accountId)

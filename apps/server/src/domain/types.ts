@@ -49,6 +49,8 @@ export interface MailAccount {
     limit: number | "all";
   };
   lastSyncedAt?: Date;
+  // Missing means on, so accounts stored before this field keep notifying.
+  notificationsEnabled?: boolean;
   // Every message up to this UID was checked by a completed sync, in the
   // mailbox numbering named by syncedUidValidity (IMAP sends a bigint).
   syncedUid?: number;
@@ -91,6 +93,9 @@ export interface IncomingMessageContent {
   truncated: boolean;
   links: IncomingMessageLink[];
   attachments: IncomingMessageAttachment[];
+  // Read from the server on each body fetch, so messages saved before reply
+  // support still get a Message-ID without a stored-data migration.
+  thread?: MessageThreadHeaders;
 }
 
 export interface IncomingMessageAttachment {
@@ -108,6 +113,14 @@ export interface AttachmentDownload {
   close: () => Promise<void>;
 }
 
+export interface MessageThreadHeaders {
+  messageId?: string;
+  references: string[];
+  replyTo: string[];
+  to: string[];
+  cc: string[];
+}
+
 export interface IncomingMessageLink {
   url: string;
   label: string;
@@ -121,6 +134,8 @@ export interface OutgoingMessageDraft {
   subject: string;
   html?: string;
   text?: string;
+  inReplyTo?: string;
+  references?: string[];
   attachments?: Array<{
     filename: string;
     contentType: string;

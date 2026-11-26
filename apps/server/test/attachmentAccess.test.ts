@@ -33,6 +33,9 @@ async function build() {
   const app = Fastify();
   await registerRoutes(app, {
     accounts,
+    fetchMessageSummary: async (_account: unknown, id: string) => id === "9"
+      ? { accountId: "a1", providerMessageId: "9", mailbox: "INBOX", from: "", subject: "", receivedAt: now, hasAttachments: true }
+      : null,
     downloadAttachment: async () => {
       downloads++;
       return {
@@ -80,6 +83,19 @@ test("ALLOW_REMOTE_MAIL_ACCESS=true opts remote callers in", async () => {
     const { app } = await build();
     const res = await app.inject({ url, remoteAddress: "192.168.0.5" });
     assert.equal(res.statusCode, 200);
+  } finally {
+    delete process.env.ALLOW_REMOTE_MAIL_ACCESS;
+  }
+});
+
+test("unimported search results download locally but stay behind the search gate", async () => {
+  const unstored = "/accounts/a1/messages/9/attachments/2";
+  const { app } = await build();
+  assert.equal((await app.inject({ url: unstored, remoteAddress: "127.0.0.1" })).statusCode, 200);
+  process.env.ALLOW_REMOTE_MAIL_ACCESS = "true";
+  try {
+    const res = await app.inject({ url: unstored, remoteAddress: "192.168.0.5" });
+    assert.equal(res.statusCode, 404);
   } finally {
     delete process.env.ALLOW_REMOTE_MAIL_ACCESS;
   }

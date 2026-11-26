@@ -330,7 +330,7 @@ export class MailSyncWorker {
     notify = true
   ): Promise<void> {
     const isNew = await this.accounts.saveIncomingMessage(message);
-    if (!notify || !isNew) return;
+    if (!notify || !isNew || account.notificationsEnabled === false) return;
     const targets = await this.accounts.listPushTargets(account.userId);
     // Push delivery must never block or tear down the IMAP watcher.
     void this.push.notifyNewMessage(targets, message).catch((error: unknown) => {
