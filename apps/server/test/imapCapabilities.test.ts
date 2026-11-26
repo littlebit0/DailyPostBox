@@ -28,8 +28,11 @@ test("ImapReceiver records idle=false for providers that never run IDLE", async 
     recordCapabilities(account: unknown, client: unknown): void;
   };
   const client = { capabilities: new Map([["IDLE", true]]) };
-  const custom: { providerId: string; incomingCapabilities?: { idle: boolean } } = { providerId: "custom" };
-  const gmail: typeof custom = { providerId: "gmail" };
+  const custom: { providerId: string; incomingProtocol: string; incomingCapabilities?: { idle: boolean } } = {
+    providerId: "custom",
+    incomingProtocol: "imap"
+  };
+  const gmail: typeof custom = { providerId: "gmail", incomingProtocol: "imap" };
   receiver.recordCapabilities(custom, client);
   receiver.recordCapabilities(gmail, client);
   assert.equal(custom.incomingCapabilities?.idle, false);
