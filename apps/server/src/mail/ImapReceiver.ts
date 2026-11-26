@@ -15,12 +15,24 @@ import { resolveIncomingSettings } from "../providers/resolveConnectionSettings.
 import type { SecretResolver } from "../security/SecretResolver.js";
 import type { MailReceiver } from "./MailReceiver.js";
 import {
+  batchLimit,
+  cursorUid,
   latestUidSearchQuery,
   newestFirstUidBatches
 } from "./imapSequenceRanges.js";
 import { isAuthenticationFailure } from "./authenticationFailure.js";
 import { extractAttachments } from "./attachments.js";
 import { extractMessageLinks } from "./messageLinks.js";
+import { createExistsQueue } from "./existsQueue.js";
+
+export type { ImapSyncCursor } from "./imapSequenceRanges.js";
+import type { ImapSyncCursor } from "./imapSequenceRanges.js";
+
+export interface ImapSyncResult {
+  uidValidity: string;
+  // Newest UID that existed when the sync opened the mailbox.
+  highestUid?: number;
+}
 
 export class ImapReceiver implements MailReceiver {
   private static readonly maxBodyBytes = 2 * 1024 * 1024;
@@ -55,23 +67,37 @@ export class ImapReceiver implements MailReceiver {
     account: MailAccount,
     mailbox: string,
     limit: number | "all",
-    onBatch: (messages: IncomingMessageSummary[]) => Promise<void>
-  ): Promise<void> {
+    onBatch: (messages: IncomingMessageSummary[]) => Promise<void>,
+    cursor?: ImapSyncCursor
+  ): Promise<ImapSyncResult> {
     const initial = await this.withConnectionRetry(async () => {
       return this.withConnectedClient(account, async (client) => {
         const openedMailbox = await client.mailboxOpen(mailbox, {
           readOnly: true
         });
-        const uids = await this.searchLatestUids(
-          client,
-          openedMailbox.exists,
-          limit
+        const uidValidity = String(openedMailbox.uidValidity);
+        const afterUid = cursorUid(cursor, uidValidity);
+        const uids = afterUid === undefined
+          ? await this.searchLatestUids(client, openedMailbox.exists, limit)
+          : await this.searchUidsAfter(client, afterUid);
+        const batches = newestFirstUidBatches(
+          uids,
+          batchLimit(afterUid, limit)
         );
-        const batches = newestFirstUidBatches(uids, limit);
         const firstUids = batches.at(0);
+        const newestSeen = uids.reduce(
+          (newest, uid) => Math.max(newest, uid),
+          afterUid ?? 0
+        );
 
         return {
-          uidValidity: openedMailbox.uidValidity,
+          rawUidValidity: openedMailbox.uidValidity,
+          result: {
+            uidValidity,
+            highestUid: openedMailbox.uidNext
+              ? Number(openedMailbox.uidNext) - 1
+              : newestSeen || undefined
+          },
           firstBatch: firstUids
             ? await this.fetchUids(client, account, mailbox, firstUids)
             : [],
@@ -93,7 +119,7 @@ export class ImapReceiver implements MailReceiver {
           const openedMailbox = await client.mailboxOpen(mailbox, {
             readOnly: true
           });
-          if (openedMailbox.uidValidity !== initial.uidValidity) {
+          if (openedMailbox.uidValidity !== initial.rawUidValidity) {
             throw new Error("Mailbox UIDVALIDITY changed during import");
           }
           return this.fetchUids(client, account, mailbox, uids);
@@ -104,6 +130,7 @@ export class ImapReceiver implements MailReceiver {
         await onBatch(batch);
       }
     }
+    return initial.result;
   }
 
   async fetchMessageContent(
@@ -245,7 +272,6 @@ export class ImapReceiver implements MailReceiver {
     const client = await this.createClient(account);
     let stopped = false;
     let disconnectReported = false;
-    let handlingExists = false;
 
     const reportDisconnect = (error: Error) => {
       if (stopped || disconnectReported) return;
@@ -267,19 +293,14 @@ export class ImapReceiver implements MailReceiver {
       throw error;
     }
 
-    client.on("exists", () => {
-      if (handlingExists || stopped) return;
-      handlingExists = true;
-
-      void this.fetchLatest(account, mailbox, 1)
-        .then((latest) => latest.at(-1))
-        .then((message) => message ? onMessage(message) : undefined)
-        .catch((error: unknown) => {
-          reportDisconnect(toError(error));
-        })
-        .finally(() => {
-          handlingExists = false;
-        });
+    const handleExists = createExistsQueue({
+      fetchNewest: (count) => this.fetchLatest(account, mailbox, count),
+      onMessage,
+      onError: (error) => reportDisconnect(toError(error)),
+      isStopped: () => stopped
+    });
+    client.on("exists", (event) => {
+      void handleExists(event);
     });
 
     return async () => {
@@ -339,6 +360,15 @@ export class ImapReceiver implements MailReceiver {
     const query = latestUidSearchQuery(exists, limit);
     if (!query) return [];
     return (await client.search(query, { uid: true })) || [];
+  }
+
+  private async searchUidsAfter(
+    client: ImapFlow,
+    afterUid: number
+  ): Promise<number[]> {
+    // "n:*" always matches the newest message even when its UID is below n.
+    const uids = (await client.search({ uid: `${afterUid + 1}:*` }, { uid: true })) || [];
+    return uids.filter((uid) => uid > afterUid);
   }
 
   private async fetchUids(
