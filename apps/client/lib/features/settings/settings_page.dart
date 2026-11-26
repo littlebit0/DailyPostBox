@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/i18n/language_controller.dart';
 import '../../services/mail_api_client.dart';
 import '../../services/push_service.dart';
+import '../accounts/account_providers.dart';
 import '../accounts/accounts_page.dart' show friendlyError;
 import '../../widgets/app_shell.dart';
 
@@ -47,10 +48,30 @@ class SettingsPage extends ConsumerWidget {
                   ),
                 ),
                 SwitchListTile(
-                  value: true,
-                  onChanged: (_) {},
-                  title: Text(strings.pushNotifications),
-                  subtitle: Text(strings.pushNotificationsDescription),
+                  value: ref.watch(threadViewProvider),
+                  onChanged: ref.read(threadViewProvider.notifier).set,
+                  title: Text(strings.threadView),
+                  subtitle: Text(strings.threadViewDescription),
+                ),
+                ListTile(
+                  leading: const Icon(Icons.undo),
+                  title: Text(strings.undoSendSetting),
+                  subtitle: Text(strings.undoSendSettingDescription),
+                  trailing: DropdownButton<int>(
+                    value: ref.watch(undoSendDelayProvider),
+                    items: [
+                      for (final seconds in undoSendDelayOptions)
+                        DropdownMenuItem(
+                          value: seconds,
+                          child: Text(strings.secondsLabel(seconds)),
+                        ),
+                    ],
+                    onChanged: (value) {
+                      if (value != null) {
+                        ref.read(undoSendDelayProvider.notifier).state = value;
+                      }
+                    },
+                  ),
                 ),
                 ListTile(
                   leading: const Icon(Icons.notifications_active_outlined),

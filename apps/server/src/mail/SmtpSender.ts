@@ -26,7 +26,8 @@ export class SmtpSender implements MailSender {
       bcc: draft.bcc,
       subject: draft.subject,
       text: draft.text,
-      html: draft.html
+      html: draft.html,
+      ...threadingHeaders(draft)
     });
 
     return {
@@ -62,4 +63,14 @@ export class SmtpSender implements MailSender {
 
     return nodemailer.createTransport(options);
   }
+}
+
+// RFC 5322 3.6.4: References is the parent's References plus its Message-ID.
+export function threadingHeaders(
+  draft: Pick<OutgoingMessageDraft, "inReplyTo" | "references">
+): { inReplyTo?: string; references?: string[] } {
+  if (!draft.inReplyTo) return {};
+  const references = [...(draft.references ?? [])];
+  if (!references.includes(draft.inReplyTo)) references.push(draft.inReplyTo);
+  return { inReplyTo: draft.inReplyTo, references };
 }

@@ -1,6 +1,6 @@
 import type { MailAccount } from "../domain/types.js";
 import type { PushTarget } from "../notifications/PushNotifier.js";
-import type { IncomingMessageSummary } from "../domain/types.js";
+import type { IncomingMessageSummary, MessageFlagChange } from "../domain/types.js";
 
 export interface AccountRepository {
   listActiveAccounts(): Promise<MailAccount[]>;
@@ -12,8 +12,13 @@ export interface AccountRepository {
   savePushTarget(target: PushTarget): Promise<void>;
   deletePushTarget(target: PushTarget): Promise<void>;
   listInbox(userId: string): Promise<IncomingMessageSummary[]>;
-  getMessage(userId: string, messageId: string): Promise<IncomingMessageSummary | undefined>;
   saveIncomingMessage(message: IncomingMessageSummary): Promise<boolean>;
+  updateMessageFlags(
+    accountId: string,
+    providerMessageId: string,
+    change: MessageFlagChange
+  ): Promise<void>;
+  deleteMessages(accountId: string): Promise<void>;
 }
 
 export class InMemoryAccountRepository implements AccountRepository {
@@ -88,12 +93,10 @@ export class InMemoryAccountRepository implements AccountRepository {
       .sort((a, b) => b.receivedAt.getTime() - a.receivedAt.getTime());
   }
 
-  async getMessage(
-    userId: string,
-    messageId: string
-  ): Promise<IncomingMessageSummary | undefined> {
-    const inbox = await this.listInbox(userId);
-    return inbox.find((message) => message.providerMessageId === messageId);
+  async deleteMessages(accountId: string): Promise<void> {
+    for (const [key, message] of this.messages) {
+      if (message.accountId === accountId) this.messages.delete(key);
+    }
   }
 
   async saveIncomingMessage(message: IncomingMessageSummary): Promise<boolean> {
@@ -105,5 +108,15 @@ export class InMemoryAccountRepository implements AccountRepository {
     const isNew = !this.messages.has(key);
     this.messages.set(key, message);
     return isNew;
+  }
+
+  async updateMessageFlags(
+    accountId: string,
+    providerMessageId: string,
+    change: MessageFlagChange
+  ): Promise<void> {
+    const key = `${accountId}:${providerMessageId}`;
+    const message = this.messages.get(key);
+    if (message) this.messages.set(key, { ...message, ...change });
   }
 }

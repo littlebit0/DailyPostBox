@@ -18,13 +18,16 @@ export interface MailSyncWorkerOptions {
   mailbox: string;
   imapReconnectBaseDelayMs: number;
   imapReconnectMaxDelayMs: number;
+  /** Pause between thread-metadata backfill batches (default 250). */
+  backfillYieldMs?: number;
 }
 
 export class MailSyncWorker {
-  private static readonly backfillLimit = 500;
   private static readonly backfillBatch = 50;
   private readonly stopHandlers = new Map<string, () => Promise<void>>();
   private readonly pollingTimers = new Map<string, NodeJS.Timeout>();
+  // accountId -> running backfill; stopAccount/stop drop the token to cancel it.
+  private readonly backfills = new Map<string, { token: object; done: Promise<void>; saving?: Promise<unknown> }>();
   private readonly syncPromises = new Map<string, Promise<void>>();
   // stopAccount drops the token so a sync still running with replaced
   // credentials cannot overwrite the status of the restarted sync.
@@ -111,8 +114,12 @@ export class MailSyncWorker {
     const polled = account.lastSyncedAt !== undefined &&
       account.incomingProtocol === "imap" &&
       !supportsImapIdle(account);
+    // Set once a changed UIDVALIDITY dropped the saved mail; the re-import
+    // restores mail the user already had, so it announces nothing.
+    let recovering = false;
     const notifies = (message: IncomingMessageSummary) =>
-      polled && (message.arrivedAt ?? message.receivedAt) >= account.createdAt;
+      !recovering && polled &&
+      (message.arrivedAt ?? message.receivedAt) >= account.createdAt;
     // An account that opted out of previous mail keeps only mail that
     // reached the server after it was added. The server's arrival time is
     // used, not the sender's Date header, so delayed new mail is kept.
@@ -145,7 +152,16 @@ export class MailSyncWorker {
               )
             );
           },
-          cursor
+          cursor,
+          async (uidValidity) => {
+            if (await this.reconcileUidValidity(account, uidValidity)) {
+              recovering = true;
+            }
+            // An opted-out account takes back everything since it was added
+            // (isWanted drops older mail) instead of a zero-message import.
+            // Derived on every call so a connection retry keeps it.
+            return recovering && skipHistory ? "all" : this.initialSyncLimit(account);
+          }
         );
       } else if (limit !== 0) {
         const messages = await this.pop3.fetchLatest(
@@ -161,13 +177,7 @@ export class MailSyncWorker {
       }
 
       if (account.incomingProtocol === "imap" && isCurrent()) {
-        // Best effort: a failed backfill must not fail the sync itself.
-        await this.backfillCategories(account).catch((error: unknown) => {
-          console.warn("imap:category-backfill-failed", {
-            accountId: account.id,
-            error: error instanceof Error ? error.message : String(error)
-          });
-        });
+        this.startBackfill(account);
       }
 
       if (!isCurrent()) return;
@@ -189,6 +199,9 @@ export class MailSyncWorker {
   }
 
   async stop(): Promise<void> {
+    const saving = [...this.backfills.values()].map((b) => b.saving);
+    this.backfills.clear();
+    await Promise.all(saving);
     for (const timer of this.pollingTimers.values()) clearInterval(timer);
     this.pollingTimers.clear();
 
@@ -202,6 +215,10 @@ export class MailSyncWorker {
     this.pendingStarts.delete(accountId);
     this.syncPromises.delete(accountId);
     this.syncTokens.delete(accountId);
+    const backfill = this.backfills.get(accountId);
+    this.backfills.delete(accountId);
+    // Wait for the batch save already issued so nothing is written after the caller deletes the account.
+    await backfill?.saving?.catch(() => undefined);
 
     const timer = this.pollingTimers.get(accountId);
     if (timer) {
@@ -279,6 +296,9 @@ export class MailSyncWorker {
           scheduleReconnect
         );
         reconnectDelay = this.options.imapReconnectBaseDelayMs;
+        if (account.incomingCapabilities) {
+          await this.accounts.updateAccount(account).catch(() => undefined);
+        }
         // Mail that arrived while disconnected raised no IDLE event. A sync
         // already running may have taken its UID snapshot before the outage,
         // so a fresh one starts after it instead of joining it.
@@ -329,7 +349,7 @@ export class MailSyncWorker {
     notify = true
   ): Promise<void> {
     const isNew = await this.accounts.saveIncomingMessage(message);
-    if (!notify || !isNew) return;
+    if (!notify || !isNew || account.notificationsEnabled === false) return;
     const targets = await this.accounts.listPushTargets(account.userId);
     // Push delivery must never block or tear down the IMAP watcher.
     void this.push.notifyNewMessage(targets, message).catch((error: unknown) => {
@@ -340,38 +360,133 @@ export class MailSyncWorker {
     });
   }
 
-  // Messages stored before classification existed have no category and the
-  // 25-message sync never revisits them. Every processed message gets one
-  // (even "person"), so it is not fetched again.
-  private async backfillCategories(account: MailAccount): Promise<void> {
+  /** Resolves when the account's background backfill (if any) has ended. */
+  async backfillSettled(accountId: string): Promise<void> {
+    await this.backfills.get(accountId)?.done;
+  }
+
+  // Messages stored before threading or classification existed have no header
+  // metadata (or no category) and the 25-message sync never revisits them. One
+  // fetch fills both. Backfill runs in the background in
+  // 50-message batches until none is left. Progress is the stored metadata
+  // itself (a message the server no longer has gets `references: []` and
+  // category "person"), so a
+  // restart or the next sync simply continues with what is still missing.
+  private startBackfill(account: MailAccount): void {
+    if (this.backfills.has(account.id)) return;
+    const token = {};
+    const entry: { token: object; done: Promise<void>; saving?: Promise<unknown> } = {
+      token,
+      done: Promise.resolve()
+    };
+    this.backfills.set(account.id, entry);
+    entry.done = this.backfillThreadMetadata(account, token, entry)
+      .catch((error) => {
+        console.warn("imap:backfill-stopped", {
+          accountId: account.id,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      })
+      .then(async () => {
+        if (this.backfills.get(account.id)?.token !== token || !account.threadBackfill) return;
+        // Tell clients the backfill ended so they reload the list once more.
+        account.threadBackfill = undefined;
+        await this.accounts.updateAccount(account).catch(() => undefined);
+      })
+      .finally(() => {
+        if (this.backfills.get(account.id)?.token === token) {
+          this.backfills.delete(account.id);
+        }
+      });
+  }
+
+  private async backfillThreadMetadata(
+    account: MailAccount,
+    token: object,
+    entry: { saving?: Promise<unknown> }
+  ): Promise<void> {
+    const active = () => this.backfills.get(account.id)?.token === token;
+    const needsThread = (message: IncomingMessageSummary) =>
+      message.messageId === undefined &&
+      message.gmailThreadId === undefined &&
+      message.references === undefined;
     const pending = (await this.accounts.listInbox(account.userId))
       .filter((message) =>
         message.accountId === account.id &&
-        message.category === undefined &&
-        /^\d+$/.test(message.providerMessageId))
-      .slice(0, MailSyncWorker.backfillLimit);
+        (needsThread(message) || message.category === undefined) &&
+        /^\d+$/.test(message.providerMessageId));
 
     const byMailbox = new Map<string, typeof pending>();
     for (const message of pending) {
-      byMailbox.set(message.mailbox, [...(byMailbox.get(message.mailbox) ?? []), message]);
+      const group = byMailbox.get(message.mailbox);
+      if (group) group.push(message);
+      else byMailbox.set(message.mailbox, [message]);
     }
+    if (pending.length === 0 || !active()) return;
+    account.threadBackfill = "running";
+    await this.accounts.updateAccount(account);
     for (const [mailbox, stored] of byMailbox) {
+      // The synced mailbox is checked against the UIDVALIDITY the sync recorded.
+      let expectedUidValidity = mailbox === this.options.mailbox ? account.uidValidity : undefined;
+      const tracked = expectedUidValidity !== undefined;
       for (let i = 0; i < stored.length; i += MailSyncWorker.backfillBatch) {
+        // Yield first so sync and other accounts are not starved.
+        await new Promise((resolve) => setTimeout(resolve, this.options.backfillYieldMs ?? 250));
+        if (!active()) return;
         const batch = stored.slice(i, i + MailSyncWorker.backfillBatch);
-        const fetched = new Map(
-          (await this.imap.fetchSummariesByUid(
-            account, mailbox, batch.map((m) => Number(m.providerMessageId))
-          )).map((m) => [m.providerMessageId, m.category])
+        const { uidValidity, messages } = await this.imap.fetchSummariesByUid(
+          account, mailbox, batch.map((m) => Number(m.providerMessageId))
         );
-        // Concurrent saves let the file repository coalesce them into one write.
-        await Promise.all(batch.map((message) =>
-          this.accounts.saveIncomingMessage({
+        expectedUidValidity ??= uidValidity;
+        // Same UIDs under a new UIDVALIDITY are other messages; never copy their headers.
+        if (uidValidity !== expectedUidValidity) {
+          throw new Error("Mailbox UIDVALIDITY changed during backfill");
+        }
+        const fetched = new Map(messages.map((m) => [m.providerMessageId, m]));
+        if (!active()) return;
+        // A sync that saw a new UIDVALIDITY meanwhile dropped this mail; saving would restore it.
+        if (tracked && account.uidValidity !== expectedUidValidity) return;
+        // Concurrent saves share one coalesced file write instead of one per message.
+        entry.saving = Promise.all(batch.map((message) => {
+          const found = fetched.get(message.providerMessageId);
+          return this.accounts.saveIncomingMessage({
             ...message,
-            // Gone from the server: default to "person" so it is tried once.
-            category: fetched.get(message.providerMessageId) ?? "person"
-          })));
+            // Only the missing part is filled, so each marker stays exact.
+            ...(needsThread(message) && {
+              messageId: found?.messageId,
+              inReplyTo: found?.inReplyTo,
+              references: found?.references ?? [],
+              gmailThreadId: found?.gmailThreadId
+            }),
+            // Gone from the server: "person", so it is not fetched again.
+            category: message.category ?? found?.category ?? "person",
+            // The snapshot predates this batch; the server's flags are newer.
+            seen: found?.seen ?? message.seen,
+            flagged: found?.flagged ?? message.flagged
+          });
+        }));
+        await entry.saving;
       }
     }
+  }
+
+  // Saved UIDs point at other messages once the mailbox's UIDVALIDITY
+  // changes, so the account's mail is dropped to be imported again.
+  // Returns true when it dropped the mail.
+  private async reconcileUidValidity(
+    account: MailAccount,
+    current: string
+  ): Promise<boolean> {
+    if (account.uidValidity === current) return false;
+    const changed = account.uidValidity !== undefined;
+    if (changed) {
+      console.warn("imap:uidvalidity-changed", { accountId: account.id });
+      await this.accounts.deleteMessages(account.id);
+      account.lastSyncedAt = undefined;
+    }
+    account.uidValidity = current;
+    await this.accounts.updateAccount(account);
+    return changed;
   }
 
   // Resyncs continue after the last completed sync, however many messages

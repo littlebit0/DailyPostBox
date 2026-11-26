@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:intl/intl.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 enum AppLanguage {
   korean(Locale('ko'), '한국어'),
@@ -11,15 +13,43 @@ enum AppLanguage {
   final String label;
 }
 
+const _languagePreferenceKey = 'app_language';
+
+/// Reads the saved language; Korean when nothing valid is saved or the
+/// store cannot be read.
+Future<AppLanguage> loadSavedLanguage() async {
+  try {
+    final saved = (await SharedPreferences.getInstance())
+        .getString(_languagePreferenceKey);
+    return AppLanguage.values.firstWhere(
+      (language) => language.name == saved,
+      orElse: () => AppLanguage.korean,
+    );
+  } catch (_) {
+    return AppLanguage.korean;
+  }
+}
+
+/// The language loaded before the app starts; main() overrides it.
+final initialLanguageProvider = Provider<AppLanguage>((ref) {
+  return AppLanguage.korean;
+});
+
 final languageControllerProvider =
     NotifierProvider<LanguageController, AppLanguage>(LanguageController.new);
 
 class LanguageController extends Notifier<AppLanguage> {
   @override
-  AppLanguage build() => AppLanguage.korean;
+  AppLanguage build() => ref.read(initialLanguageProvider);
 
-  void setLanguage(AppLanguage language) {
+  Future<void> setLanguage(AppLanguage language) async {
     state = language;
+    try {
+      await (await SharedPreferences.getInstance())
+          .setString(_languagePreferenceKey, language.name);
+    } catch (_) {
+      // The choice still applies for this run if it cannot be saved.
+    }
   }
 }
 
@@ -45,10 +75,29 @@ class AppStrings {
   String get send => _ko ? '보내기' : 'Send';
   String get message => _ko ? '메일' : 'Message';
   String get reply => _ko ? '답장' : 'Reply';
-  String get archive => _ko ? '보관' : 'Archive';
+  String get markUnread => _ko ? '읽지 않음으로 표시' : 'Mark as unread';
+  String get markRead => _ko ? '읽음으로 표시' : 'Mark as read';
+  String get addStar => _ko ? '별표 표시' : 'Add star';
+  String get removeStar => _ko ? '별표 해제' : 'Remove star';
+  String get flagUpdateFailed => _ko
+      ? '메일 상태를 서버에 반영하지 못했습니다.'
+      : 'Could not update the message on the server.';
+  String get replyAll => _ko ? '전체 답장' : 'Reply all';
+  String get cc => _ko ? '참조' : 'Cc';
+
+  /// Absolute local date-time for the reply quote header.
+  String quoteDate(DateTime time) => _ko
+      ? DateFormat('yyyy-MM-dd (E) HH:mm', 'ko').format(time)
+      : DateFormat("E, MMM d, y 'at' HH:mm", 'en').format(time);
+  String quoteHeader(String date, String sender) =>
+      _ko ? '$date $sender 님이 작성:' : 'On $date, $sender wrote:';
   String get back => _ko ? '뒤로' : 'Back';
   String get from => _ko ? '보낸 사람' : 'From';
   String get to => _ko ? '받는 사람' : 'To';
+  String get recipientRequired =>
+      _ko ? '받는 사람을 입력하세요.' : 'Enter at least one recipient.';
+  String sendFailed(String reason) =>
+      _ko ? '메일을 보내지 못했습니다: $reason' : 'Could not send the mail: $reason';
   String get subject => _ko ? '제목' : 'Subject';
   String get body => _ko ? '내용' : 'Message';
   String get emptyInboxTitle => _ko ? '받은 메일이 없습니다' : 'No messages yet';
@@ -119,9 +168,21 @@ class AppStrings {
   String get accountMessages => _ko ? '계정별 메일' : 'Account Mail';
   String get syncNow => _ko ? '동기화' : 'Sync';
   String get validateConnection => _ko ? '연결 테스트' : 'Test connection';
+  String get accountNotifications =>
+      _ko ? '이 계정의 새 메일 알림' : 'New mail notifications for this account';
   String get deleteAccount => _ko ? '삭제' : 'Delete';
   String get more => _ko ? '더보기' : 'More';
   String get serverSettings => _ko ? '서버 설정' : 'Server settings';
+  String get incomingServer =>
+      _ko ? '받는 메일 서버 (IMAP)' : 'Incoming mail server (IMAP)';
+  String get outgoingServer =>
+      _ko ? '보내는 메일 서버 (SMTP)' : 'Outgoing mail server (SMTP)';
+  String get serverHost => _ko ? '서버 주소' : 'Server address';
+  String get serverPort => _ko ? '포트' : 'Port';
+  String get serverUsesSsl => _ko ? 'SSL/TLS 사용' : 'Use SSL/TLS';
+  String get customServerRequired => _ko
+      ? '받는·보내는 서버 주소와 포트(1~65535)를 입력하세요.'
+      : 'Enter both server addresses and ports (1-65535).';
   String get syncRange => _ko ? '동기화 범위' : 'Sync range';
   String get comingSoon => _ko ? '준비 중' : 'Coming soon';
   String get noAccountSelected => _ko ? '계정을 선택하세요' : 'Select an account';
@@ -129,6 +190,13 @@ class AppStrings {
   String get categoryPerson => _ko ? '사람' : 'People';
   String get categoryNotification => _ko ? '알림' : 'Notifications';
   String get categoryNewsletter => _ko ? '뉴스레터' : 'Newsletters';
+  String get searchMail => _ko ? '메일 검색' : 'Search mail';
+  String get searchHint => _ko
+      ? '검색: 제목·보낸 사람, from: subject: after: before:'
+      : 'Search subject or sender, from: subject: after: before:';
+  String get clearSearch => _ko ? '검색 지우기' : 'Clear search';
+  String get noSearchResults => _ko ? '검색 결과가 없습니다' : 'No messages found';
+  String get searchFailedTitle => _ko ? '검색하지 못했습니다' : 'Search failed';
   String get noMessagesForAccount =>
       _ko ? '이 계정에 표시할 메일이 없습니다' : 'No mail for this account yet';
   String get loadingAccountMail => _ko ? '메일을 가져오는 중입니다' : 'Importing mail';
@@ -140,6 +208,12 @@ class AppStrings {
       : 'The new password is checked before saving. Stored mail and settings are kept.';
   String get reconnectSucceeded =>
       _ko ? '다시 연결했습니다. 메일을 가져오는 중입니다.' : 'Reconnected. Fetching mail now.';
+  String get attachments => _ko ? '첨부파일' : 'Attachments';
+  String get saveAttachment => _ko ? '저장' : 'Save';
+  String attachmentSaved(String path) =>
+      _ko ? '$path에 저장했습니다' : 'Saved to $path';
+  String get attachmentSaveFailed =>
+      _ko ? '첨부파일을 저장하지 못했습니다' : 'Could not save the attachment';
   String get messageLoadFailedTitle =>
       _ko ? '메일 본문을 불러오지 못했습니다' : 'Could not open this message';
   String syncFailure(String? code, String? error) {
@@ -200,6 +274,11 @@ class AppStrings {
   String get statusError => _ko ? '오류' : 'Error';
   String get lastSynced => _ko ? '마지막 동기화' : 'Last synced';
   String get neverSynced => _ko ? '아직 없음' : 'Never';
+  String get receiveMode => _ko ? '수신 방식' : 'Receive mode';
+  String get receiveRealtime => _ko ? '실시간(IDLE)' : 'Realtime (IDLE)';
+  String get receivePolling => _ko ? '주기 확인' : 'Periodic check';
+  String get receiveUnknown => _ko ? '확인 전' : 'Not checked yet';
+  String get capabilitiesChecked => _ko ? '확인' : 'checked';
   String get protocol => _ko ? '수신 방식' : 'Protocol';
   String get authMode => _ko ? '인증 방식' : 'Auth mode';
   String authModeLabel(String mode) => switch (mode) {
@@ -208,10 +287,36 @@ class AppStrings {
         'password' => _ko ? '비밀번호' : 'Password',
         _ => mode,
       };
-  String get pushNotifications => _ko ? '푸시 알림' : 'Push notifications';
-  String get pushNotificationsDescription => _ko
-      ? '새 IMAP 메일은 서버 푸시를 통해 즉시 전달됩니다.'
-      : 'New IMAP messages are delivered immediately through server push.';
+  String get threadView => _ko ? '대화 보기' : 'Conversation view';
+  String get threadViewDescription => _ko
+      ? '같은 대화의 메일을 한 줄로 묶어 보여줍니다.'
+      : 'Group mail from the same conversation into one row.';
+  String get thread => _ko ? '대화' : 'Conversation';
+  String threadMessageCount(int count) => _ko ? '$count통' : '$count';
+  String get mailSending => _ko ? '메일을 보내는 중입니다.' : 'Sending mail...';
+  String get undoSend => _ko ? '보내기 취소' : 'Undo send';
+  String get sendCancelled =>
+      _ko ? '보내기를 취소했습니다.' : 'Sending was cancelled.';
+  String get sendAlreadySent =>
+      _ko ? '이미 발송되어 취소할 수 없습니다.' : 'Already sent; it cannot be cancelled.';
+  String get sendCancelFailed =>
+      _ko ? '취소하지 못했습니다. 메일이 발송될 수 있습니다.' : 'Could not cancel; the mail may be sent.';
+  String sendDeliveryFailed(String reason) => _ko
+      ? '메일을 보내지 못했습니다: $reason'
+      : 'The mail could not be delivered: $reason';
+  String get sendFailedShort => _ko ? '발송에 실패했습니다.' : 'Sending failed.';
+  String failedSendsCount(int n) => _ko ? '발송 실패 $n건' : '$n failed to send';
+  String pendingSendsCount(int n) => _ko ? '보내기 대기 $n건' : '$n waiting to send';
+  String get viewPendingSends => _ko ? '보기' : 'View';
+  String get viewFailedSends => _ko ? '보기' : 'View';
+  String get deleteFailedSend => _ko ? '삭제' : 'Delete';
+  String get rewriteMail => _ko ? '다시 작성' : 'Rewrite';
+  String get undoSendSetting => _ko ? '보내기 취소 시간' : 'Undo send delay';
+  String get undoSendSettingDescription => _ko
+      ? '보낸 메일을 이 시간 동안 서버가 보관하며 취소할 수 있습니다.'
+      : 'The server holds sent mail for this long so you can cancel it.';
+  String secondsLabel(int seconds) =>
+      seconds == 0 ? (_ko ? '끔' : 'Off') : (_ko ? '$seconds초' : '${seconds}s');
   String get registerThisDevice => _ko ? '이 기기 등록' : 'Register this device';
   String get registerThisDeviceDescription => _ko
       ? '플랫폼 푸시 토큰을 메일 서버에 등록합니다.'

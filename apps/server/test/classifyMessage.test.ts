@@ -25,3 +25,29 @@ test("person otherwise", () => {
   assert.equal(classifyMessage({}, "alice@example.test"), "person");
   assert.equal(classifyMessage({}, ""), "person");
 });
+
+test("one fetch requests both header sets; references ignore List-* tokens", async () => {
+  const { ImapReceiver } = await import("../src/mail/ImapReceiver.js");
+  let requested: string[] = [];
+  const client = {
+    async *fetch(_uids: number[], query: { headers: string[] }) {
+      requested = query.headers;
+      yield {
+        uid: 7,
+        flags: new Set<string>(),
+        envelope: { from: [{ address: "news@example.test" }], subject: "s", date: new Date(0) },
+        headers: Buffer.from(
+          "List-Unsubscribe: <mailto:u@example.test>\r\nList-Id: <list.example.test>\r\n" +
+          "References: <a@example.test>\r\n <b@example.test>\r\n\r\n"
+        )
+      };
+    }
+  };
+  const receiver = new ImapReceiver({} as never, {} as never) as unknown as {
+    fetchUids: (c: unknown, a: unknown, m: string, u: number[]) => Promise<Array<{ category?: string; references?: string[] }>>;
+  };
+  const [summary] = await receiver.fetchUids(client, { id: "a" }, "INBOX", [7]);
+  assert.ok(requested.includes("references") && requested.includes("list-unsubscribe"));
+  assert.equal(summary?.category, "newsletter");
+  assert.deepEqual(summary?.references, ["<a@example.test>", "<b@example.test>"]);
+});
