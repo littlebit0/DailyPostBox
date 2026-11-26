@@ -62,8 +62,11 @@ class _MailboxContentState extends ConsumerState<_MailboxContent> {
   final _searchController = TextEditingController();
   Future<List<MailSummary>>? _search;
 
-  bool get _isSyncing =>
-      const {'syncing', 'validating'}.contains(widget.account.syncStatus);
+  static bool _busy(MailAccountSummary account) =>
+      account.threadBackfilling ||
+      const {'syncing', 'validating'}.contains(account.syncStatus);
+
+  bool get _isSyncing => _busy(widget.account);
 
   @override
   void initState() {
@@ -80,10 +83,7 @@ class _MailboxContentState extends ConsumerState<_MailboxContent> {
       _searchController.clear();
       _search = null;
     }
-    final wasSyncing = const {
-      'syncing',
-      'validating',
-    }.contains(oldWidget.account.syncStatus);
+    final wasSyncing = _busy(oldWidget.account);
     if (oldWidget.account.id == widget.account.id &&
         wasSyncing &&
         !_isSyncing) {
@@ -94,7 +94,7 @@ class _MailboxContentState extends ConsumerState<_MailboxContent> {
       });
     }
     if (oldWidget.account.id != widget.account.id ||
-        oldWidget.account.syncStatus != widget.account.syncStatus) {
+        _busy(oldWidget.account) != _isSyncing) {
       _configureRefreshTimer();
     }
   }
@@ -158,8 +158,9 @@ class _MailboxContentState extends ConsumerState<_MailboxContent> {
     if (mounted && _refreshTimer == null) _scheduleRefresh();
   }
 
-  Widget _messageList(List<MailSummary> items) {
+  Widget _messageList(List<MailSummary> items, {bool threaded = false}) {
     final account = widget.account;
+    final strings = ref.read(appStringsProvider);
     return ListView.separated(
       itemCount: items.length,
       separatorBuilder: (context, index) => const Divider(height: 1),
@@ -189,11 +190,18 @@ class _MailboxContentState extends ConsumerState<_MailboxContent> {
                 const Icon(Icons.star, size: 18, color: Colors.amber),
                 const SizedBox(width: 6),
               ],
-              Text(message.receivedAtLabel),
+              Text(
+                threaded && message.threadCount > 1
+                    ? '${strings.threadMessageCount(message.threadCount)}\n${message.receivedAtLabel}'
+                    : message.receivedAtLabel,
+                textAlign: TextAlign.end,
+              ),
             ],
           ),
           onTap: () => context.go(
-            '/accounts/${account.id}/messages/${Uri.encodeComponent(message.id)}',
+            threaded && message.threadCount > 1
+                ? '/accounts/${account.id}/threads/${Uri.encodeComponent(message.threadId!)}'
+                : '/accounts/${account.id}/messages/${Uri.encodeComponent(message.id)}',
             extra: const {'disableTransition': true},
           ),
         );
@@ -205,6 +213,7 @@ class _MailboxContentState extends ConsumerState<_MailboxContent> {
   Widget build(BuildContext context) {
     final account = widget.account;
     final messages = ref.watch(accountMessagesProvider(account.id));
+    final threaded = ref.watch(threadViewProvider);
     final strings = ref.watch(appStringsProvider);
 
     return Column(
@@ -298,7 +307,8 @@ class _MailboxContentState extends ConsumerState<_MailboxContent> {
                   },
                 )
               : messages.when(
-                  data: (items) {
+                  data: (all) {
+                    final items = threaded ? groupByThread(all) : all;
                     if (items.isEmpty) {
                       return Center(
                         child: Column(
@@ -337,7 +347,7 @@ class _MailboxContentState extends ConsumerState<_MailboxContent> {
                       );
                     }
 
-                    return _messageList(items);
+                    return _messageList(items, threaded: threaded);
                   },
                   loading: () =>
                       const Center(child: CircularProgressIndicator()),

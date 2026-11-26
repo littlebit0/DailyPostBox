@@ -70,6 +70,7 @@ void main() {
 
     container.read(appRouterProvider).go('/settings');
     await tester.pumpAndSettle();
-    expect(find.byType(SwitchListTile), findsNothing);
+    // Only the working conversation-view toggle; the dead push switch is gone.
+    expect(find.byType(SwitchListTile), findsOneWidget);
   });
 }

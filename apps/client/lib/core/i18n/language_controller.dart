@@ -283,6 +283,12 @@ class AppStrings {
         'password' => _ko ? '비밀번호' : 'Password',
         _ => mode,
       };
+  String get threadView => _ko ? '대화 보기' : 'Conversation view';
+  String get threadViewDescription => _ko
+      ? '같은 대화의 메일을 한 줄로 묶어 보여줍니다.'
+      : 'Group mail from the same conversation into one row.';
+  String get thread => _ko ? '대화' : 'Conversation';
+  String threadMessageCount(int count) => _ko ? '$count통' : '$count';
   String get mailSending => _ko ? '메일을 보내는 중입니다.' : 'Sending mail...';
   String get undoSend => _ko ? '보내기 취소' : 'Undo send';
   String get sendCancelled =>

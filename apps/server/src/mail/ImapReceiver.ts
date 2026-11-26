@@ -37,6 +37,7 @@ import {
   rawAttachmentFetch
 } from "./attachments.js";
 import { extractMessageLinks } from "./messageLinks.js";
+import { MAX_HEADER_BYTES, boundMessageId, parseMessageIds } from "./threading.js";
 import { detectImapCapabilities } from "./imapCapabilities.js";
 import { createExistsQueue } from "./existsQueue.js";
 
@@ -152,6 +153,24 @@ export class ImapReceiver implements MailReceiver {
       }
     }
     return initial.result;
+  }
+
+  /** Re-reads headers of already stored messages (one connection, one mailbox). */
+  async fetchSummariesByUid(
+    account: MailAccount,
+    mailbox: string,
+    uids: number[]
+  ): Promise<{ uidValidity: string; messages: IncomingMessageSummary[] }> {
+    return this.withConnectionRetry(() =>
+      this.withConnectedClient(account, async (client) => {
+        const openedMailbox = await client.mailboxOpen(mailbox, { readOnly: true });
+        return {
+          // Callers compare this across batches: a changed UIDVALIDITY means the UIDs name other messages.
+          uidValidity: String(openedMailbox.uidValidity),
+          messages: uids.length === 0 ? [] : await this.fetchUids(client, account, mailbox, uids)
+        };
+      })
+    );
   }
 
   // Searches the server, so messages that were never imported are found too.
@@ -491,7 +510,9 @@ export class ImapReceiver implements MailReceiver {
       envelope: true,
       flags: true,
       internalDate: true,
-      uid: true
+      uid: true,
+      threadId: true,
+      headers: ["references"]
     }, { uid: true })) {
       const summary = toIncomingMessage(account, mailbox, message);
       if (summary) batch.push(summary);
@@ -534,6 +555,12 @@ function toIncomingMessage(
     receivedAt: envelope.date instanceof Date ? envelope.date : new Date(),
     arrivedAt: message.internalDate instanceof Date ? message.internalDate : undefined,
     hasAttachments: false,
+    messageId: boundMessageId(envelope.messageId),
+    inReplyTo: boundMessageId(envelope.inReplyTo),
+    references: parseMessageIds(
+      message.headers?.subarray(0, MAX_HEADER_BYTES).toString("utf8")
+    ),
+    gmailThreadId: message.threadId,
     seen: message.flags?.has("\\Seen") ?? false,
     flagged: message.flags?.has("\\Flagged") ?? false
   };
@@ -543,11 +570,12 @@ function toThreadHeaders(message: FetchMessageObject): MessageThreadHeaders {
   const envelope = message.envelope;
   const addresses = (list?: Array<{ address?: string }>) =>
     list?.map((item) => item.address).filter((a): a is string => Boolean(a)) ?? [];
-  // Unfold continuation lines, then collect every <msg-id> in the header.
-  const raw = message.headers?.toString("utf8").replace(/\r?\n[ \t]+/g, " ") ?? "";
+  // Same bounded parsing as the stored summary fields (threading.ts).
   return {
-    messageId: envelope?.messageId,
-    references: raw.match(/<[^<>\s]+>/g) ?? [],
+    messageId: boundMessageId(envelope?.messageId),
+    references: parseMessageIds(
+      message.headers?.subarray(0, MAX_HEADER_BYTES).toString("utf8")
+    ),
     replyTo: addresses(envelope?.replyTo),
     to: addresses(envelope?.to),
     cc: addresses(envelope?.cc)
