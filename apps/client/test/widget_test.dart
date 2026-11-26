@@ -176,6 +176,67 @@ void main() {
     expect(find.text('둘째 메일'), findsNothing);
   });
 
+  testWidgets('keeps the native menu bar after leaving the mailbox', (
+    WidgetTester tester,
+  ) async {
+    const account = MailAccountSummary(
+      id: 'account-1',
+      providerId: 'gmail',
+      emailAddress: 'mailbox@example.com',
+      incomingProtocol: 'imap',
+      authMode: 'oauth2',
+      syncStatus: 'idle',
+      syncError: null,
+      initialSync: InitialSyncOption.recommended,
+      lastSyncedAtLabel: 'now',
+    );
+    final menuCalls = <MethodCall>[];
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.menu,
+      (call) async {
+        menuCalls.add(call);
+        return null;
+      },
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger
+          .setMockMethodCallHandler(SystemChannels.menu, null),
+    );
+    await tester.binding.setSurfaceSize(const Size(1200, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          accountsProvider.overrideWith((ref) async => const [account]),
+          providersProvider.overrideWith((ref) async => const []),
+          accountMessagesProvider.overrideWith(
+            (ref, accountId) async => const <MailSummary>[],
+          ),
+        ],
+        child: const DailyPostBoxApp(),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text(account.emailAddress).first);
+    await tester.pumpAndSettle();
+
+    String lastMenus() => menuCalls
+        .lastWhere((call) => call.method == 'Menu.setMenus')
+        .arguments
+        .toString();
+    final quitId = PlatformProvidedMenuItemType.quit.index;
+    expect(lastMenus(), contains('메일 쓰기'));
+    expect(lastMenus(), contains('platformProvidedMenu: $quitId'));
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyC, character: 'c');
+    await tester.pumpAndSettle();
+
+    expect(find.byType(PlatformMenuBar), findsOneWidget);
+    expect(lastMenus(), contains('platformProvidedMenu: $quitId'));
+    expect(lastMenus(), isNot(contains('메일 쓰기')));
+  }, variant: TargetPlatformVariant.only(TargetPlatform.macOS));
+
   testWidgets('Enter on a Tab-focused button activates it, not the message', (
     WidgetTester tester,
   ) async {

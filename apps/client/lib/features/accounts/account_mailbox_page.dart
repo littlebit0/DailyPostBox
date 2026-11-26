@@ -1,11 +1,11 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/app_menu_bar.dart';
 import '../../core/i18n/language_controller.dart';
 import '../../services/mail_api_client.dart';
 import '../../widgets/app_shell.dart';
@@ -109,10 +109,24 @@ class _MailboxContentState extends ConsumerState<_MailboxContent> {
   bool get _isSyncing =>
       const {'syncing', 'validating'}.contains(widget.account.syncStatus);
 
+  late final _menuNotifier = ref.read(mailboxMenuCommandsProvider);
+  late final _menuCommands = MailboxMenuCommands(
+    compose: _compose,
+    openSelected: _openSelected,
+    next: () => _moveSelection(1),
+    previous: () => _moveSelection(-1),
+    showHelp: _showHelp,
+  );
+
   @override
   void initState() {
     super.initState();
     _configureRefreshTimer();
+    // The menu bar sits above this widget; update it after the frame so an
+    // ancestor is never marked dirty during build or tree finalization.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _menuNotifier.value = _menuCommands;
+    });
   }
 
   @override
@@ -137,6 +151,12 @@ class _MailboxContentState extends ConsumerState<_MailboxContent> {
 
   @override
   void dispose() {
+    final notifier = _menuNotifier;
+    final commands = _menuCommands;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      // Another mailbox may have registered meanwhile; only clear our own.
+      if (notifier.value == commands) notifier.value = null;
+    });
     _refreshTimer?.cancel();
     _mailboxFocus.dispose();
     super.dispose();
@@ -247,8 +267,7 @@ class _MailboxContentState extends ConsumerState<_MailboxContent> {
   }
 
   Widget _withShortcuts(Widget child) {
-    final strings = ref.read(appStringsProvider);
-    final body = Shortcuts(
+    return Shortcuts(
       shortcuts: const {
         CharacterActivator('j'): _MoveSelectionIntent(1),
         CharacterActivator('k'): _MoveSelectionIntent(-1),
@@ -274,80 +293,6 @@ class _MailboxContentState extends ConsumerState<_MailboxContent> {
         },
         child: Focus(focusNode: _mailboxFocus, autofocus: true, child: child),
       ),
-    );
-    if (defaultTargetPlatform != TargetPlatform.macOS) return body;
-    return PlatformMenuBar(
-      menus: [
-        const PlatformMenu(
-          label: 'DailyPostBox',
-          menus: [
-            PlatformProvidedMenuItem(type: PlatformProvidedMenuItemType.about),
-            PlatformProvidedMenuItem(
-              type: PlatformProvidedMenuItemType.servicesSubmenu,
-            ),
-            PlatformProvidedMenuItem(type: PlatformProvidedMenuItemType.hide),
-            PlatformProvidedMenuItem(
-              type: PlatformProvidedMenuItemType.hideOtherApplications,
-            ),
-            PlatformProvidedMenuItem(
-              type: PlatformProvidedMenuItemType.showAllApplications,
-            ),
-            PlatformProvidedMenuItem(type: PlatformProvidedMenuItemType.quit),
-          ],
-        ),
-        PlatformMenu(
-          label: strings.mailMenu,
-          menus: [
-            PlatformMenuItem(
-              label: strings.compose,
-              // shortcut: 단일 키 네이티브 가속키는 입력창에서도 발동하므로 쓰지 않음.
-              onSelected: _compose,
-            ),
-            PlatformMenuItem(
-              label: strings.shortcutOpenMessage,
-              onSelected: _openSelected,
-            ),
-            PlatformMenuItem(
-              label: strings.shortcutNextMessage,
-              onSelected: () => _moveSelection(1),
-            ),
-            PlatformMenuItem(
-              label: strings.shortcutPreviousMessage,
-              onSelected: () => _moveSelection(-1),
-            ),
-            PlatformMenuItem(
-              label: strings.shortcutHelp,
-              onSelected: _showHelp,
-            ),
-          ],
-        ),
-        PlatformMenu(
-          label: strings.editMenu,
-          menus: const [
-            PlatformProvidedMenuItem(
-              type: PlatformProvidedMenuItemType.startSpeaking,
-            ),
-            PlatformProvidedMenuItem(
-              type: PlatformProvidedMenuItemType.stopSpeaking,
-            ),
-          ],
-        ),
-        PlatformMenu(
-          label: strings.windowMenu,
-          menus: const [
-            PlatformProvidedMenuItem(
-              type: PlatformProvidedMenuItemType.minimizeWindow,
-            ),
-            PlatformProvidedMenuItem(
-              type: PlatformProvidedMenuItemType.zoomWindow,
-            ),
-            PlatformProvidedMenuItem(
-              type: PlatformProvidedMenuItemType.toggleFullScreen,
-            ),
-          ],
-        ),
-      ],
-      child: body,
     );
   }
 
