@@ -102,6 +102,10 @@ export class InMemoryAccountRepository implements AccountRepository {
   }
 
   async saveIncomingMessage(message: IncomingMessageSummary): Promise<boolean> {
+    // A sync still running for a deleted account must not leave mail behind.
+    if (!this.accounts.some((account) => account.id === message.accountId)) {
+      return false;
+    }
     const key = `${message.accountId}:${message.providerMessageId}`;
     const isNew = !this.messages.has(key);
     this.messages.set(key, message);
