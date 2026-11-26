@@ -8,6 +8,7 @@ import '../../core/i18n/language_controller.dart';
 import '../../services/mail_api_client.dart';
 import '../../widgets/app_shell.dart';
 import 'failed_sends.dart';
+import 'pending_sends.dart';
 
 final composeAccountsProvider = FutureProvider<List<MailAccountSummary>>((ref) {
   return ref.watch(mailApiClientProvider).fetchAccounts();
@@ -150,7 +151,9 @@ class _ComposePageState extends ConsumerState<ComposePage> {
     final delay = ref.read(undoSendDelayProvider);
     final messenger = ScaffoldMessenger.of(context);
     final router = GoRouter.of(context);
-    final failedSends = ProviderScope.containerOf(context).read(failedSendsProvider.notifier);
+    final container = ProviderScope.containerOf(context);
+    final failedSends = container.read(failedSendsProvider.notifier);
+    final pendingSends = container.read(pendingSendsProvider.notifier);
     final receipt = await client.sendMail(
       accountId: accountId,
       to: _toController.text.split(',').map((item) => item.trim()).toList(),
@@ -160,28 +163,25 @@ class _ComposePageState extends ConsumerState<ComposePage> {
     );
 
     // The countdown comes from the server's deadline: show immediately (not behind
-    // older snackbars) and expire when the server actually sends.
+    // older snackbars) and expire when the server actually sends. Earlier sends stay
+    // cancellable from the app-level pending list after clearSnackBars().
     if (delay > 0 && receipt.remaining > Duration.zero) {
+      pendingSends.add(
+        PendingSend(
+          id: receipt.id,
+          to: _toController.text,
+          subject: _subjectController.text,
+        ),
+        receipt.remaining,
+      );
       messenger.clearSnackBars();
       messenger.showSnackBar(SnackBar(
         content: Text(strings.mailSending),
         duration: receipt.remaining,
         action: SnackBarAction(
           label: strings.undoSend,
-          onPressed: () async {
-            String result;
-            try {
-              final status = await client.cancelSend(receipt.id);
-              result = switch (status) {
-                'cancelled' => strings.sendCancelled,
-                'failed' => strings.sendFailedShort,
-                _ => strings.sendAlreadySent,
-              };
-            } catch (_) {
-              result = strings.sendCancelFailed;
-            }
-            messenger.showSnackBar(SnackBar(content: Text(result)));
-          },
+          onPressed: () => cancelPendingSend(
+              client, strings, messenger, pendingSends, receipt.id),
         ),
       ));
     }

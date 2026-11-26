@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../core/i18n/language_controller.dart';
 import '../features/accounts/account_providers.dart';
 import '../features/message/failed_sends.dart';
+import '../features/message/pending_sends.dart';
 
 class AppShell extends ConsumerWidget {
   const AppShell({
@@ -90,6 +91,7 @@ class AppShell extends ConsumerWidget {
           : null,
       body: Column(
         children: [
+          const PendingSendsBanner(),
           const FailedSendsBanner(),
           Expanded(
             child: compact

@@ -46,6 +46,7 @@ class _SendApi extends MailApiClient {
 
 void main() {
   _failedSendsTests();
+  _pendingSendsTests();
   const receipt = SendReceipt('id', Duration.zero);
   const tick = Duration(milliseconds: 1);
 
@@ -313,5 +314,94 @@ void _failedSendsTests() {
     router.pop();
     await tester.pumpAndSettle();
     expect(find.text('발송 실패 29건'), findsOneWidget);
+  });
+}
+
+class _UndoApi extends _SendApi {
+  int sent = 0;
+  final cancelled = <String>[];
+
+  @override
+  Future<SendReceipt> sendMail({
+    required String accountId,
+    required List<String> to,
+    required String subject,
+    required String body,
+    int delaySeconds = 5,
+  }) async =>
+      SendReceipt('s${++sent}', const Duration(seconds: 30));
+
+  @override
+  Future<String> cancelSend(String id) async {
+    cancelled.add(id);
+    return 'cancelled';
+  }
+}
+
+void _pendingSendsTests() {
+  testWidgets(
+      'two sends in the undo window: the first stays cancellable after the second snackbar',
+      (tester) async {
+    final api = _UndoApi();
+    final router = GoRouter(routes: [
+      GoRoute(
+        path: '/',
+        builder: (_, __) => const ComposePage(initialAccountId: 'a1'),
+      ),
+      GoRoute(
+        path: '/accounts/:id/mail',
+        builder: (_, __) =>
+            const AppShell(selectedDestinationId: 'x', child: Text('mailbox')),
+      ),
+    ]);
+    await tester.pumpWidget(ProviderScope(
+      overrides: [
+        mailApiClientProvider.overrideWithValue(api),
+        accountsProvider.overrideWith((ref) async => const []),
+        composeAccountsProvider.overrideWith((ref) async => const [
+              MailAccountSummary(
+                id: 'a1',
+                providerId: 'p',
+                emailAddress: 'me@example.test',
+                incomingProtocol: 'imap',
+                authMode: 'password',
+                syncStatus: 'idle',
+                syncError: null,
+                initialSync: null,
+                lastSyncedAtLabel: '',
+              ),
+            ]),
+      ],
+      child: MaterialApp.router(routerConfig: router),
+    ));
+    await tester.pump();
+
+    for (final subject in ['First', 'Second']) {
+      router.go('/');
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField).at(1), subject);
+      await tester.tap(find.byIcon(Icons.send_outlined));
+      await tester.pumpAndSettle(const Duration(milliseconds: 100));
+    }
+    // Only the newest snackbar is visible; both sends are listed.
+    expect(find.byType(SnackBarAction), findsOneWidget);
+    expect(find.text('보내기 대기 2건'), findsOneWidget);
+
+    await tester.tap(find.text('보기'));
+    await tester.pumpAndSettle();
+    await tester.tap(find
+        .descendant(of: find.byType(AlertDialog), matching: find.text('보내기 취소'))
+        .first);
+    await tester.pumpAndSettle();
+    expect(api.cancelled, ['s1']);
+    expect(find.text('보내기 대기 1건'), findsWidgets);
+    await tester.tap(find.text('닫기'));
+    await tester.pumpAndSettle();
+
+    // The rest expires with the server deadline.
+    await tester.pump(const Duration(seconds: 31));
+    await tester.pumpAndSettle();
+    expect(find.text('보내기 대기 1건'), findsNothing);
+    await tester.pump(const Duration(seconds: 10));
   });
 }

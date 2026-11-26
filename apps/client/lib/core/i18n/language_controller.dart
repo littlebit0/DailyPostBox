@@ -217,6 +217,8 @@ class AppStrings {
       : 'The mail could not be delivered: $reason';
   String get sendFailedShort => _ko ? '발송에 실패했습니다.' : 'Sending failed.';
   String failedSendsCount(int n) => _ko ? '발송 실패 $n건' : '$n failed to send';
+  String pendingSendsCount(int n) => _ko ? '보내기 대기 $n건' : '$n waiting to send';
+  String get viewPendingSends => _ko ? '보기' : 'View';
   String get viewFailedSends => _ko ? '보기' : 'View';
   String get deleteFailedSend => _ko ? '삭제' : 'Delete';
   String get rewriteMail => _ko ? '다시 작성' : 'Rewrite';
