@@ -151,6 +151,8 @@ class AppStrings {
   String get accountMessages => _ko ? '계정별 메일' : 'Account Mail';
   String get syncNow => _ko ? '동기화' : 'Sync';
   String get validateConnection => _ko ? '연결 테스트' : 'Test connection';
+  String get accountNotifications =>
+      _ko ? '이 계정의 새 메일 알림' : 'New mail notifications for this account';
   String get deleteAccount => _ko ? '삭제' : 'Delete';
   String get more => _ko ? '더보기' : 'More';
   String get serverSettings => _ko ? '서버 설정' : 'Server settings';
