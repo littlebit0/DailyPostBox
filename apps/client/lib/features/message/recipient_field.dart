@@ -53,6 +53,8 @@ class RecipientField extends StatefulWidget {
 class _RecipientFieldState extends State<RecipientField> {
   final _focusNode = FocusNode();
   int _request = 0;
+  // Query whose suggestions are on screen; Enter only picks one when it matches.
+  String? _shownQuery;
 
   List<String> get _addresses => widget.addresses;
 
@@ -66,11 +68,15 @@ class _RecipientFieldState extends State<RecipientField> {
 
   Future<Iterable<String>> _options(TextEditingValue value) async {
     final query = value.text.trim();
-    if (query.length < 2) return const [];
     final request = ++_request;
+    if (query.length < 2) {
+      _shownQuery = query;
+      return const [];
+    }
     try {
       final result = await widget.suggest(query);
       if (request != _request) return const [];
+      _shownQuery = query;
       final options = result.where((item) => !_addresses.contains(item));
       // A fully typed address stays first so Enter never swaps it for a lookalike.
       if (!isValidEmailAddress(query) || _addresses.contains(query)) {
@@ -78,6 +84,7 @@ class _RecipientFieldState extends State<RecipientField> {
       }
       return [query, ...options.where((item) => item != query)];
     } catch (_) {
+      if (request == _request) _shownQuery = query;
       return const [];
     }
   }
@@ -133,8 +140,12 @@ class _RecipientFieldState extends State<RecipientField> {
                   onChanged: (text) {
                     if (text.endsWith(',') || text.endsWith(';')) _commit();
                   },
-                  onSubmitted: (_) {
-                    onSubmit(); // selects the highlighted suggestion, if any
+                  onSubmitted: (text) {
+                    // Stale suggestions (lookup pending or for an older query)
+                    // must not replace what was typed.
+                    if (text.trim() == _shownQuery) {
+                      onSubmit(); // selects the highlighted suggestion, if any
+                    }
                     WidgetsBinding.instance.addPostFrameCallback((_) {
                       if (!mounted) return;
                       _commit();

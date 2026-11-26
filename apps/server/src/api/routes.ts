@@ -353,7 +353,13 @@ export async function registerRoutes(
     }
 
     const result = await deps.sender.send(account, draft);
-    await deps.accounts.recordSentRecipients(account.id, result.accepted, new Date());
+    try {
+      await deps.accounts.recordSentRecipients(account.id, result.accepted, new Date());
+    } catch (error) {
+      // The mail already went out; a failed contact save must not invite a resend.
+      // Log only the error code, never addresses or message content.
+      request.log.warn({ code: (error as NodeJS.ErrnoException).code }, "Failed to save sent recipients");
+    }
     return reply.code(202).send(result);
   });
 

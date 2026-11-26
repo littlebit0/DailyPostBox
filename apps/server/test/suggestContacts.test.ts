@@ -101,3 +101,47 @@ test("suggests only sent recipients, never inbound senders", async () => {
   await accounts.deleteAccount(account.id);
   assert.deepEqual(await accounts.listSentRecipients("demo-user"), []);
 });
+
+test("send still returns 202 when saving sent recipients fails", async () => {
+  const now = new Date();
+  const accounts = new InMemoryAccountRepository();
+  await accounts.addAccount({
+    id: "account-1",
+    userId: "demo-user",
+    providerId: "custom",
+    emailAddress: "me@example.test",
+    authMode: "app-password",
+    incomingProtocol: "imap",
+    encryptedSecretRef: "secret",
+    syncStatus: "idle",
+    createdAt: now,
+    updatedAt: now
+  });
+  accounts.recordSentRecipients = async () => {
+    throw Object.assign(new Error("ENOSPC: no space left on device"), { code: "ENOSPC" });
+  };
+
+  const app = Fastify();
+  await registerRoutes(app, {
+    accounts,
+    validateAccount: async () => {},
+    startAccountSync: async () => {},
+    resumeAccountSync: async () => {},
+    stopAccountSync: async () => {},
+    sender: {
+      testConnection: async () => {},
+      send: async (_account, draft) => ({ accepted: draft.to, rejected: [] })
+    },
+    fetchMessageContent: async () => {
+      throw new Error("unused");
+    }
+  });
+
+  const send = await app.inject({
+    method: "POST",
+    url: "/mail/send",
+    payload: { accountId: "account-1", to: ["bob@example.test"], subject: "hi", text: "hi" }
+  });
+  assert.equal(send.statusCode, 202);
+  assert.deepEqual(send.json(), { accepted: ["bob@example.test"], rejected: [] });
+});

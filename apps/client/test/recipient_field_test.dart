@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:daily_postbox/features/message/compose_page.dart';
 import 'package:daily_postbox/features/message/recipient_field.dart';
 import 'package:daily_postbox/services/mail_api_client.dart';
@@ -78,6 +80,42 @@ void main() {
     await tester.pumpAndSettle();
     await tester.pumpAndSettle();
     expect(addresses, ['alice@company.test']);
+  });
+
+  testWidgets('Enter commits the typed address while a newer lookup is pending',
+      (tester) async {
+    final addresses = <String>[];
+    final controller = TextEditingController();
+    addTearDown(controller.dispose);
+    final pending = Completer<List<String>>();
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: RecipientField(
+          label: 'To',
+          errorText: 'bad',
+          suggest: (q) => q == 'al'
+              ? Future.value(['alan@example.test'])
+              : pending.future,
+          addresses: addresses,
+          controller: controller,
+        ),
+      ),
+    ));
+
+    await tester.enterText(find.byType(TextField), 'al');
+    await tester.pumpAndSettle();
+    expect(find.text('alan@example.test'), findsOneWidget);
+
+    await tester.enterText(find.byType(TextField), 'alice@example.test');
+    await tester.pump();
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pumpAndSettle();
+    await tester.pumpAndSettle();
+    expect(addresses, ['alice@example.test']);
+
+    pending.complete(['alan@example.test']);
+    await tester.pumpAndSettle();
+    expect(addresses, ['alice@example.test']);
   });
 
   testWidgets('scrolls the keyboard-highlighted suggestion into view',
