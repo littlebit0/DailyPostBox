@@ -49,6 +49,10 @@ export interface MailAccount {
     limit: number | "all";
   };
   lastSyncedAt?: Date;
+  // Every message up to this UID was checked by a completed sync, in the
+  // mailbox numbering named by syncedUidValidity (IMAP sends a bigint).
+  syncedUid?: number;
+  syncedUidValidity?: string;
   // UIDVALIDITY of the synced mailbox, as a string (IMAP sends a bigint).
   uidValidity?: string;
   connectionOverride?: {

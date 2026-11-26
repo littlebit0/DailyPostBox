@@ -48,6 +48,7 @@ async function sync(stored: MailAccount, serverUidValidity: string) {
       _mailbox: string,
       limit: number | "all",
       onBatch: (messages: IncomingMessageSummary[]) => Promise<void>,
+      _cursor: unknown,
       onMailboxOpened: (uidValidity: string) => Promise<number | "all" | undefined>
     ) => {
       // Like ImapReceiver: reconcile on the fetching connection first.
@@ -99,6 +100,7 @@ test("a connection retry after the reset keeps the initial import limit", async 
       _mailbox: string,
       limit: number | "all",
       onBatch: (messages: IncomingMessageSummary[]) => Promise<void>,
+      _cursor: unknown,
       onMailboxOpened: (uidValidity: string) => Promise<number | "all" | undefined>
     ) => {
       // Like ImapReceiver's retry: reconcile again on the new connection.
