@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 enum AppLanguage {
   korean(Locale('ko'), '한국어'),
@@ -11,15 +12,43 @@ enum AppLanguage {
   final String label;
 }
 
+const _languagePreferenceKey = 'app_language';
+
+/// Reads the saved language; Korean when nothing valid is saved or the
+/// store cannot be read.
+Future<AppLanguage> loadSavedLanguage() async {
+  try {
+    final saved = (await SharedPreferences.getInstance())
+        .getString(_languagePreferenceKey);
+    return AppLanguage.values.firstWhere(
+      (language) => language.name == saved,
+      orElse: () => AppLanguage.korean,
+    );
+  } catch (_) {
+    return AppLanguage.korean;
+  }
+}
+
+/// The language loaded before the app starts; main() overrides it.
+final initialLanguageProvider = Provider<AppLanguage>((ref) {
+  return AppLanguage.korean;
+});
+
 final languageControllerProvider =
     NotifierProvider<LanguageController, AppLanguage>(LanguageController.new);
 
 class LanguageController extends Notifier<AppLanguage> {
   @override
-  AppLanguage build() => AppLanguage.korean;
+  AppLanguage build() => ref.read(initialLanguageProvider);
 
-  void setLanguage(AppLanguage language) {
+  Future<void> setLanguage(AppLanguage language) async {
     state = language;
+    try {
+      await (await SharedPreferences.getInstance())
+          .setString(_languagePreferenceKey, language.name);
+    } catch (_) {
+      // The choice still applies for this run if it cannot be saved.
+    }
   }
 }
 
