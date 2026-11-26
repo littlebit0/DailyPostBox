@@ -596,6 +596,53 @@ void main() {
     expect(bodyField.controller!.text, '\n\n-- \nSig A edited');
   });
 
+  testWidgets('compose types before the signature and still swaps it', (
+    WidgetTester tester,
+  ) async {
+    MailAccountSummary account(String id, String signature) =>
+        MailAccountSummary(
+          id: id,
+          providerId: 'gmail',
+          emailAddress: '$id@example.com',
+          incomingProtocol: 'imap',
+          authMode: 'oauth2',
+          syncStatus: 'idle',
+          syncError: null,
+          initialSync: InitialSyncOption.recommended,
+          lastSyncedAtLabel: 'now',
+          signature: signature,
+        );
+    final accounts = [account('a', 'Sig A'), account('b', 'Sig B')];
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          composeAccountsProvider.overrideWith((ref) async => accounts),
+        ],
+        child: const MaterialApp(home: ComposePage()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final controller =
+        tester.widget<TextField>(find.byType(TextField).last).controller!;
+    await tester.showKeyboard(find.byType(TextField).last);
+    await tester.pump();
+    // Type at the caret the way the platform IME does.
+    final value = controller.value;
+    tester.testTextInput.updateEditingValue(
+      value.replaced(value.selection, 'Hi'),
+    );
+    await tester.pump();
+    expect(controller.text, 'Hi\n\n-- \nSig A');
+
+    await tester.tap(find.byType(DropdownButtonFormField<String>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('b@example.com').last);
+    await tester.pumpAndSettle();
+    expect(controller.text, 'Hi\n\n-- \nSig B');
+    expect(controller.selection, const TextSelection.collapsed(offset: 2));
+  });
+
   testWidgets('signature save refreshes caches after switching accounts', (
     WidgetTester tester,
   ) async {

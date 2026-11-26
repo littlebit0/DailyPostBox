@@ -164,7 +164,17 @@ class _ComposePageState extends ConsumerState<ComposePage> {
         !body.endsWith(_signatureSeparator + _signature)) {
       return;
     }
-    _bodyController.text = swapSignature(body, _signature, next);
+    final text = swapSignature(body, _signature, next);
+    final bodyEnd = text.length -
+        (next.isEmpty ? 0 : _signatureSeparator.length + next.length);
+    final selection = _bodyController.selection;
+    // An invalid selection jumps to the end on focus, i.e. after the signature.
+    _bodyController.value = TextEditingValue(
+      text: text,
+      selection: selection.isValid && selection.end <= bodyEnd
+          ? selection
+          : TextSelection.collapsed(offset: bodyEnd),
+    );
     _signature = next;
   }
 
