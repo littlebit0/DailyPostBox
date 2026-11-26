@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx src/server.ts",
-    "test": "tsx --test test/imapSequenceRanges.test.ts test/mailSyncWorker.test.ts test/messageFlags.test.ts test/accountValidate.test.ts test/accountReconnect.test.ts test/oauthTokenManager.test.ts test/apnsPushNotifier.test.ts test/existsQueue.test.ts test/pop3Unsupported.test.ts test/deletedAccountSync.test.ts test/oauthSessionExpiry.test.ts test/noopPushNotifier.test.ts test/serverExposure.test.ts test/uidValidity.test.ts test/accountScopedMessage.test.ts",
+    "test": "tsx --test test/imapSequenceRanges.test.ts test/mailSyncWorker.test.ts test/messageFlags.test.ts test/accountValidate.test.ts test/accountReconnect.test.ts test/oauthTokenManager.test.ts test/apnsPushNotifier.test.ts test/existsQueue.test.ts test/pop3Unsupported.test.ts test/deletedAccountSync.test.ts test/oauthSessionExpiry.test.ts test/noopPushNotifier.test.ts test/serverExposure.test.ts test/uidValidity.test.ts test/accountScopedMessage.test.ts test/customServerAccount.test.ts",
     "typecheck": "tsc --noEmit",
     "start": "node dist/server.js",
     "build": "tsc"
