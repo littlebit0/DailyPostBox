@@ -73,11 +73,9 @@ export class MailSyncWorker {
       return;
     }
 
-    if (account.incomingProtocol === "imap") {
-      this.startImapPolling(account);
-    } else {
-      this.startPop3Account(account);
-    }
+    // POP3 is not implemented yet: its sync records the error status and
+    // no polling timer is started.
+    if (account.incomingProtocol === "imap") this.startImapPolling(account);
   }
 
   /** Starts watching or polling only when nothing is running for the account. */
@@ -324,17 +322,6 @@ export class MailSyncWorker {
       }
       void this.syncAccount(account).catch(() => undefined);
     }, this.options.pop3PollIntervalMs);
-    this.pollingTimers.set(account.id, timer);
-  }
-
-  private startPop3Account(account: MailAccount): void {
-    const poll = async () => {
-      const messages = await this.pop3.fetchLatest(account, this.options.mailbox, 25);
-      await Promise.all(messages.map((message) => this.handleIncoming(account, message)));
-    };
-
-    void poll();
-    const timer = setInterval(() => void poll(), this.options.pop3PollIntervalMs);
     this.pollingTimers.set(account.id, timer);
   }
 
