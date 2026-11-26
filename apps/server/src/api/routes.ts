@@ -3,6 +3,12 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { SearchObject } from "imapflow";
 import type { MailSender } from "../mail/MailSender.js";
+import {
+  SendQueue,
+  SendQueueFullError,
+  defaultUndoDelaySeconds,
+  undoDelaySeconds
+} from "../mail/SendQueue.js";
 import type {
   AttachmentDownload,
   AuthMode,
@@ -35,6 +41,12 @@ const sendSchema = z.object({
   subject: z.string().default(""),
   html: z.string().optional(),
   text: z.string().optional(),
+  delaySeconds: z
+    .number()
+    .refine((value) => (undoDelaySeconds as readonly number[]).includes(value), {
+      message: `delaySeconds must be one of ${undoDelaySeconds.join(", ")}`
+    })
+    .default(defaultUndoDelaySeconds),
   inReplyTo: z.string().regex(/^<[^<>\s]+>$/).optional(),
   references: z.array(z.string().regex(/^<[^<>\s]+>$/)).optional()
 });
@@ -120,6 +132,7 @@ export async function registerRoutes(
   app: FastifyInstance,
   deps: {
     sender: MailSender;
+    sendQueue?: SendQueue;
     accounts: AccountRepository;
     validateAccount: (account: MailAccount) => Promise<void>;
     fetchMessageContent: (
@@ -149,6 +162,10 @@ export async function registerRoutes(
     stopAccountSync: (accountId: string) => Promise<void>;
   }
 ): Promise<void> {
+  const sendQueue =
+    deps.sendQueue ??
+    new SendQueue(deps.sender, (error) => app.log.error({ err: error }, "mail send failed"));
+
   app.get("/health", async () => ({ ok: true }));
 
   app.get("/providers", async () => {
@@ -526,16 +543,48 @@ export async function registerRoutes(
     }));
   });
 
-  app.post("/mail/send", async (request, reply) => {
-    const draft = sendSchema.parse(request.body) as OutgoingMessageDraft;
+  // 10 MiB: explicit cap on the send body (Fastify default is 1 MiB).
+  app.post("/mail/send", { bodyLimit: 10 * 1024 * 1024 }, async (request, reply) => {
+    const { delaySeconds, ...parsed } = sendSchema.parse(request.body);
+    const draft = parsed as OutgoingMessageDraft;
     const account = await deps.accounts.getAccount(draft.accountId);
 
     if (!account) {
       return reply.code(404).send({ error: "Account not found" });
     }
 
-    const result = await deps.sender.send(account, draft);
-    return reply.code(202).send(result);
+    let queued: { id: string; sendAt: Date };
+    try {
+      queued = sendQueue.enqueue(account, draft, delaySeconds);
+    } catch (error) {
+      if (error instanceof SendQueueFullError) {
+        return reply.code(429).send({ error: "Too many pending sends" });
+      }
+      throw error;
+    }
+    return reply
+      .code(202)
+      .send({ id: queued.id, delaySeconds, sendAt: queued.sendAt.toISOString(), now: new Date().toISOString() });
+  });
+
+  app.get("/mail/send/:id", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const info = sendQueue.status(id);
+    if (!info) return reply.code(404).send({ error: "Send request not found" });
+    return info;
+  });
+
+  app.post("/mail/send/:id/cancel", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const status = sendQueue.cancel(id);
+
+    if (!status) {
+      return reply.code(404).send({ error: "Send request not found" });
+    }
+    if (status !== "cancelled") {
+      return reply.code(409).send({ error: "Message already sent", status });
+    }
+    return reply.code(200).send({ id, status });
   });
 
   app.post("/devices/push-token", async (request, reply) => {

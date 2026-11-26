@@ -27,21 +27,26 @@ class _SendingApi extends MailApiClient {
   _SendingApi() : super(baseUrl: 'http://127.0.0.1:1');
 
   final sent = <List<String>>[];
-  Completer<void> reply = Completer<void>();
+  Completer<SendReceipt> reply = Completer<SendReceipt>();
 
   @override
-  Future<void> sendMail({
+  Future<SendReceipt> sendMail({
     required String accountId,
     required List<String> to,
-    List<String> cc = const [],
     required String subject,
     required String body,
+    int delaySeconds = 5,
+    List<String> cc = const [],
     String? inReplyTo,
     List<String> references = const [],
   }) {
     sent.add(to);
     return reply.future;
   }
+
+  @override
+  Future<SendOutcome> fetchSendOutcome(String id) async =>
+      const SendOutcome(status: 'sent');
 }
 
 Future<_SendingApi> _openComposer(WidgetTester tester) async {
@@ -100,11 +105,14 @@ void main() {
     expect(find.byType(ComposePage), findsOneWidget);
     expect(find.widgetWithText(TextField, 'Hello'), findsOneWidget);
 
-    api.reply = Completer<void>()..complete();
+    api.reply = Completer<SendReceipt>()
+      ..complete(const SendReceipt('id', Duration.zero));
     await tester.tap(find.byTooltip('보내기'));
     await tester.pumpAndSettle();
     expect(api.sent, hasLength(2));
     expect(find.byType(ComposePage), findsNothing);
+    // Let the post-send outcome poll finish so no timer is left pending.
+    await tester.pump(const Duration(seconds: 3));
   });
 
   testWidgets('asks for a recipient instead of sending an empty list',
