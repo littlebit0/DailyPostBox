@@ -66,20 +66,24 @@ export class SnoozeStore {
   }
 
   async snooze(accountId: string, messageKey: string, wakeAt: Date): Promise<SnoozeEntry> {
+    const key = keyOf(accountId, messageKey);
     const entry: SnoozeEntry = { accountId, messageKey, wakeAt: wakeAt.toISOString() };
-    this.clearTimer(keyOf(accountId, messageKey));
-    this.entries.set(keyOf(accountId, messageKey), entry);
+    const previous = this.entries.get(key);
+    this.clearTimer(key);
+    this.entries.set(key, entry);
     this.arm(entry);
-    await this.persist();
+    await this.persistOrRollback(key, entry, previous);
     return entry;
   }
 
   async cancel(accountId: string, messageKey: string): Promise<boolean> {
     const key = keyOf(accountId, messageKey);
+    const previous = this.entries.get(key);
     this.clearTimer(key);
-    const existed = this.entries.delete(key);
-    if (existed) await this.persist();
-    return existed;
+    if (!previous) return false;
+    this.entries.delete(key);
+    await this.persistOrRollback(key, undefined, previous);
+    return true;
   }
 
   async removeAccount(accountId: string): Promise<void> {
@@ -136,6 +140,28 @@ export class SnoozeStore {
       await this.onWake(entry);
     } catch (error) {
       console.warn("snooze:wake-failed", error instanceof Error ? error.message : error);
+    }
+  }
+
+  /** A rejected request must not change visibility, so restore the prior entry and timer. */
+  private async persistOrRollback(
+    key: string,
+    applied: SnoozeEntry | undefined,
+    previous: SnoozeEntry | undefined
+  ): Promise<void> {
+    try {
+      await this.persist();
+    } catch (error) {
+      if (this.entries.get(key) === applied) {
+        this.clearTimer(key);
+        if (previous) {
+          this.entries.set(key, previous);
+          if (!previous.wokeAt) this.arm(previous);
+        } else {
+          this.entries.delete(key);
+        }
+      }
+      throw error;
     }
   }
 

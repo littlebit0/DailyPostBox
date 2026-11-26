@@ -105,6 +105,31 @@ test("a failed write does not block later writes", async () => {
   await assert.rejects(store.snooze("a", "m1", new Date(clock.time + hour)));
   await rm(blocker);
   await store.snooze("a", "m2", new Date(clock.time + hour));
-  assert.equal(JSON.parse(await readFile(join(blocker, "snoozes.json"), "utf8")).length, 2);
+  assert.deepEqual(
+    JSON.parse(await readFile(join(blocker, "snoozes.json"), "utf8")).map((entry: SnoozeEntry) => entry.messageKey),
+    ["m2"]
+  );
+  store.stop();
+});
+
+test("a failed write rolls back snooze and cancel", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "snooze-"));
+  const blocker = join(dir, "sub");
+  const clock = new FakeClock();
+  const woken: SnoozeEntry[] = [];
+  const store = new SnoozeStore(join(blocker, "snoozes.json"), (entry) => void woken.push(entry), clock);
+  await store.snooze("a", "kept", new Date(clock.time + hour));
+  await rm(blocker, { recursive: true });
+  await writeFile(blocker, "x");
+
+  await assert.rejects(store.snooze("a", "new", new Date(clock.time + hour)));
+  assert.equal(store.isHidden("a", "new"), false);
+  await assert.rejects(store.snooze("a", "kept", new Date(clock.time + 5 * hour)));
+  await assert.rejects(store.cancel("a", "kept"));
+  assert.equal(store.isHidden("a", "kept"), true);
+  assert.deepEqual(store.list().map((entry) => entry.messageKey), ["kept"]);
+
+  await clock.advance(hour);
+  assert.deepEqual(woken.map((entry) => entry.messageKey), ["kept"]);
   store.stop();
 });
