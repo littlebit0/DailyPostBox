@@ -82,7 +82,8 @@ export interface IncomingMessageSummary {
   // receivedAt, which is the sender-set Date header.
   arrivedAt?: Date;
   hasAttachments: boolean;
-  unsubscribe?: ListUnsubscribe;
+  // undefined: not checked yet (synced before this field existed); null: no header.
+  unsubscribe?: ListUnsubscribe | null;
 }
 
 export interface ListUnsubscribe {
@@ -96,6 +97,7 @@ export interface IncomingMessageContent {
   text: string;
   truncated: boolean;
   links: IncomingMessageLink[];
+  unsubscribe?: ListUnsubscribe | null;
 }
 
 export interface IncomingMessageLink {

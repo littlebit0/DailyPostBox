@@ -88,6 +88,20 @@ export async function registerRoutes(
     stopAccountSync: (accountId: string) => Promise<void>;
   }
 ): Promise<void> {
+  // Messages synced before unsubscribe parsing have no value yet; the UID
+  // cursor never refetches them, so fill it from the detail fetch once.
+  async function backfillUnsubscribe(
+    message: IncomingMessageSummary,
+    content: IncomingMessageContent
+  ): Promise<IncomingMessageSummary> {
+    if (message.unsubscribe !== undefined || content.unsubscribe === undefined) {
+      return message;
+    }
+    const updated = { ...message, unsubscribe: content.unsubscribe };
+    await deps.accounts.saveIncomingMessage(updated);
+    return updated;
+  }
+
   app.get("/health", async () => ({ ok: true }));
 
   app.get("/providers", async () => {
@@ -290,15 +304,16 @@ export async function registerRoutes(
     }
 
     const messages = await deps.accounts.listInbox(demoUserId);
-    const message = messages.find(
+    const stored = messages.find(
       (item) => item.accountId === params.accountId &&
         item.providerMessageId === params.messageId
     );
-    if (!message) {
+    if (!stored) {
       return reply.code(404).send({ error: "Message not found" });
     }
 
-    const content = await deps.fetchMessageContent(account, message);
+    const content = await deps.fetchMessageContent(account, stored);
+    const message = await backfillUnsubscribe(stored, content);
 
     return {
       ...message,
@@ -321,16 +336,17 @@ export async function registerRoutes(
 
   app.get("/mail/messages/:id", async (request, reply) => {
     const params = z.object({ id: z.string() }).parse(request.params);
-    const message = await deps.accounts.getMessage(demoUserId, params.id);
+    const stored = await deps.accounts.getMessage(demoUserId, params.id);
 
-    if (!message) {
+    if (!stored) {
       return reply.code(404).send({ error: "Message not found" });
     }
-    const account = await deps.accounts.getAccount(message.accountId);
+    const account = await deps.accounts.getAccount(stored.accountId);
     if (!account || account.userId !== demoUserId) {
       return reply.code(404).send({ error: "Account not found" });
     }
-    const content = await deps.fetchMessageContent(account, message);
+    const content = await deps.fetchMessageContent(account, stored);
+    const message = await backfillUnsubscribe(stored, content);
 
     return {
       ...message,

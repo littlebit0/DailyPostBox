@@ -6,6 +6,7 @@ import type {
   IncomingMessageContent,
   IncomingMessageLink,
   IncomingMessageSummary,
+  ListUnsubscribe,
   MailAccount
 } from "../domain/types.js";
 import { getProvider } from "../providers/providerRegistry.js";
@@ -146,12 +147,13 @@ export class ImapReceiver implements MailReceiver {
       await client.mailboxOpen(mailbox, { readOnly: true });
       const message = await client.fetchOne(
         providerMessageId,
-        { bodyStructure: true },
+        { bodyStructure: true, headers: ["list-unsubscribe", "list-unsubscribe-post"] },
         { uid: true }
       );
       if (!message || !message.bodyStructure) {
         throw new Error("Message body was not found on the IMAP server.");
       }
+      const unsubscribe = unsubscribeFromHeaders(message.headers);
 
       const bodyParts = selectBodyParts(message.bodyStructure);
       let htmlFallback: IncomingMessageContent | null = null;
@@ -172,7 +174,7 @@ export class ImapReceiver implements MailReceiver {
 
         if (bodyPart.type.toLowerCase() !== "text/html") {
           const text = cleanMessageText(decoded);
-          if (text) return { text, truncated, links: htmlLinks };
+          if (text) return { text, truncated, links: htmlLinks, unsubscribe };
           continue;
         }
 
@@ -203,8 +205,8 @@ export class ImapReceiver implements MailReceiver {
         }
       }
 
-      if (htmlFallback) return { ...htmlFallback, links: htmlLinks };
-      return { text: "", truncated: false, links: [] };
+      if (htmlFallback) return { ...htmlFallback, links: htmlLinks, unsubscribe };
+      return { text: "", truncated: false, links: [], unsubscribe };
     } finally {
       await client.logout().catch(() => undefined);
     }
@@ -368,7 +370,6 @@ function toIncomingMessage(
 ): IncomingMessageSummary | null {
   const envelope = message.envelope;
   if (!envelope) return null;
-  const rawHeaders = message.headers?.toString("utf8") ?? "";
 
   return {
     accountId: account.id,
@@ -379,11 +380,16 @@ function toIncomingMessage(
     receivedAt: envelope.date instanceof Date ? envelope.date : new Date(),
     arrivedAt: message.internalDate instanceof Date ? message.internalDate : undefined,
     hasAttachments: false,
-    unsubscribe: parseListUnsubscribe(
-      readHeader(rawHeaders, "List-Unsubscribe"),
-      readHeader(rawHeaders, "List-Unsubscribe-Post")
-    )
+    unsubscribe: unsubscribeFromHeaders(message.headers)
   };
+}
+
+function unsubscribeFromHeaders(headers: Buffer | undefined): ListUnsubscribe | null {
+  const raw = headers?.toString("utf8") ?? "";
+  return parseListUnsubscribe(
+    readHeader(raw, "List-Unsubscribe"),
+    readHeader(raw, "List-Unsubscribe-Post")
+  ) ?? null;
 }
 
 function toError(error: unknown): Error {
