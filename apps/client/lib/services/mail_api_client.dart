@@ -42,14 +42,6 @@ class MailApiClient {
 
   final Dio _dio;
 
-  Future<List<MailSummary>> fetchInbox() async {
-    final response = await _dio.get<List<dynamic>>('/mail/inbox');
-    final data = response.data ?? [];
-    return data
-        .map((item) => MailSummary.fromJson(item as Map<String, dynamic>))
-        .toList();
-  }
-
   Future<List<MailSummary>> fetchAccountMessages(String accountId) async {
     final response =
         await _dio.get<List<dynamic>>('/accounts/$accountId/messages');
@@ -77,12 +69,6 @@ class MailApiClient {
         .toList();
   }
 
-  Future<MessageDetail> fetchMessage(String messageId) async {
-    final response =
-        await _dio.get<Map<String, dynamic>>('/mail/messages/$messageId');
-    return MessageDetail.fromJson(response.data ?? {});
-  }
-
   Future<MessageDetail> fetchAccountMessage({
     required String accountId,
     required String messageId,
@@ -100,6 +86,7 @@ class MailApiClient {
     required String incomingProtocol,
     required String secret,
     required InitialSyncOption initialSync,
+    ConnectionOverride? connectionOverride,
   }) async {
     await _dio.post('/accounts', data: {
       'providerId': providerId,
@@ -108,6 +95,8 @@ class MailApiClient {
       'incomingProtocol': incomingProtocol,
       'secret': secret,
       'initialSync': initialSync.toJson(),
+      if (connectionOverride != null)
+        'connectionOverride': connectionOverride.toJson(),
     });
   }
 
@@ -118,6 +107,7 @@ class MailApiClient {
     required String incomingProtocol,
     required String secret,
     required InitialSyncOption initialSync,
+    ConnectionOverride? connectionOverride,
   }) async {
     await _dio.post('/accounts/validate', data: {
       'providerId': providerId,
@@ -126,6 +116,8 @@ class MailApiClient {
       'incomingProtocol': incomingProtocol,
       'secret': secret,
       'initialSync': initialSync.toJson(),
+      if (connectionOverride != null)
+        'connectionOverride': connectionOverride.toJson(),
     });
   }
 
@@ -368,6 +360,34 @@ class MailAccountSummary {
       lastSyncedAtLabel: _formatReceivedAt(json['lastSyncedAt'] as String?),
     );
   }
+}
+
+/// Incoming (IMAP) and outgoing (SMTP) servers of a custom mail account.
+class ConnectionOverride {
+  const ConnectionOverride({required this.incoming, required this.outgoing});
+
+  final ServerEndpoint incoming;
+  final ServerEndpoint outgoing;
+
+  Map<String, Object> toJson() => {
+        'incoming': incoming.toJson(),
+        'outgoing': outgoing.toJson(),
+      };
+}
+
+class ServerEndpoint {
+  const ServerEndpoint({
+    required this.host,
+    required this.port,
+    required this.secure,
+  });
+
+  final String host;
+  final int port;
+  final bool secure;
+
+  Map<String, Object> toJson() =>
+      {'host': host, 'port': port, 'secure': secure};
 }
 
 class InitialSyncOption {
