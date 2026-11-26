@@ -51,6 +51,10 @@ export interface MailAccount {
   lastSyncedAt?: Date;
   // Missing means on, so accounts stored before this field keep notifying.
   notificationsEnabled?: boolean;
+  // Every message up to this UID was checked by a completed sync, in the
+  // mailbox numbering named by syncedUidValidity (IMAP sends a bigint).
+  syncedUid?: number;
+  syncedUidValidity?: string;
   connectionOverride?: {
     incoming?: {
       host: string;

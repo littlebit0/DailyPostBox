@@ -269,3 +269,238 @@ test("skips push but still stores mail when account notifications are off", asyn
     await syncWorker.stop();
   }
 });
+
+function storedMessage(accountId: string, uid: string): IncomingMessageSummary {
+  return {
+    accountId,
+    providerMessageId: uid,
+    mailbox: "INBOX",
+    from: "a@example.com",
+    subject: `message ${uid}`,
+    receivedAt: new Date(),
+    hasAttachments: false
+  };
+}
+
+function recordingImap(result: { uidValidity: string; highestUid?: number }) {
+  const calls: Array<{ limit: unknown; cursor: unknown }> = [];
+  const imap = {
+    watch: async () => async () => undefined,
+    fetchLatestBatches: async (
+      _account: MailAccount,
+      _mailbox: string,
+      limit: number | "all",
+      _onBatch: unknown,
+      cursor?: unknown
+    ) => {
+      calls.push({ limit, cursor });
+      return result;
+    }
+  };
+  return { calls, imap };
+}
+
+test("a resync continues after the last completed sync", async () => {
+  const repository = new InMemoryAccountRepository();
+  const mailAccount = { ...account(), syncedUid: 41, syncedUidValidity: "7" };
+  await repository.addAccount(mailAccount);
+  // The IDLE watcher saved UID 51 while 42-50 were never checked.
+  await repository.saveIncomingMessage(storedMessage(mailAccount.id, "51"));
+  const { calls, imap } = recordingImap({ uidValidity: "7", highestUid: 75 });
+  const syncWorker = worker(repository, imap);
+
+  try {
+    await syncWorker.syncAccount(mailAccount);
+    assert.deepEqual(calls, [{ limit: 25, cursor: { uid: 41, uidValidity: "7" } }]);
+    assert.equal(mailAccount.syncedUid, 75);
+    assert.equal(mailAccount.syncedUidValidity, "7");
+  } finally {
+    await syncWorker.stop();
+  }
+});
+
+test("accounts without a stored cursor continue after their newest saved UID", async () => {
+  const repository = new InMemoryAccountRepository();
+  const mailAccount = account();
+  await repository.addAccount(mailAccount);
+  await repository.saveIncomingMessage(storedMessage(mailAccount.id, "40"));
+  await repository.saveIncomingMessage(storedMessage(mailAccount.id, "41"));
+  await repository.saveIncomingMessage(storedMessage("other-account", "900"));
+  const { calls, imap } = recordingImap({ uidValidity: "7", highestUid: 41 });
+  const syncWorker = worker(repository, imap);
+
+  try {
+    await syncWorker.syncAccount(mailAccount);
+    assert.deepEqual(calls, [{ limit: 25, cursor: { uid: 41 } }]);
+  } finally {
+    await syncWorker.stop();
+  }
+});
+
+test("the first import keeps the chosen limit and records the cursor", async () => {
+  const repository = new InMemoryAccountRepository();
+  const mailAccount = account();
+  mailAccount.lastSyncedAt = undefined;
+  mailAccount.initialSync = { includePreviousMessages: true, limit: 500 };
+  await repository.addAccount(mailAccount);
+  const { calls, imap } = recordingImap({ uidValidity: "7", highestUid: 1200 });
+  const syncWorker = worker(repository, imap);
+
+  try {
+    await syncWorker.syncAccount(mailAccount);
+    assert.deepEqual(calls, [{ limit: 500, cursor: undefined }]);
+    assert.equal(mailAccount.syncedUid, 1200);
+  } finally {
+    await syncWorker.stop();
+  }
+});
+
+test("skipping previous mail sets a baseline so later syncs import only new mail", async () => {
+  const repository = new InMemoryAccountRepository();
+  const mailAccount = account();
+  mailAccount.lastSyncedAt = undefined;
+  mailAccount.initialSync = { includePreviousMessages: false, limit: 100 };
+  await repository.addAccount(mailAccount);
+  const { calls, imap } = recordingImap({ uidValidity: "7", highestUid: 90 });
+  const syncWorker = worker(repository, imap);
+
+  try {
+    await syncWorker.syncAccount(mailAccount);
+    await syncWorker.syncAccount(mailAccount);
+    assert.deepEqual(calls, [
+      { limit: 0, cursor: undefined },
+      { limit: 25, cursor: { uid: 90, uidValidity: "7" } }
+    ]);
+  } finally {
+    await syncWorker.stop();
+  }
+});
+
+test("a failed sync does not advance the cursor", async () => {
+  const repository = new InMemoryAccountRepository();
+  const mailAccount = { ...account(), syncedUid: 41, syncedUidValidity: "7" };
+  await repository.addAccount(mailAccount);
+  const imap = {
+    watch: async () => async () => undefined,
+    fetchLatestBatches: async () => {
+      throw new Error("Connection closed");
+    }
+  };
+  const syncWorker = worker(repository, imap);
+
+  try {
+    await syncWorker.syncAccount(mailAccount).catch(() => undefined);
+    assert.equal(mailAccount.syncedUid, 41);
+  } finally {
+    await syncWorker.stop();
+  }
+});
+
+test("an IDLE reconnect syncs the mail that arrived while disconnected", async () => {
+  const repository = new InMemoryAccountRepository();
+  const mailAccount = account();
+  await repository.addAccount(mailAccount);
+  let disconnect: ((error: Error) => void) | undefined;
+  let syncs = 0;
+  const imap = {
+    watch: async (
+      _account: MailAccount,
+      _mailbox: string,
+      _onMessage: unknown,
+      onDisconnect: (error: Error) => void
+    ) => {
+      disconnect = onDisconnect;
+      return async () => undefined;
+    },
+    fetchLatestBatches: async () => {
+      syncs += 1;
+    }
+  };
+  const syncWorker = worker(repository, imap);
+
+  try {
+    await syncWorker.startAccount(mailAccount);
+    assert.equal(syncs, 1);
+
+    disconnect!(new Error("IMAP connection closed."));
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.equal(syncs, 2);
+  } finally {
+    await syncWorker.stop();
+  }
+});
+
+test("a reconnect after a failed first watch still catches up", async () => {
+  const repository = new InMemoryAccountRepository();
+  const mailAccount = account();
+  await repository.addAccount(mailAccount);
+  let watchCalls = 0;
+  let syncs = 0;
+  const imap = {
+    watch: async () => {
+      watchCalls += 1;
+      if (watchCalls === 1) throw new Error("Connection refused");
+      return async () => undefined;
+    },
+    fetchLatestBatches: async () => {
+      syncs += 1;
+      // The server is still down for the initial sync too.
+      if (syncs === 1) throw new Error("Connection refused");
+      return { uidValidity: "7", highestUid: 41 };
+    }
+  };
+  const syncWorker = worker(repository, imap);
+
+  try {
+    await syncWorker.startAccount(mailAccount);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.equal(watchCalls, 2);
+    assert.equal(syncs, 2);
+  } finally {
+    await syncWorker.stop();
+  }
+});
+
+test("a reconnect during a running import queues another sync", async () => {
+  const repository = new InMemoryAccountRepository();
+  const mailAccount = account();
+  await repository.addAccount(mailAccount);
+  let disconnect: ((error: Error) => void) | undefined;
+  let releaseImport!: () => void;
+  const runningImport = new Promise<void>((resolve) => {
+    releaseImport = resolve;
+  });
+  let syncs = 0;
+  const imap = {
+    watch: async (
+      _account: MailAccount,
+      _mailbox: string,
+      _onMessage: unknown,
+      onDisconnect: (error: Error) => void
+    ) => {
+      disconnect = onDisconnect;
+      return async () => undefined;
+    },
+    fetchLatestBatches: async () => {
+      syncs += 1;
+      if (syncs === 1) await runningImport;
+      return { uidValidity: "7", highestUid: 41 };
+    }
+  };
+  const syncWorker = worker(repository, imap);
+
+  try {
+    const start = syncWorker.startAccount(mailAccount);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    disconnect!(new Error("IMAP connection closed."));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(syncs, 1);
+
+    releaseImport();
+    await start;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(syncs, 2);
+  } finally {
+    await syncWorker.stop();
+  }
+});
