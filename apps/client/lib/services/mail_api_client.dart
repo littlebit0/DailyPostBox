@@ -471,6 +471,8 @@ class MailAccountSummary {
     this.syncErrorCode,
     required this.initialSync,
     required this.lastSyncedAtLabel,
+    this.idleSupported,
+    this.capabilitiesCheckedAtLabel = '',
     this.notificationsEnabled = true,
   });
 
@@ -486,7 +488,14 @@ class MailAccountSummary {
   final String lastSyncedAtLabel;
   final bool notificationsEnabled;
 
+  /// Null until the server has logged in and read the IMAP capabilities.
+  final bool? idleSupported;
+  final String capabilitiesCheckedAtLabel;
+
   factory MailAccountSummary.fromJson(Map<String, dynamic> json) {
+    final capabilities = json['incomingCapabilities'] is Map<String, dynamic>
+        ? json['incomingCapabilities'] as Map<String, dynamic>
+        : null;
     return MailAccountSummary(
       id: json['id'] as String,
       providerId: json['providerId'] as String,
@@ -501,6 +510,9 @@ class MailAccountSummary {
               json['initialSync'] as Map<String, dynamic>)
           : null,
       lastSyncedAtLabel: _formatReceivedAt(json['lastSyncedAt'] as String?),
+      idleSupported: capabilities?['idle'] as bool?,
+      capabilitiesCheckedAtLabel:
+          _formatReceivedAt(capabilities?['checkedAt'] as String?),
       notificationsEnabled: json['notificationsEnabled'] as bool? ?? true,
     );
   }

@@ -270,6 +270,11 @@ class AppStrings {
   String get statusError => _ko ? '오류' : 'Error';
   String get lastSynced => _ko ? '마지막 동기화' : 'Last synced';
   String get neverSynced => _ko ? '아직 없음' : 'Never';
+  String get receiveMode => _ko ? '수신 방식' : 'Receive mode';
+  String get receiveRealtime => _ko ? '실시간(IDLE)' : 'Realtime (IDLE)';
+  String get receivePolling => _ko ? '주기 확인' : 'Periodic check';
+  String get receiveUnknown => _ko ? '확인 전' : 'Not checked yet';
+  String get capabilitiesChecked => _ko ? '확인' : 'checked';
   String get protocol => _ko ? '수신 방식' : 'Protocol';
   String get authMode => _ko ? '인증 방식' : 'Auth mode';
   String authModeLabel(String mode) => switch (mode) {

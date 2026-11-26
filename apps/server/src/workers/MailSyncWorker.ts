@@ -280,6 +280,9 @@ export class MailSyncWorker {
           scheduleReconnect
         );
         reconnectDelay = this.options.imapReconnectBaseDelayMs;
+        if (account.incomingCapabilities) {
+          await this.accounts.updateAccount(account).catch(() => undefined);
+        }
         // Mail that arrived while disconnected raised no IDLE event. A sync
         // already running may have taken its UID snapshot before the outage,
         // so a fresh one starts after it instead of joining it.

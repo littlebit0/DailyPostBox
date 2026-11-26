@@ -465,6 +465,13 @@ class _AccountDetail extends ConsumerWidget {
               ? strings.neverSynced
               : account.lastSyncedAtLabel,
         ),
+        if (account.incomingProtocol == 'imap') ...[
+          const SizedBox(height: 8),
+          _InfoRow(
+            label: strings.receiveMode,
+            value: _receiveModeLabel(account, strings),
+          ),
+        ],
         if (account.syncError != null) ...[
           const SizedBox(height: 12),
           Text(
@@ -475,6 +482,16 @@ class _AccountDetail extends ConsumerWidget {
       ],
     );
   }
+}
+
+String _receiveModeLabel(MailAccountSummary account, AppStrings strings) {
+  final idle = account.idleSupported;
+  if (idle == null) return strings.receiveUnknown;
+  final mode = idle ? strings.receiveRealtime : strings.receivePolling;
+  final checked = account.capabilitiesCheckedAtLabel;
+  return checked.isEmpty
+      ? mode
+      : '$mode · ${strings.capabilitiesChecked} $checked';
 }
 
 class _InfoRow extends StatelessWidget {
