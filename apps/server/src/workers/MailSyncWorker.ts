@@ -1,8 +1,13 @@
 import type { MailAccount, IncomingMessageSummary } from "../domain/types.js";
-import type { ImapReceiver } from "../mail/ImapReceiver.js";
+import type {
+  ImapReceiver,
+  ImapSyncCursor,
+  ImapSyncResult
+} from "../mail/ImapReceiver.js";
 import type { Pop3Receiver } from "../mail/Pop3Receiver.js";
 import type { PushNotifier } from "../notifications/PushNotifier.js";
 import type { AccountRepository } from "./AccountRepository.js";
+import { supportsImapIdle } from "../providers/resolveConnectionSettings.js";
 import {
   applySyncFailure,
   isAuthenticationFailure
@@ -22,6 +27,9 @@ export class MailSyncWorker {
   // stopAccount drops the token so a sync still running with replaced
   // credentials cannot overwrite the status of the restarted sync.
   private readonly syncTokens = new Map<string, object>();
+  // Held only while a start awaits its first sync; stopAccount removes it so
+  // that start installs no polling timer for a stopped or deleted account.
+  private readonly pendingStarts = new Map<string, object>();
 
   constructor(
     private readonly accounts: AccountRepository,
@@ -37,7 +45,7 @@ export class MailSyncWorker {
   }
 
   async startAccount(account: MailAccount): Promise<void> {
-    if (account.incomingProtocol === "imap") {
+    if (supportsImapIdle(account)) {
       if (!this.stopHandlers.has(account.id)) {
         await this.startImapAccount(account);
       }
@@ -51,17 +59,25 @@ export class MailSyncWorker {
       return;
     }
 
+    const start = {};
+    this.pendingStarts.set(account.id, start);
     await this.syncAccount(account).catch(() => undefined);
-    if (this.pollingTimers.has(account.id)) {
+    const stillWanted = this.pendingStarts.get(account.id) === start;
+    if (stillWanted) this.pendingStarts.delete(account.id);
+    if (!stillWanted || this.pollingTimers.has(account.id)) {
       return;
     }
 
-    this.startPop3Account(account);
+    if (account.incomingProtocol === "imap") {
+      this.startImapPolling(account);
+    } else {
+      this.startPop3Account(account);
+    }
   }
 
   /** Starts watching or polling only when nothing is running for the account. */
   async resumeAccount(account: MailAccount): Promise<void> {
-    const running = account.incomingProtocol === "imap"
+    const running = supportsImapIdle(account)
       ? this.stopHandlers.has(account.id)
       : this.pollingTimers.has(account.id);
     if (!running) await this.startAccount(account);
@@ -88,41 +104,67 @@ export class MailSyncWorker {
   private async performSync(account: MailAccount, token: object): Promise<void> {
     const isCurrent = () => this.syncTokens.get(account.id) === token;
     const limit = this.initialSyncLimit(account);
+    // Polled accounts have no IDLE watcher to notify them, so new mail found
+    // after the first import is announced here. Older mail a later poll
+    // reaches for the first time (beyond a small first import) is history:
+    // only mail that reached the server after the account was added counts.
+    const polled = account.lastSyncedAt !== undefined &&
+      account.incomingProtocol === "imap" &&
+      !supportsImapIdle(account);
+    const notifies = (message: IncomingMessageSummary) =>
+      polled && (message.arrivedAt ?? message.receivedAt) >= account.createdAt;
+    // An account that opted out of previous mail keeps only mail that
+    // reached the server after it was added. The server's arrival time is
+    // used, not the sender's Date header, so delayed new mail is kept.
+    const skipHistory = account.initialSync?.includePreviousMessages === false;
+    const isWanted = (message: IncomingMessageSummary) =>
+      !skipHistory || message.arrivedAt === undefined ||
+      message.arrivedAt >= account.createdAt;
+    const cursor = account.lastSyncedAt
+      ? await this.syncCursor(account)
+      : undefined;
     account.syncStatus = "syncing";
     account.syncError = undefined;
     account.syncErrorCode = undefined;
     await this.accounts.updateAccount(account);
 
     try {
-      if (limit !== 0) {
-        if (account.incomingProtocol === "imap") {
-          await this.imap.fetchLatestBatches(
-            account,
-            this.options.mailbox,
-            limit,
-            async (messages) => {
-              await Promise.all(
-                messages.map((message) =>
-                  this.handleIncoming(account, message, false)
-                )
-              );
-            }
-          );
-        } else {
-          const messages = await this.pop3.fetchLatest(
-            account,
-            this.options.mailbox,
-            limit
-          );
-          await Promise.all(
-            messages.map((message) =>
-              this.handleIncoming(account, message, false)
-            )
-          );
-        }
+      let result: ImapSyncResult | undefined;
+      if (account.incomingProtocol === "imap") {
+        // Runs even when history is skipped, to record the starting UID.
+        result = await this.imap.fetchLatestBatches(
+          account,
+          this.options.mailbox,
+          limit,
+          async (messages) => {
+            await Promise.all(
+              messages.filter(isWanted).map((message) =>
+                this.handleIncoming(account, message, notifies(message))
+              )
+            );
+          },
+          cursor
+        );
+      } else if (limit !== 0) {
+        const messages = await this.pop3.fetchLatest(
+          account,
+          this.options.mailbox,
+          limit
+        );
+        await Promise.all(
+          messages.map((message) =>
+            this.handleIncoming(account, message, false)
+          )
+        );
       }
 
       if (!isCurrent()) return;
+      // Advanced only here: mail the IDLE watcher saved meanwhile must not
+      // move the cursor past messages this sync has not checked.
+      if (result?.highestUid !== undefined) {
+        account.syncedUid = result.highestUid;
+        account.syncedUidValidity = result.uidValidity;
+      }
       account.syncStatus = "idle";
       account.lastSyncedAt = new Date();
       await this.accounts.updateAccount(account);
@@ -145,6 +187,7 @@ export class MailSyncWorker {
   }
 
   async stopAccount(accountId: string): Promise<void> {
+    this.pendingStarts.delete(accountId);
     this.syncPromises.delete(accountId);
     this.syncTokens.delete(accountId);
 
@@ -208,8 +251,13 @@ export class MailSyncWorker {
       }, delayMs);
     };
 
+    // startAccount syncs right after the first attempt; every later attempt
+    // (a reconnect, even if the first one failed) must catch up itself.
+    let firstAttempt = true;
     const connect = async (): Promise<void> => {
       if (stopped) return;
+      const catchUp = !firstAttempt;
+      firstAttempt = false;
 
       try {
         activeStop = await this.imap.watch?.(
@@ -219,6 +267,15 @@ export class MailSyncWorker {
           scheduleReconnect
         );
         reconnectDelay = this.options.imapReconnectBaseDelayMs;
+        // Mail that arrived while disconnected raised no IDLE event. A sync
+        // already running may have taken its UID snapshot before the outage,
+        // so a fresh one starts after it instead of joining it.
+        if (catchUp) {
+          void (async () => {
+            await this.syncPromises.get(account.id)?.catch(() => undefined);
+            if (!stopped) await this.syncAccount(account);
+          })().catch(() => undefined);
+        }
       } catch (error) {
         scheduleReconnect(error instanceof Error ? error : new Error(String(error)));
       }
@@ -234,6 +291,24 @@ export class MailSyncWorker {
     this.stopHandlers.set(account.id, stopWatching);
 
     await connect();
+  }
+
+  // Servers without IDLE get new mail by periodic sync instead of a watcher
+  // that would fail and reconnect forever.
+  private startImapPolling(account: MailAccount): void {
+    // Rejected credentials would fail every poll and can lock the mailbox.
+    if (account.syncErrorCode === "authentication") return;
+    const timer = setInterval(() => {
+      if (account.syncErrorCode === "authentication") {
+        clearInterval(timer);
+        if (this.pollingTimers.get(account.id) === timer) {
+          this.pollingTimers.delete(account.id);
+        }
+        return;
+      }
+      void this.syncAccount(account).catch(() => undefined);
+    }, this.options.pop3PollIntervalMs);
+    this.pollingTimers.set(account.id, timer);
   }
 
   private startPop3Account(account: MailAccount): void {
@@ -262,6 +337,30 @@ export class MailSyncWorker {
         error: error instanceof Error ? error.message : String(error)
       });
     });
+  }
+
+  // Resyncs continue after the last completed sync, however many messages
+  // arrived while the server was disconnected.
+  private async syncCursor(account: MailAccount): Promise<ImapSyncCursor | undefined> {
+    if (account.syncedUid !== undefined) {
+      return { uid: account.syncedUid, uidValidity: account.syncedUidValidity };
+    }
+    // Accounts synced before cursors were stored start after their newest mail.
+    const uid = await this.newestStoredUid(account);
+    return uid === undefined ? undefined : { uid };
+  }
+
+  private async newestStoredUid(account: MailAccount): Promise<number | undefined> {
+    const uids = (await this.accounts.listInbox(account.userId))
+      .filter((message) =>
+        message.accountId === account.id && message.mailbox === this.options.mailbox
+      )
+      .map((message) => Number(message.providerMessageId))
+      .filter(Number.isSafeInteger);
+    // reduce, not Math.max(...uids): full imports can exceed the arg limit.
+    return uids.length > 0
+      ? uids.reduce((newest, uid) => Math.max(newest, uid))
+      : undefined;
   }
 
   private initialSyncLimit(account: MailAccount): number | "all" | 0 {
