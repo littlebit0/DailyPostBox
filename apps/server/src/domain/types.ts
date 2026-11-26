@@ -53,6 +53,8 @@ export interface MailAccount {
   // mailbox numbering named by syncedUidValidity (IMAP sends a bigint).
   syncedUid?: number;
   syncedUidValidity?: string;
+  // UIDVALIDITY of the synced mailbox, as a string (IMAP sends a bigint).
+  uidValidity?: string;
   connectionOverride?: {
     incoming?: {
       host: string;

@@ -70,6 +70,14 @@ export class LocalFileAccountRepository implements AccountRepository {
     await this.persist();
   }
 
+  async deleteMessages(accountId: string): Promise<void> {
+    await this.ensureLoaded();
+    for (const [key, message] of this.messages) {
+      if (message.accountId === accountId) this.messages.delete(key);
+    }
+    await this.persist();
+  }
+
   async listPushTargets(userId: string): Promise<PushTarget[]> {
     await this.ensureLoaded();
     return this.pushTargets.filter((target) => target.userId === userId);
@@ -106,14 +114,6 @@ export class LocalFileAccountRepository implements AccountRepository {
     return [...this.messages.values()]
       .filter((message) => accountIds.has(message.accountId))
       .sort((a, b) => b.receivedAt.getTime() - a.receivedAt.getTime());
-  }
-
-  async getMessage(
-    userId: string,
-    messageId: string
-  ): Promise<IncomingMessageSummary | undefined> {
-    const inbox = await this.listInbox(userId);
-    return inbox.find((message) => message.providerMessageId === messageId);
   }
 
   async saveIncomingMessage(message: IncomingMessageSummary): Promise<boolean> {

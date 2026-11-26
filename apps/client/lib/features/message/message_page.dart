@@ -8,28 +8,26 @@ import '../accounts/account_providers.dart';
 import '../../widgets/app_shell.dart';
 import 'linked_message_body.dart';
 
-typedef MessageRequest = ({String messageId, String? accountId});
+typedef MessageRequest = ({String messageId, String accountId});
 
-final messageProvider = FutureProvider.family<MessageDetail, MessageRequest>((
-  ref,
-  request,
-) {
-  final api = ref.watch(mailApiClientProvider);
-  final accountId = request.accountId;
-  if (accountId != null) {
-    return api.fetchAccountMessage(
-      accountId: accountId,
-      messageId: request.messageId,
-    );
-  }
-  return api.fetchMessage(request.messageId);
+// Messages are looked up per account: IMAP UIDs repeat across accounts.
+final messageProvider =
+    FutureProvider.family<MessageDetail, MessageRequest>((ref, request) {
+  return ref.watch(mailApiClientProvider).fetchAccountMessage(
+        accountId: request.accountId,
+        messageId: request.messageId,
+      );
 });
 
 class MessagePage extends ConsumerStatefulWidget {
-  const MessagePage({super.key, required this.messageId, this.accountId});
+  const MessagePage({
+    super.key,
+    required this.messageId,
+    required this.accountId,
+  });
 
   final String messageId;
-  final String? accountId;
+  final String accountId;
 
   @override
   ConsumerState<MessagePage> createState() => _MessagePageState();
@@ -42,7 +40,7 @@ class _MessagePageState extends ConsumerState<MessagePage> {
   bool _autoMarked = false;
 
   String get messageId => widget.messageId;
-  String? get accountId => widget.accountId;
+  String get accountId => widget.accountId;
 
   // Last server-confirmed values (null = as loaded); failures roll back to these.
   bool? _confirmedSeen;
@@ -57,22 +55,18 @@ class _MessagePageState extends ConsumerState<MessagePage> {
 
   Future<void> _setFlags({bool? seen, bool? flagged}) async {
     final id = accountId;
-    if (id == null) return;
     // The container outlives this widget, so invalidation still works after dispose.
     final container = ProviderScope.containerOf(context, listen: false);
     final seenVersion = seen != null ? ++_seenVersion : _seenVersion;
-    final flaggedVersion = flagged != null
-        ? ++_flaggedVersion
-        : _flaggedVersion;
+    final flaggedVersion =
+        flagged != null ? ++_flaggedVersion : _flaggedVersion;
     setState(() {
       if (seen != null) _seen = seen;
       if (flagged != null) _flagged = flagged;
     });
     try {
       final run = _queue.then(
-        (_) => container
-            .read(mailApiClientProvider)
-            .setMessageFlags(
+        (_) => container.read(mailApiClientProvider).setMessageFlags(
               accountId: id,
               messageId: messageId,
               seen: seen,
@@ -122,9 +116,7 @@ class _MessagePageState extends ConsumerState<MessagePage> {
     final seen = _seen ?? detail?.seen ?? false;
     final flagged = _flagged ?? detail?.flagged ?? false;
     final strings = ref.watch(appStringsProvider);
-    final mailboxPath = accountId == null
-        ? '/accounts'
-        : '/accounts/$accountId/mail';
+    final mailboxPath = '/accounts/$accountId/mail';
 
     final content = Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -140,7 +132,7 @@ class _MessagePageState extends ConsumerState<MessagePage> {
           ),
           title: Text(strings.message),
           actions: [
-            if (accountId != null && detail != null) ...[
+            if (detail != null) ...[
               IconButton(
                 tooltip: flagged ? strings.removeStar : strings.addStar,
                 onPressed: () => _setFlags(flagged: !flagged),
@@ -195,12 +187,8 @@ class _MessagePageState extends ConsumerState<MessagePage> {
       ],
     );
 
-    final selectedAccountId = accountId;
-    if (selectedAccountId == null) {
-      return Scaffold(body: content);
-    }
     return AppShell(
-      selectedDestinationId: AppShell.accountDestinationId(selectedAccountId),
+      selectedDestinationId: AppShell.accountDestinationId(accountId),
       child: content,
     );
   }
