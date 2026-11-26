@@ -448,6 +448,17 @@ class _AccountDetail extends ConsumerWidget {
           ],
         ),
         const SizedBox(height: 16),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: Text(strings.accountNotifications),
+          value: account.notificationsEnabled,
+          onChanged: (enabled) async {
+            await ref
+                .read(mailApiClientProvider)
+                .setAccountNotifications(account.id, enabled);
+            ref.invalidate(accountsProvider);
+          },
+        ),
         _InfoRow(
           label: strings.lastSynced,
           value: account.lastSyncedAtLabel.isEmpty
@@ -966,6 +977,12 @@ class _AddAccountDialog extends ConsumerStatefulWidget {
 class _AddAccountDialogState extends ConsumerState<_AddAccountDialog> {
   final _emailController = TextEditingController();
   final _secretController = TextEditingController();
+  final _incomingHostController = TextEditingController();
+  final _incomingPortController = TextEditingController(text: '993');
+  final _outgoingHostController = TextEditingController();
+  final _outgoingPortController = TextEditingController(text: '465');
+  bool _incomingSecure = true;
+  bool _outgoingSecure = true;
   late String _providerId;
   late String _authMode;
   late String _protocol;
@@ -975,6 +992,7 @@ class _AddAccountDialogState extends ConsumerState<_AddAccountDialog> {
   String? _error;
 
   bool get _isNaver => _providerId == 'naver';
+  bool get _isCustom => _providerId == 'custom';
 
   @override
   void initState() {
@@ -989,7 +1007,83 @@ class _AddAccountDialogState extends ConsumerState<_AddAccountDialog> {
   void dispose() {
     _emailController.dispose();
     _secretController.dispose();
+    _incomingHostController.dispose();
+    _incomingPortController.dispose();
+    _outgoingHostController.dispose();
+    _outgoingPortController.dispose();
     super.dispose();
+  }
+
+  Widget _serverFields({
+    required String title,
+    required TextEditingController host,
+    required TextEditingController port,
+    required bool secure,
+    required ValueChanged<bool> onSecureChanged,
+  }) {
+    final strings = ref.watch(appStringsProvider);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const SizedBox(height: 16),
+        Text(title, style: Theme.of(context).textTheme.labelLarge),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Expanded(
+              flex: 3,
+              child: TextField(
+                controller: host,
+                enabled: !_busy,
+                keyboardType: TextInputType.url,
+                decoration: InputDecoration(labelText: strings.serverHost),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: TextField(
+                controller: port,
+                enabled: !_busy,
+                keyboardType: TextInputType.number,
+                decoration: InputDecoration(labelText: strings.serverPort),
+              ),
+            ),
+          ],
+        ),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: Text(strings.serverUsesSsl),
+          value: secure,
+          onChanged: _busy ? null : onSecureChanged,
+        ),
+      ],
+    );
+  }
+
+  /// Null when a custom account's server fields are incomplete or invalid.
+  ConnectionOverride? _customConnection() {
+    ServerEndpoint? endpoint(
+      TextEditingController host,
+      TextEditingController port,
+      bool secure,
+    ) {
+      final hostValue = host.text.trim();
+      final portValue = int.tryParse(port.text.trim());
+      if (hostValue.isEmpty ||
+          portValue == null ||
+          portValue < 1 ||
+          portValue > 65535) {
+        return null;
+      }
+      return ServerEndpoint(host: hostValue, port: portValue, secure: secure);
+    }
+
+    final incoming = endpoint(
+        _incomingHostController, _incomingPortController, _incomingSecure);
+    final outgoing = endpoint(
+        _outgoingHostController, _outgoingPortController, _outgoingSecure);
+    if (incoming == null || outgoing == null) return null;
+    return ConnectionOverride(incoming: incoming, outgoing: outgoing);
   }
 
   @override
@@ -1060,6 +1154,24 @@ class _AddAccountDialogState extends ConsumerState<_AddAccountDialog> {
                   helperText: _isNaver ? strings.naverAppPasswordHelper : null,
                 ),
               ),
+              if (_isCustom) ...[
+                _serverFields(
+                  title: strings.incomingServer,
+                  host: _incomingHostController,
+                  port: _incomingPortController,
+                  secure: _incomingSecure,
+                  onSecureChanged: (value) =>
+                      setState(() => _incomingSecure = value),
+                ),
+                _serverFields(
+                  title: strings.outgoingServer,
+                  host: _outgoingHostController,
+                  port: _outgoingPortController,
+                  secure: _outgoingSecure,
+                  onSecureChanged: (value) =>
+                      setState(() => _outgoingSecure = value),
+                ),
+              ],
               const SizedBox(height: 20),
               Text(
                 strings.importPreviousMail,
@@ -1140,6 +1252,11 @@ class _AddAccountDialogState extends ConsumerState<_AddAccountDialog> {
       });
       return;
     }
+    final connectionOverride = _isCustom ? _customConnection() : null;
+    if (_isCustom && connectionOverride == null) {
+      setState(() => _error = strings.customServerRequired);
+      return;
+    }
 
     setState(() {
       _busy = true;
@@ -1156,6 +1273,7 @@ class _AddAccountDialogState extends ConsumerState<_AddAccountDialog> {
         incomingProtocol: _protocol,
         secret: secret,
         initialSync: _initialSync,
+        connectionOverride: connectionOverride,
       );
 
       setState(() => _status = strings.checkingSync);
@@ -1167,6 +1285,7 @@ class _AddAccountDialogState extends ConsumerState<_AddAccountDialog> {
         incomingProtocol: _protocol,
         secret: secret,
         initialSync: _initialSync,
+        connectionOverride: connectionOverride,
       );
 
       ref.invalidate(accountsProvider);

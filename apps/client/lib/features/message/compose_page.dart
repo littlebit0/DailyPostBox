@@ -5,6 +5,8 @@ import 'package:go_router/go_router.dart';
 import '../../core/i18n/language_controller.dart';
 import '../../services/mail_api_client.dart';
 import '../../widgets/app_shell.dart';
+import 'reply_draft.dart';
+import '../accounts/accounts_page.dart' show friendlyError;
 
 final composeAccountsProvider = FutureProvider<List<MailAccountSummary>>((ref) {
   return ref.watch(mailApiClientProvider).fetchAccounts();
@@ -14,9 +16,11 @@ class ComposePage extends ConsumerStatefulWidget {
   const ComposePage({
     super.key,
     this.initialAccountId,
+    this.reply,
   });
 
   final String? initialAccountId;
+  final ReplyDraft? reply;
 
   @override
   ConsumerState<ComposePage> createState() => _ComposePageState();
@@ -24,19 +28,29 @@ class ComposePage extends ConsumerStatefulWidget {
 
 class _ComposePageState extends ConsumerState<ComposePage> {
   final _toController = TextEditingController();
+  final _ccController = TextEditingController();
   final _subjectController = TextEditingController();
   final _bodyController = TextEditingController();
   String? _accountId;
+  bool _sending = false;
 
   @override
   void initState() {
     super.initState();
     _accountId = widget.initialAccountId;
+    final reply = widget.reply;
+    if (reply != null) {
+      _toController.text = reply.to.join(', ');
+      _ccController.text = reply.cc.join(', ');
+      _subjectController.text = reply.subject;
+      _bodyController.text = reply.body;
+    }
   }
 
   @override
   void dispose() {
     _toController.dispose();
+    _ccController.dispose();
     _subjectController.dispose();
     _bodyController.dispose();
     super.dispose();
@@ -64,8 +78,13 @@ class _ComposePageState extends ConsumerState<ComposePage> {
           actions: [
             IconButton(
               tooltip: strings.send,
-              onPressed: _send,
-              icon: const Icon(Icons.send_outlined),
+              onPressed: _sending ? null : _send,
+              icon: _sending
+                  ? const SizedBox.square(
+                      dimension: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.send_outlined),
             ),
           ],
         ),
@@ -97,6 +116,13 @@ class _ComposePageState extends ConsumerState<ComposePage> {
                     controller: _toController,
                     decoration: InputDecoration(labelText: strings.to),
                   ),
+                  if (_ccController.text.isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: _ccController,
+                      decoration: InputDecoration(labelText: strings.cc),
+                    ),
+                  ],
                   const SizedBox(height: 12),
                   TextField(
                     controller: _subjectController,
@@ -132,15 +158,42 @@ class _ComposePageState extends ConsumerState<ComposePage> {
 
   Future<void> _send() async {
     final accountId = _accountId;
-    if (accountId == null) return;
+    if (accountId == null || _sending) return;
+    final strings = ref.read(appStringsProvider);
+    final messenger = ScaffoldMessenger.of(context);
+    void report(String message) =>
+        messenger.showSnackBar(SnackBar(content: Text(message)));
 
-    await ref.read(mailApiClientProvider).sendMail(
-          accountId: accountId,
-          to: _toController.text.split(',').map((item) => item.trim()).toList(),
-          subject: _subjectController.text,
-          body: _bodyController.text,
-        );
+    final to = _addresses(_toController.text);
+    if (to.isEmpty) {
+      report(strings.recipientRequired);
+      return;
+    }
+
+    setState(() => _sending = true);
+    try {
+      await ref.read(mailApiClientProvider).sendMail(
+            accountId: accountId,
+            to: to,
+            cc: _addresses(_ccController.text),
+            subject: _subjectController.text,
+            body: _bodyController.text,
+            inReplyTo: widget.reply?.inReplyTo,
+            references: widget.reply?.references ?? const [],
+          );
+    } catch (error) {
+      // The draft stays on screen so the user can fix it and retry.
+      if (mounted) setState(() => _sending = false);
+      report(strings.sendFailed(friendlyError(error, strings)));
+      return;
+    }
 
     if (mounted) context.go('/accounts/$accountId/mail');
   }
+
+  List<String> _addresses(String value) => value
+      .split(',')
+      .map((item) => item.trim())
+      .where((item) => item.isNotEmpty)
+      .toList();
 }
