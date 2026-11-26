@@ -272,13 +272,15 @@ class _MailboxContentState extends ConsumerState<_MailboxContent> {
               ? FutureBuilder<List<MailSummary>>(
                   future: _search,
                   builder: (context, snapshot) {
+                    // A new future keeps the previous snapshot's data/error
+                    // while waiting, so check the state before rendering it.
+                    if (snapshot.connectionState != ConnectionState.done) {
+                      return const Center(child: CircularProgressIndicator());
+                    }
                     if (snapshot.hasError) {
                       return Center(child: Text(strings.searchFailedTitle));
                     }
-                    final results = snapshot.data;
-                    if (results == null) {
-                      return const Center(child: CircularProgressIndicator());
-                    }
+                    final results = snapshot.data!;
                     if (results.isEmpty) {
                       return Center(child: Text(strings.noSearchResults));
                     }

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -153,6 +155,60 @@ void main() {
 
     expect(find.text(_SearchApi.resultSubject), findsNothing);
     expect(find.text('invoice'), findsNothing);
+  });
+
+  testWidgets('shows loading instead of previous results for a new search',
+      (WidgetTester tester) async {
+    const account = MailAccountSummary(
+      id: 'account-a',
+      providerId: 'gmail',
+      emailAddress: 'first@example.com',
+      incomingProtocol: 'imap',
+      authMode: 'oauth2',
+      syncStatus: 'idle',
+      syncError: null,
+      initialSync: InitialSyncOption.recommended,
+      lastSyncedAtLabel: 'now',
+    );
+    final api = _DelayedSearchApi();
+    await tester.binding.setSurfaceSize(const Size(1200, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          mailApiClientProvider.overrideWithValue(api),
+          accountsProvider.overrideWith((ref) async => const [account]),
+          providersProvider.overrideWith((ref) async => const []),
+          accountMessagesProvider.overrideWith((ref, accountId) async => const []),
+        ],
+        child: const DailyPostBoxApp(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text(account.emailAddress).first);
+    await tester.pumpAndSettle();
+    final searchField = find.descendant(
+      of: find.byType(Scaffold).last,
+      matching: find.byType(TextField),
+    ).first;
+    await tester.enterText(searchField, 'invoice');
+    await tester.testTextInput.receiveAction(TextInputAction.search);
+    await tester.pump();
+    api.pending.removeAt(0).complete(const [_DelayedSearchApi.firstResult]);
+    await tester.pumpAndSettle();
+    expect(find.text(_DelayedSearchApi.firstResult.subject), findsOneWidget);
+
+    await tester.enterText(searchField, 'receipt');
+    await tester.testTextInput.receiveAction(TextInputAction.search);
+    await tester.pump();
+
+    expect(find.text(_DelayedSearchApi.firstResult.subject), findsNothing);
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+
+    api.pending.removeAt(0).complete(const []);
+    await tester.pumpAndSettle();
   });
 
   testWidgets('shows a progressive loading state during account sync',
@@ -621,6 +677,31 @@ class _SearchApi extends MailApiClient {
         unread: false,
       ),
     ];
+  }
+}
+
+class _DelayedSearchApi extends MailApiClient {
+  _DelayedSearchApi() : super(baseUrl: 'http://127.0.0.1:1');
+
+  static const firstResult = MailSummary(
+    id: 'uid-1',
+    sender: 'billing@example.com',
+    subject: '이전 검색 결과',
+    snippet: '',
+    receivedAtLabel: 'now',
+    unread: false,
+  );
+
+  final pending = <Completer<List<MailSummary>>>[];
+
+  @override
+  Future<List<MailSummary>> searchAccountMessages(
+    String accountId,
+    String query,
+  ) {
+    final completer = Completer<List<MailSummary>>();
+    pending.add(completer);
+    return completer.future;
   }
 }
 
