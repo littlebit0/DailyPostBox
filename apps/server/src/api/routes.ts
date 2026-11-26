@@ -336,29 +336,6 @@ export async function registerRoutes(
     }));
   });
 
-  app.get("/mail/messages/:id", async (request, reply) => {
-    const params = z.object({ id: z.string() }).parse(request.params);
-    const message = await deps.accounts.getMessage(demoUserId, params.id);
-
-    if (!message) {
-      return reply.code(404).send({ error: "Message not found" });
-    }
-    const account = await deps.accounts.getAccount(message.accountId);
-    if (!account || account.userId !== demoUserId) {
-      return reply.code(404).send({ error: "Account not found" });
-    }
-    const content = await deps.fetchMessageContent(account, message);
-
-    return {
-      ...message,
-      id: message.providerMessageId,
-      receivedAt: message.receivedAt.toISOString(),
-      body: content.text,
-      bodyTruncated: content.truncated,
-      bodyLinks: content.links
-    };
-  });
-
   app.post("/mail/send", async (request, reply) => {
     const draft = sendSchema.parse(request.body) as OutgoingMessageDraft;
     const account = await deps.accounts.getAccount(draft.accountId);
