@@ -42,14 +42,6 @@ class MailApiClient {
 
   final Dio _dio;
 
-  Future<List<MailSummary>> fetchInbox() async {
-    final response = await _dio.get<List<dynamic>>('/mail/inbox');
-    final data = response.data ?? [];
-    return data
-        .map((item) => MailSummary.fromJson(item as Map<String, dynamic>))
-        .toList();
-  }
-
   Future<List<MailSummary>> fetchAccountMessages(String accountId) async {
     final response =
         await _dio.get<List<dynamic>>('/accounts/$accountId/messages');
@@ -75,12 +67,6 @@ class MailApiClient {
         .map((item) =>
             MailProviderSummary.fromJson(item as Map<String, dynamic>))
         .toList();
-  }
-
-  Future<MessageDetail> fetchMessage(String messageId) async {
-    final response =
-        await _dio.get<Map<String, dynamic>>('/mail/messages/$messageId');
-    return MessageDetail.fromJson(response.data ?? {});
   }
 
   Future<MessageDetail> fetchAccountMessage({
