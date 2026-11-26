@@ -6,6 +6,7 @@ import '../../core/i18n/language_controller.dart';
 import '../../services/mail_api_client.dart';
 import '../../widgets/app_shell.dart';
 import 'linked_message_body.dart';
+import 'reply_draft.dart';
 
 typedef MessageRequest = ({String messageId, String accountId});
 
@@ -17,19 +18,6 @@ final messageProvider =
         messageId: request.messageId,
       );
 });
-
-/// Opens the composer addressed to the sender with a "Re:" subject.
-String replyLocation({String? accountId, required MessageDetail message}) {
-  final subject = message.subject;
-  return Uri(
-    path: accountId == null ? '/compose' : '/accounts/$accountId/compose',
-    queryParameters: {
-      'to': message.sender,
-      'subject':
-          subject.toLowerCase().startsWith('re:') ? subject : 'Re: $subject',
-    },
-  ).toString();
-}
 
 class MessagePage extends ConsumerWidget {
   const MessagePage({
@@ -63,16 +51,18 @@ class MessagePage extends ConsumerWidget {
           ),
           title: Text(strings.message),
           actions: [
-            IconButton(
-              tooltip: strings.reply,
-              onPressed: switch (message.asData?.value) {
-                final item? => () => context.go(
-                      replyLocation(accountId: accountId, message: item),
-                    ),
-                null => null,
-              },
-              icon: const Icon(Icons.reply),
-            ),
+            if (message.value case final item?) ...[
+              IconButton(
+                tooltip: strings.reply,
+                onPressed: () => _reply(context, item, strings, all: false),
+                icon: const Icon(Icons.reply),
+              ),
+              IconButton(
+                tooltip: strings.replyAll,
+                onPressed: () => _reply(context, item, strings, all: true),
+                icon: const Icon(Icons.reply_all),
+              ),
+            ],
           ],
         ),
         Expanded(
@@ -103,6 +93,18 @@ class MessagePage extends ConsumerWidget {
     return AppShell(
       selectedDestinationId: AppShell.accountDestinationId(accountId),
       child: content,
+    );
+  }
+
+  void _reply(
+    BuildContext context,
+    MessageDetail item,
+    AppStrings strings, {
+    required bool all,
+  }) {
+    context.go(
+      '/accounts/${item.accountId ?? accountId}/compose',
+      extra: ReplyDraft.from(item, strings, all: all),
     );
   }
 }

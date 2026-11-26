@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../core/i18n/language_controller.dart';
 import '../../services/mail_api_client.dart';
 import '../../widgets/app_shell.dart';
+import 'reply_draft.dart';
 import '../accounts/accounts_page.dart' show friendlyError;
 
 final composeAccountsProvider = FutureProvider<List<MailAccountSummary>>((ref) {
@@ -15,22 +16,20 @@ class ComposePage extends ConsumerStatefulWidget {
   const ComposePage({
     super.key,
     this.initialAccountId,
-    this.initialTo,
-    this.initialSubject,
+    this.reply,
   });
 
   final String? initialAccountId;
-  final String? initialTo;
-  final String? initialSubject;
+  final ReplyDraft? reply;
 
   @override
   ConsumerState<ComposePage> createState() => _ComposePageState();
 }
 
 class _ComposePageState extends ConsumerState<ComposePage> {
-  late final _toController = TextEditingController(text: widget.initialTo);
-  late final _subjectController =
-      TextEditingController(text: widget.initialSubject);
+  final _toController = TextEditingController();
+  final _ccController = TextEditingController();
+  final _subjectController = TextEditingController();
   final _bodyController = TextEditingController();
   String? _accountId;
   bool _sending = false;
@@ -39,11 +38,19 @@ class _ComposePageState extends ConsumerState<ComposePage> {
   void initState() {
     super.initState();
     _accountId = widget.initialAccountId;
+    final reply = widget.reply;
+    if (reply != null) {
+      _toController.text = reply.to.join(', ');
+      _ccController.text = reply.cc.join(', ');
+      _subjectController.text = reply.subject;
+      _bodyController.text = reply.body;
+    }
   }
 
   @override
   void dispose() {
     _toController.dispose();
+    _ccController.dispose();
     _subjectController.dispose();
     _bodyController.dispose();
     super.dispose();
@@ -109,6 +116,13 @@ class _ComposePageState extends ConsumerState<ComposePage> {
                     controller: _toController,
                     decoration: InputDecoration(labelText: strings.to),
                   ),
+                  if (_ccController.text.isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: _ccController,
+                      decoration: InputDecoration(labelText: strings.cc),
+                    ),
+                  ],
                   const SizedBox(height: 12),
                   TextField(
                     controller: _subjectController,
@@ -150,11 +164,7 @@ class _ComposePageState extends ConsumerState<ComposePage> {
     void report(String message) =>
         messenger.showSnackBar(SnackBar(content: Text(message)));
 
-    final to = _toController.text
-        .split(',')
-        .map((item) => item.trim())
-        .where((item) => item.isNotEmpty)
-        .toList();
+    final to = _addresses(_toController.text);
     if (to.isEmpty) {
       report(strings.recipientRequired);
       return;
@@ -165,8 +175,11 @@ class _ComposePageState extends ConsumerState<ComposePage> {
       await ref.read(mailApiClientProvider).sendMail(
             accountId: accountId,
             to: to,
+            cc: _addresses(_ccController.text),
             subject: _subjectController.text,
             body: _bodyController.text,
+            inReplyTo: widget.reply?.inReplyTo,
+            references: widget.reply?.references ?? const [],
           );
     } catch (error) {
       // The draft stays on screen so the user can fix it and retry.
@@ -177,4 +190,10 @@ class _ComposePageState extends ConsumerState<ComposePage> {
 
     if (mounted) context.go('/accounts/$accountId/mail');
   }
+
+  List<String> _addresses(String value) => value
+      .split(',')
+      .map((item) => item.trim())
+      .where((item) => item.isNotEmpty)
+      .toList();
 }

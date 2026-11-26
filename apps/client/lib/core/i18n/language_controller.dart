@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 enum AppLanguage {
@@ -74,6 +75,15 @@ class AppStrings {
   String get send => _ko ? '보내기' : 'Send';
   String get message => _ko ? '메일' : 'Message';
   String get reply => _ko ? '답장' : 'Reply';
+  String get replyAll => _ko ? '전체 답장' : 'Reply all';
+  String get cc => _ko ? '참조' : 'Cc';
+
+  /// Absolute local date-time for the reply quote header.
+  String quoteDate(DateTime time) => _ko
+      ? DateFormat('yyyy-MM-dd (E) HH:mm', 'ko').format(time)
+      : DateFormat("E, MMM d, y 'at' HH:mm", 'en').format(time);
+  String quoteHeader(String date, String sender) =>
+      _ko ? '$date $sender 님이 작성:' : 'On $date, $sender wrote:';
   String get back => _ko ? '뒤로' : 'Back';
   String get from => _ko ? '보낸 사람' : 'From';
   String get to => _ko ? '받는 사람' : 'To';

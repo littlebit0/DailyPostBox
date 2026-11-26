@@ -193,12 +193,18 @@ class MailApiClient {
     required List<String> to,
     required String subject,
     required String body,
+    List<String> cc = const [],
+    String? inReplyTo,
+    List<String> references = const [],
   }) async {
     await _dio.post('/mail/send', data: {
       'accountId': accountId,
       'to': to,
+      if (cc.isNotEmpty) 'cc': cc,
       'subject': subject,
       'text': body,
+      if (inReplyTo != null) 'inReplyTo': inReplyTo,
+      if (inReplyTo != null && references.isNotEmpty) 'references': references,
     });
   }
 }
@@ -286,14 +292,28 @@ class MessageDetail {
     required this.body,
     required this.links,
     required this.receivedAtLabel,
+    this.receivedAt,
+    this.accountId,
+    this.messageId,
+    this.references = const [],
+    this.replyTo = const [],
+    this.replyAllTo = const [],
+    this.replyAllCc = const [],
   });
 
+  final String? accountId;
+  final String? messageId;
+  final List<String> references;
+  final List<String> replyTo;
+  final List<String> replyAllTo;
+  final List<String> replyAllCc;
   final String id;
   final String sender;
   final String subject;
   final String body;
   final List<MessageLink> links;
   final String receivedAtLabel;
+  final DateTime? receivedAt;
 
   factory MessageDetail.fromJson(Map<String, dynamic> json) {
     return MessageDetail(
@@ -306,9 +326,20 @@ class MessageDetail {
           .map(MessageLink.fromJson)
           .toList(growable: false),
       receivedAtLabel: _formatReceivedAt(json['receivedAt'] as String?),
+      receivedAt:
+          DateTime.tryParse(json['receivedAt'] as String? ?? '')?.toLocal(),
+      accountId: json['accountId'] as String?,
+      messageId: json['messageId'] as String?,
+      references: _strings(json['references']),
+      replyTo: _strings(json['replyTo']),
+      replyAllTo: _strings(json['replyAllTo']),
+      replyAllCc: _strings(json['replyAllCc']),
     );
   }
 }
+
+List<String> _strings(Object? value) =>
+    (value as List<dynamic>? ?? const []).whereType<String>().toList();
 
 class MessageLink {
   const MessageLink({required this.url, required this.label});

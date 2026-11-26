@@ -12,6 +12,7 @@ import type {
   ProviderId
 } from "../domain/types.js";
 import type { AccountRepository } from "../workers/AccountRepository.js";
+import { replyFields } from "../mail/replyRecipients.js";
 import { providerRegistry } from "../providers/providerRegistry.js";
 import {
   applySyncFailure,
@@ -25,7 +26,9 @@ const sendSchema = z.object({
   bcc: z.array(z.string().email()).optional(),
   subject: z.string().default(""),
   html: z.string().optional(),
-  text: z.string().optional()
+  text: z.string().optional(),
+  inReplyTo: z.string().regex(/^<[^<>\s]+>$/).optional(),
+  references: z.array(z.string().regex(/^<[^<>\s]+>$/)).optional()
 });
 
 const pushTokenSchema = z.object({
@@ -332,7 +335,8 @@ export async function registerRoutes(
       receivedAt: message.receivedAt.toISOString(),
       body: content.text,
       bodyTruncated: content.truncated,
-      bodyLinks: content.links
+      bodyLinks: content.links,
+      ...replyFields(message, content, account)
     };
   });
 

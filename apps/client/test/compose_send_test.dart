@@ -33,8 +33,11 @@ class _SendingApi extends MailApiClient {
   Future<void> sendMail({
     required String accountId,
     required List<String> to,
+    List<String> cc = const [],
     required String subject,
     required String body,
+    String? inReplyTo,
+    List<String> references = const [],
   }) {
     sent.add(to);
     return reply.future;

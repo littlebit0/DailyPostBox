@@ -92,6 +92,17 @@ export interface IncomingMessageContent {
   text: string;
   truncated: boolean;
   links: IncomingMessageLink[];
+  // Read from the server on each body fetch, so messages saved before reply
+  // support still get a Message-ID without a stored-data migration.
+  thread?: MessageThreadHeaders;
+}
+
+export interface MessageThreadHeaders {
+  messageId?: string;
+  references: string[];
+  replyTo: string[];
+  to: string[];
+  cc: string[];
 }
 
 export interface IncomingMessageLink {
@@ -107,6 +118,8 @@ export interface OutgoingMessageDraft {
   subject: string;
   html?: string;
   text?: string;
+  inReplyTo?: string;
+  references?: string[];
   attachments?: Array<{
     filename: string;
     contentType: string;
