@@ -137,6 +137,8 @@ export class MailSyncWorker {
           this.options.mailbox,
           limit,
           async (messages) => {
+            // Ends a superseded or deleted account's import between batches.
+            if (!isCurrent()) throw new Error("Sync was cancelled.");
             await Promise.all(
               messages.filter(isWanted).map((message) =>
                 this.handleIncoming(account, message, notifies(message))
