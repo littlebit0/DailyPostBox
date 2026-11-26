@@ -802,17 +802,6 @@ class _OAuthSetupDialogState extends ConsumerState<_OAuthSetupDialog> {
               const SizedBox(height: 6),
               Text(strings.finishSetupDescription),
               const SizedBox(height: 16),
-              SegmentedButton<String>(
-                segments: const [
-                  ButtonSegment(value: 'imap', label: Text('IMAP')),
-                  ButtonSegment(value: 'pop3', label: Text('POP3')),
-                ],
-                selected: {_protocol},
-                onSelectionChanged: _busy
-                    ? null
-                    : (value) => setState(() => _protocol = value.first),
-              ),
-              const SizedBox(height: 20),
               Text(strings.importPreviousMail,
                   style: Theme.of(context).textTheme.titleMedium),
               const SizedBox(height: 8),
@@ -1047,22 +1036,6 @@ class _AddAccountDialogState extends ConsumerState<_AddAccountDialog> {
                 ),
                 const SizedBox(height: 12),
               ],
-              Text(
-                strings.protocol,
-                style: Theme.of(context).textTheme.labelLarge,
-              ),
-              const SizedBox(height: 8),
-              SegmentedButton<String>(
-                segments: const [
-                  ButtonSegment(value: 'imap', label: Text('IMAP')),
-                  ButtonSegment(value: 'pop3', label: Text('POP3')),
-                ],
-                selected: {_protocol},
-                onSelectionChanged: _busy
-                    ? null
-                    : (value) => setState(() => _protocol = value.first),
-              ),
-              const SizedBox(height: 12),
               TextField(
                 controller: _emailController,
                 enabled: !_busy,
