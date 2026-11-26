@@ -588,6 +588,109 @@ void main() {
     expect(find.byType(TextField), findsWidgets);
     expect(find.text('POP3'), findsNothing);
   });
+  testWidgets('adds a custom mail server account with its server settings',
+      (WidgetTester tester) async {
+    const custom = MailProviderSummary(
+      id: 'custom',
+      displayName: 'Custom Mail Server',
+      authModes: ['password'],
+      defaultProtocol: 'imap',
+      supportsOAuth: false,
+    );
+    final api = _AccountRecordingApi();
+    tester.view.physicalSize = const Size(1400, 1200);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          mailApiClientProvider.overrideWithValue(api),
+          accountsProvider.overrideWith((ref) async => const []),
+          providersProvider.overrideWith((ref) async => const [custom]),
+        ],
+        child: const DailyPostBoxApp(),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('계정 추가').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Custom Mail Server'));
+    await tester.pumpAndSettle();
+
+    final fields = find.byType(TextField);
+    await tester.enterText(fields.at(0), 'me@example.com');
+    await tester.enterText(fields.at(1), 'password');
+
+    // Without server addresses the account is not sent.
+    await tester.tap(find.widgetWithText(FilledButton, '계정 추가').last);
+    await tester.pumpAndSettle();
+    expect(find.textContaining('받는·보내는 서버 주소'), findsOneWidget);
+    expect(api.added, isEmpty);
+
+    await tester.enterText(fields.at(2), 'imap.example.com');
+    await tester.enterText(fields.at(4), 'smtp.example.com');
+    await tester.enterText(fields.at(5), '587');
+    await tester.tap(find.text('SSL/TLS 사용').last);
+    await tester.tap(find.widgetWithText(FilledButton, '계정 추가').last);
+    await tester.pumpAndSettle();
+
+    expect(api.validated.single, api.added.single);
+    expect(api.added.single, {
+      'incoming': {'host': 'imap.example.com', 'port': 993, 'secure': true},
+      'outgoing': {'host': 'smtp.example.com', 'port': 587, 'secure': false},
+    });
+  });
+  testWidgets('shows mail that arrives after sync without a manual refresh',
+      (WidgetTester tester) async {
+    const idle = MailAccountSummary(
+      id: 'idle-account',
+      providerId: 'naver',
+      emailAddress: 'idle@example.com',
+      incomingProtocol: 'imap',
+      authMode: 'app-password',
+      syncStatus: 'idle',
+      syncError: null,
+      initialSync: InitialSyncOption.recommended,
+      lastSyncedAtLabel: 'now',
+    );
+    const arrived = MailSummary(
+      id: '42',
+      sender: 'sender@example.com',
+      subject: 'Arrived by IDLE',
+      snippet: '',
+      receivedAtLabel: 'now',
+      unread: true,
+    );
+    var messageLoads = 0;
+    await tester.binding.setSurfaceSize(const Size(1200, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          accountsProvider.overrideWith((ref) async => const [idle]),
+          providersProvider.overrideWith((ref) async => const []),
+          accountMessagesProvider.overrideWith((ref, accountId) async {
+            messageLoads += 1;
+            return messageLoads == 1 ? const [] : const [arrived];
+          }),
+        ],
+        child: const DailyPostBoxApp(),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text(idle.emailAddress).first);
+    await tester.pumpAndSettle();
+    expect(find.text('Arrived by IDLE'), findsNothing);
+
+    await tester.pump(const Duration(seconds: 31));
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.text('Arrived by IDLE'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+  });
 }
 
 class _CredentialRecordingApi extends MailApiClient {
@@ -601,5 +704,38 @@ class _CredentialRecordingApi extends MailApiClient {
     required String secret,
   }) async {
     updates.add((accountId, secret));
+  }
+}
+
+class _AccountRecordingApi extends MailApiClient {
+  _AccountRecordingApi() : super(baseUrl: 'http://127.0.0.1:1');
+
+  final validated = <Map<String, Object>?>[];
+  final added = <Map<String, Object>?>[];
+
+  @override
+  Future<void> validateAccount({
+    required String providerId,
+    required String emailAddress,
+    required String authMode,
+    required String incomingProtocol,
+    required String secret,
+    required InitialSyncOption initialSync,
+    ConnectionOverride? connectionOverride,
+  }) async {
+    validated.add(connectionOverride?.toJson());
+  }
+
+  @override
+  Future<void> addAccount({
+    required String providerId,
+    required String emailAddress,
+    required String authMode,
+    required String incomingProtocol,
+    required String secret,
+    required InitialSyncOption initialSync,
+    ConnectionOverride? connectionOverride,
+  }) async {
+    added.add(connectionOverride?.toJson());
   }
 }

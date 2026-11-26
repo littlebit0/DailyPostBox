@@ -8,30 +8,26 @@ import '../../widgets/app_shell.dart';
 import 'linked_message_body.dart';
 import 'reply_draft.dart';
 
-typedef MessageRequest = ({String messageId, String? accountId});
+typedef MessageRequest = ({String messageId, String accountId});
 
+// Messages are looked up per account: IMAP UIDs repeat across accounts.
 final messageProvider =
     FutureProvider.family<MessageDetail, MessageRequest>((ref, request) {
-  final api = ref.watch(mailApiClientProvider);
-  final accountId = request.accountId;
-  if (accountId != null) {
-    return api.fetchAccountMessage(
-      accountId: accountId,
-      messageId: request.messageId,
-    );
-  }
-  return api.fetchMessage(request.messageId);
+  return ref.watch(mailApiClientProvider).fetchAccountMessage(
+        accountId: request.accountId,
+        messageId: request.messageId,
+      );
 });
 
 class MessagePage extends ConsumerWidget {
   const MessagePage({
     super.key,
     required this.messageId,
-    this.accountId,
+    required this.accountId,
   });
 
   final String messageId;
-  final String? accountId;
+  final String accountId;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -39,8 +35,7 @@ class MessagePage extends ConsumerWidget {
       messageProvider((messageId: messageId, accountId: accountId)),
     );
     final strings = ref.watch(appStringsProvider);
-    final mailboxPath =
-        accountId == null ? '/accounts' : '/accounts/$accountId/mail';
+    final mailboxPath = '/accounts/$accountId/mail';
 
     final content = Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -68,11 +63,6 @@ class MessagePage extends ConsumerWidget {
                 icon: const Icon(Icons.reply_all),
               ),
             ],
-            IconButton(
-              tooltip: strings.archive,
-              onPressed: () {},
-              icon: const Icon(Icons.archive_outlined),
-            ),
           ],
         ),
         Expanded(
@@ -100,12 +90,8 @@ class MessagePage extends ConsumerWidget {
       ],
     );
 
-    final selectedAccountId = accountId;
-    if (selectedAccountId == null) {
-      return Scaffold(body: content);
-    }
     return AppShell(
-      selectedDestinationId: AppShell.accountDestinationId(selectedAccountId),
+      selectedDestinationId: AppShell.accountDestinationId(accountId),
       child: content,
     );
   }
@@ -116,10 +102,8 @@ class MessagePage extends ConsumerWidget {
     AppStrings strings, {
     required bool all,
   }) {
-    final replyAccountId = item.accountId ?? accountId;
-    if (replyAccountId == null) return;
     context.go(
-      '/accounts/$replyAccountId/compose',
+      '/accounts/${item.accountId ?? accountId}/compose',
       extra: ReplyDraft.from(item, strings, all: all),
     );
   }

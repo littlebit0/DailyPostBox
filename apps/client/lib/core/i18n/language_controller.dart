@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 enum AppLanguage {
   korean(Locale('ko'), '한국어'),
@@ -12,15 +13,43 @@ enum AppLanguage {
   final String label;
 }
 
+const _languagePreferenceKey = 'app_language';
+
+/// Reads the saved language; Korean when nothing valid is saved or the
+/// store cannot be read.
+Future<AppLanguage> loadSavedLanguage() async {
+  try {
+    final saved = (await SharedPreferences.getInstance())
+        .getString(_languagePreferenceKey);
+    return AppLanguage.values.firstWhere(
+      (language) => language.name == saved,
+      orElse: () => AppLanguage.korean,
+    );
+  } catch (_) {
+    return AppLanguage.korean;
+  }
+}
+
+/// The language loaded before the app starts; main() overrides it.
+final initialLanguageProvider = Provider<AppLanguage>((ref) {
+  return AppLanguage.korean;
+});
+
 final languageControllerProvider =
     NotifierProvider<LanguageController, AppLanguage>(LanguageController.new);
 
 class LanguageController extends Notifier<AppLanguage> {
   @override
-  AppLanguage build() => AppLanguage.korean;
+  AppLanguage build() => ref.read(initialLanguageProvider);
 
-  void setLanguage(AppLanguage language) {
+  Future<void> setLanguage(AppLanguage language) async {
     state = language;
+    try {
+      await (await SharedPreferences.getInstance())
+          .setString(_languagePreferenceKey, language.name);
+    } catch (_) {
+      // The choice still applies for this run if it cannot be saved.
+    }
   }
 }
 
@@ -55,10 +84,13 @@ class AppStrings {
       : DateFormat("E, MMM d, y 'at' HH:mm", 'en').format(time);
   String quoteHeader(String date, String sender) =>
       _ko ? '$date $sender 님이 작성:' : 'On $date, $sender wrote:';
-  String get archive => _ko ? '보관' : 'Archive';
   String get back => _ko ? '뒤로' : 'Back';
   String get from => _ko ? '보낸 사람' : 'From';
   String get to => _ko ? '받는 사람' : 'To';
+  String get recipientRequired =>
+      _ko ? '받는 사람을 입력하세요.' : 'Enter at least one recipient.';
+  String sendFailed(String reason) =>
+      _ko ? '메일을 보내지 못했습니다: $reason' : 'Could not send the mail: $reason';
   String get subject => _ko ? '제목' : 'Subject';
   String get body => _ko ? '내용' : 'Message';
   String get emptyInboxTitle => _ko ? '받은 메일이 없습니다' : 'No messages yet';
@@ -129,9 +161,21 @@ class AppStrings {
   String get accountMessages => _ko ? '계정별 메일' : 'Account Mail';
   String get syncNow => _ko ? '동기화' : 'Sync';
   String get validateConnection => _ko ? '연결 테스트' : 'Test connection';
+  String get accountNotifications =>
+      _ko ? '이 계정의 새 메일 알림' : 'New mail notifications for this account';
   String get deleteAccount => _ko ? '삭제' : 'Delete';
   String get more => _ko ? '더보기' : 'More';
   String get serverSettings => _ko ? '서버 설정' : 'Server settings';
+  String get incomingServer =>
+      _ko ? '받는 메일 서버 (IMAP)' : 'Incoming mail server (IMAP)';
+  String get outgoingServer =>
+      _ko ? '보내는 메일 서버 (SMTP)' : 'Outgoing mail server (SMTP)';
+  String get serverHost => _ko ? '서버 주소' : 'Server address';
+  String get serverPort => _ko ? '포트' : 'Port';
+  String get serverUsesSsl => _ko ? 'SSL/TLS 사용' : 'Use SSL/TLS';
+  String get customServerRequired => _ko
+      ? '받는·보내는 서버 주소와 포트(1~65535)를 입력하세요.'
+      : 'Enter both server addresses and ports (1-65535).';
   String get syncRange => _ko ? '동기화 범위' : 'Sync range';
   String get comingSoon => _ko ? '준비 중' : 'Coming soon';
   String get noAccountSelected => _ko ? '계정을 선택하세요' : 'Select an account';
@@ -214,10 +258,6 @@ class AppStrings {
         'password' => _ko ? '비밀번호' : 'Password',
         _ => mode,
       };
-  String get pushNotifications => _ko ? '푸시 알림' : 'Push notifications';
-  String get pushNotificationsDescription => _ko
-      ? '새 IMAP 메일은 서버 푸시를 통해 즉시 전달됩니다.'
-      : 'New IMAP messages are delivered immediately through server push.';
   String get registerThisDevice => _ko ? '이 기기 등록' : 'Register this device';
   String get registerThisDeviceDescription => _ko
       ? '플랫폼 푸시 토큰을 메일 서버에 등록합니다.'
