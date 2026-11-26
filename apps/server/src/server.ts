@@ -1,5 +1,4 @@
 import Fastify from "fastify";
-import cors from "@fastify/cors";
 import { fileURLToPath } from "node:url";
 import { ZodError } from "zod";
 import { env } from "./config/env.js";
@@ -23,9 +22,8 @@ const app = Fastify({
   logger: true
 });
 
-await app.register(cors, {
-  origin: true
-});
+// No CORS: the API has no user authentication, so browser pages from other
+// origins must not read it. The native app's requests do not need CORS.
 
 const secrets = new DevelopmentSecretResolver();
 const localDataPath = env.DATA_FILE_PATH ?? (
