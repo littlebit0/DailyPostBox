@@ -24,7 +24,12 @@ import {
   newestFirstUidBatches
 } from "./imapSequenceRanges.js";
 import { isAuthenticationFailure } from "./authenticationFailure.js";
-import { extractAttachments } from "./attachments.js";
+import { Readable } from "node:stream";
+import {
+  decodeTransferEncoding,
+  extractAttachments,
+  rawAttachmentFetch
+} from "./attachments.js";
 import { extractMessageLinks } from "./messageLinks.js";
 import { createExistsQueue } from "./existsQueue.js";
 
@@ -244,6 +249,30 @@ export class ImapReceiver implements MailReceiver {
       if (!attachment) {
         await close();
         return null;
+      }
+
+      const raw = rawAttachmentFetch(
+        (message as FetchMessageObject).bodyStructure!,
+        part
+      );
+      if (raw) {
+        // shortcut: buffers the whole text part in memory; stream it if large text attachments matter.
+        const fetched = await client.fetchOne(
+          providerMessageId,
+          { bodyParts: [raw.key] },
+          { uid: true }
+        );
+        const bytes = fetched ? fetched.bodyParts?.get(raw.key) : undefined;
+        if (!bytes) {
+          await close();
+          return null;
+        }
+        return {
+          filename: attachment.filename,
+          contentType: attachment.contentType,
+          stream: Readable.from([decodeTransferEncoding(bytes, raw.encoding)]),
+          close
+        };
       }
 
       const download = await client.download(providerMessageId, part, {

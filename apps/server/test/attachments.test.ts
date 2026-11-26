@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { estimateDecodedSize, extractAttachments } from "../src/mail/attachments.js";
+import {
+  decodeTransferEncoding,
+  estimateDecodedSize,
+  extractAttachments,
+  rawAttachmentFetch
+} from "../src/mail/attachments.js";
+import { ImapReceiver } from "../src/mail/ImapReceiver.js";
 
 test("extracts attachment parts and skips body parts", () => {
   const result = extractAttachments({
@@ -150,4 +156,81 @@ test("estimates decoded size for base64 parts only", () => {
     ]
   });
   assert.equal(att.size, 3663);
+});
+
+test("exposes a single-part message whose whole body is an attachment as part 1", () => {
+  const root = {
+    type: "application/pdf",
+    size: 100,
+    disposition: "attachment",
+    dispositionParameters: { filename: "scan.pdf" }
+  };
+  assert.deepEqual(extractAttachments(root), [
+    { part: "1", filename: "scan.pdf", contentType: "application/pdf", size: 100 }
+  ]);
+  assert.deepEqual(extractAttachments({ type: "text/plain" }), []);
+});
+
+test("picks a raw fetch for text attachments ImapFlow would convert", () => {
+  const multipart = {
+    type: "multipart/mixed",
+    childNodes: [
+      { part: "1", type: "text/plain" },
+      { part: "2", type: "TEXT/PLAIN", encoding: "QUOTED-PRINTABLE", parameters: { name: "a.txt" } },
+      { part: "3", type: "application/pdf", disposition: "attachment" }
+    ]
+  };
+  assert.deepEqual(rawAttachmentFetch(multipart, "2"), { key: "2", encoding: "quoted-printable" });
+  assert.equal(rawAttachmentFetch(multipart, "3"), null);
+  assert.deepEqual(
+    rawAttachmentFetch({ type: "text/html", encoding: "base64", parameters: { name: "p.html" } }, "1"),
+    { key: "text", encoding: "base64" }
+  );
+});
+
+test("decodes only the transfer encoding and keeps charset bytes", () => {
+  // EUC-KR "가" is B0 A1; it must not be converted to UTF-8.
+  assert.deepEqual(decodeTransferEncoding(Buffer.from("=B0=A1 =\r\nx"), "quoted-printable"), Buffer.from([0xb0, 0xa1, 0x20, 0x78]));
+  assert.deepEqual(decodeTransferEncoding(Buffer.from("sKE=\r\n"), "base64"), Buffer.from([0xb0, 0xa1]));
+  const flowed = Buffer.from("line \r\nwrap");
+  assert.deepEqual(decodeTransferEncoding(flowed, "7bit"), flowed);
+});
+
+test("downloadAttachment returns original bytes for named inline text parts", async () => {
+  const bodyStructure = {
+    type: "multipart/mixed",
+    childNodes: [
+      { part: "1", type: "text/plain" },
+      {
+        part: "2",
+        type: "text/plain",
+        encoding: "quoted-printable",
+        parameters: { name: "memo.txt", charset: "euc-kr", format: "flowed" }
+      }
+    ]
+  };
+  const calls: string[] = [];
+  const client = {
+    connect: async () => undefined,
+    logout: async () => undefined,
+    mailboxOpen: async () => undefined,
+    fetchOne: async (_uid: string, query: { bodyParts?: string[] }) =>
+      query.bodyParts
+        ? { bodyParts: new Map([[query.bodyParts[0], Buffer.from("=B0=A1 =\r\nx")]]) }
+        : { bodyStructure },
+    download: async () => {
+      calls.push("download");
+      return { content: null };
+    }
+  };
+  const receiver = Object.assign(new ImapReceiver({} as never, {} as never), {
+    createClient: async () => client
+  });
+  const result = await receiver.downloadAttachment({} as never, "INBOX", "7", "2");
+  assert.ok(result);
+  const chunks: Buffer[] = [];
+  for await (const chunk of result.stream) chunks.push(chunk as Buffer);
+  assert.deepEqual(Buffer.concat(chunks), Buffer.from([0xb0, 0xa1, 0x20, 0x78]));
+  assert.deepEqual(calls, []);
+  await result.close();
 });
