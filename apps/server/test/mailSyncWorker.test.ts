@@ -247,11 +247,11 @@ test("backfills thread metadata for stored messages once, in bounded batches", a
     fetchSummariesByUid: async (_a: MailAccount, _m: string, uids: number[]) => {
       requests.push(uids);
       // uid 1 is gone from the server; the rest carry a Message-ID.
-      return uids.filter((uid) => uid !== 1).map((uid) => ({
+      return { uidValidity: "1", messages: uids.filter((uid) => uid !== 1).map((uid) => ({
         ...stored(uid),
         messageId: `<m${uid}@example.com>`,
         references: ["<root@example.com>"]
-      }));
+      })) };
     }
   };
   const syncWorker = worker(repository, imap);
@@ -266,6 +266,41 @@ test("backfills thread metadata for stored messages once, in bounded batches", a
   await syncWorker.syncAccount(mailAccount);
   await syncWorker.backfillSettled(mailAccount.id);
   assert.equal(requests.length, 3);
+});
+
+test("backfill rejects a batch after the mailbox UIDVALIDITY changes", async () => {
+  const repository = new InMemoryAccountRepository();
+  const mailAccount = account();
+  await repository.addAccount(mailAccount);
+  for (let uid = 1; uid <= 100; uid += 1) {
+    await repository.saveIncomingMessage({
+      accountId: mailAccount.id, providerMessageId: String(uid), mailbox: "INBOX",
+      from: "a@example.com", subject: "old", receivedAt: new Date(uid), hasAttachments: false
+    });
+  }
+  let calls = 0;
+  const imap = {
+    fetchLatestBatches: async () => undefined,
+    fetchSummariesByUid: async (_a: MailAccount, _m: string, uids: number[]) => {
+      calls += 1;
+      // The second batch opens a recreated mailbox whose UIDs name other messages.
+      return { uidValidity: calls === 1 ? "1" : "2", messages: uids.map((uid) => ({
+        accountId: mailAccount.id, providerMessageId: String(uid), mailbox: "INBOX",
+        from: "a@example.com", subject: "other", receivedAt: new Date(uid),
+        hasAttachments: false, messageId: `<v${calls}-${uid}@example.com>`, references: []
+      })) };
+    }
+  };
+  const syncWorker = worker(repository, imap);
+  await syncWorker.syncAccount(mailAccount);
+  await syncWorker.backfillSettled(mailAccount.id);
+
+  const inbox = await repository.listInbox(mailAccount.userId);
+  assert.equal(calls, 2);
+  assert.equal(inbox.filter((m) => m.messageId?.startsWith("<v1-")).length, 50);
+  assert.ok(!inbox.some((m) => m.messageId?.startsWith("<v2-")), "headers from the new UIDVALIDITY must not be merged");
+  assert.equal(inbox.filter((m) => m.references === undefined).length, 50, "rejected batch must stay pending, not marked backfilled");
+  assert.equal((await repository.getAccount(mailAccount.id))?.threadBackfill, undefined);
 });
 
 test("backfill drains 4,000 stored messages across batches without refetching", async () => {
@@ -290,7 +325,7 @@ test("backfill drains 4,000 stored messages across batches without refetching", 
     fetchSummariesByUid: async (_a: MailAccount, _m: string, uids: number[]) => {
       assert.ok(uids.length <= 50);
       seen.push(...uids);
-      return uids.map((uid) => ({
+      return { uidValidity: "1", messages: uids.map((uid) => ({
         accountId: mailAccount.id,
         providerMessageId: String(uid),
         mailbox: "INBOX",
@@ -300,7 +335,7 @@ test("backfill drains 4,000 stored messages across batches without refetching", 
         hasAttachments: false,
         messageId: `<m${uid}@example.com>`,
         references: []
-      }));
+      })) };
     }
   };
   const syncWorker = worker(repository, imap);
@@ -339,7 +374,7 @@ test("backfill stops when the account is removed", async () => {
     fetchSummariesByUid: async () => {
       calls += 1;
       await syncWorker.stopAccount(mailAccount.id);
-      return [];
+      return { uidValidity: "1", messages: [] };
     }
   };
   syncWorker = worker(repository, imap);
@@ -366,8 +401,9 @@ test("backfill persists each 50-message batch with bounded file writes", async (
   }
   const imap = {
     fetchLatestBatches: async () => undefined,
-    fetchSummariesByUid: async (_a: MailAccount, _m: string, uids: number[]) =>
-      uids.map((uid) => ({
+    fetchSummariesByUid: async (_a: MailAccount, _m: string, uids: number[]) => ({
+      uidValidity: "1",
+      messages: uids.map((uid) => ({
         accountId: mailAccount.id,
         providerMessageId: String(uid),
         mailbox: "INBOX",
@@ -378,6 +414,7 @@ test("backfill persists each 50-message batch with bounded file writes", async (
         messageId: `<m${uid}@example.com>`,
         references: []
       }))
+    })
   };
   const internals = repository as unknown as { flush: () => Promise<void> };
   const originalFlush = internals.flush.bind(repository);
@@ -423,12 +460,14 @@ test("stopAccount waits for the in-flight backfill batch save and nothing is wri
   };
   const imap = {
     fetchLatestBatches: async () => undefined,
-    fetchSummariesByUid: async (_a: MailAccount, _m: string, uids: number[]) =>
-      uids.map((uid) => ({
+    fetchSummariesByUid: async (_a: MailAccount, _m: string, uids: number[]) => ({
+      uidValidity: "1",
+      messages: uids.map((uid) => ({
         accountId: mailAccount.id, providerMessageId: String(uid), mailbox: "INBOX",
         from: "a@example.com", subject: "old", receivedAt: new Date(uid),
         hasAttachments: false, messageId: `<m${uid}@example.com>`, references: []
       }))
+    })
   };
   const syncWorker = worker(repository, imap);
   await syncWorker.syncAccount(mailAccount);
@@ -459,11 +498,11 @@ test("backfill exposes threadBackfill while running and clears it on completion"
     fetchLatestBatches: async () => undefined,
     fetchSummariesByUid: async (_a: MailAccount, _m: string, uids: number[]) => {
       during = (await repository.getAccount(mailAccount.id))?.threadBackfill;
-      return uids.map((uid) => ({
+      return { uidValidity: "1", messages: uids.map((uid) => ({
         accountId: mailAccount.id, providerMessageId: String(uid), mailbox: "INBOX",
         from: "a@example.com", subject: "old", receivedAt: new Date(uid),
         hasAttachments: false, messageId: `<m${uid}@example.com>`, references: []
-      }));
+      })) };
     }
   };
   const syncWorker = worker(repository, imap);

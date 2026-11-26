@@ -404,16 +404,21 @@ export class MailSyncWorker {
     account.threadBackfill = "running";
     await this.accounts.updateAccount(account);
     for (const [mailbox, stored] of byMailbox) {
+      let expectedUidValidity: string | undefined;
       for (let i = 0; i < stored.length; i += MailSyncWorker.backfillBatch) {
         // Yield first so sync and other accounts are not starved.
         await new Promise((resolve) => setTimeout(resolve, this.options.backfillYieldMs ?? 250));
         if (!active()) return;
         const batch = stored.slice(i, i + MailSyncWorker.backfillBatch);
-        const fetched = new Map(
-          (await this.imap.fetchSummariesByUid(
-            account, mailbox, batch.map((m) => Number(m.providerMessageId))
-          )).map((m) => [m.providerMessageId, m])
+        const { uidValidity, messages } = await this.imap.fetchSummariesByUid(
+          account, mailbox, batch.map((m) => Number(m.providerMessageId))
         );
+        expectedUidValidity ??= uidValidity;
+        // Same UIDs under a new UIDVALIDITY are other messages; never copy their headers.
+        if (uidValidity !== expectedUidValidity) {
+          throw new Error("Mailbox UIDVALIDITY changed during thread backfill");
+        }
+        const fetched = new Map(messages.map((m) => [m.providerMessageId, m]));
         if (!active()) return;
         // Concurrent saves share one coalesced file write instead of one per message.
         entry.saving = Promise.all(batch.map((message) => {

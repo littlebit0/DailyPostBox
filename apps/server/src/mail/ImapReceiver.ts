@@ -139,12 +139,15 @@ export class ImapReceiver implements MailReceiver {
     account: MailAccount,
     mailbox: string,
     uids: number[]
-  ): Promise<IncomingMessageSummary[]> {
-    if (uids.length === 0) return [];
+  ): Promise<{ uidValidity: string; messages: IncomingMessageSummary[] }> {
     return this.withConnectionRetry(() =>
       this.withConnectedClient(account, async (client) => {
-        await client.mailboxOpen(mailbox, { readOnly: true });
-        return this.fetchUids(client, account, mailbox, uids);
+        const openedMailbox = await client.mailboxOpen(mailbox, { readOnly: true });
+        return {
+          // Callers compare this across batches: a changed UIDVALIDITY means the UIDs name other messages.
+          uidValidity: String(openedMailbox.uidValidity),
+          messages: uids.length === 0 ? [] : await this.fetchUids(client, account, mailbox, uids)
+        };
       })
     );
   }
