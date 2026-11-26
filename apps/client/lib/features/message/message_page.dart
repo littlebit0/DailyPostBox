@@ -50,6 +50,15 @@ class _MessagePageState extends ConsumerState<MessagePage> {
   bool _showRemoteImages = false;
 
   @override
+  void didUpdateWidget(MessagePage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.messageId != widget.messageId ||
+        oldWidget.accountId != widget.accountId) {
+      _showRemoteImages = false;
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     final accountId = widget.accountId;
     final message = ref.watch(

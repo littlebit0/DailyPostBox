@@ -102,6 +102,36 @@ void main() {
     expect(find.text('원격 이미지 2개 차단됨'), findsNothing);
   });
 
+  testWidgets('resets remote image consent when the message changes', (
+    tester,
+  ) async {
+    final requests = <MessageRequest>[];
+    Widget page(String id) => ProviderScope(
+          overrides: [
+            messageProvider.overrideWith((ref, request) async {
+              requests.add(request);
+              return request.remoteImages
+                  ? _detail(html: '<p>Hi</p>')
+                  : _detail(html: '<p>Hi</p>', blocked: 2);
+            }),
+          ],
+          child: MaterialApp(home: MessagePage(messageId: id)),
+        );
+    await tester.pumpWidget(page('m1'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('이번만 보기'));
+    await tester.pumpAndSettle();
+
+    await tester.pumpWidget(page('m2'));
+    await tester.pumpAndSettle();
+
+    expect(
+      requests.where((r) => r.messageId == 'm2').map((r) => r.remoteImages),
+      [false],
+    );
+    expect(find.text('원격 이미지 2개 차단됨'), findsOneWidget);
+  });
+
   testWidgets('falls back to plain text when there is no html', (tester) async {
     await tester.pumpWidget(
       ProviderScope(
