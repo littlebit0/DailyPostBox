@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
@@ -14,6 +15,42 @@ import 'package:daily_postbox/main.dart';
 import 'package:daily_postbox/services/mail_api_client.dart';
 
 void main() {
+  test('failed attachment download keeps the existing destination file',
+      () async {
+    final dir = Directory.systemTemp.createTempSync('dl');
+    addTearDown(() => dir.deleteSync(recursive: true));
+    final target = File('${dir.path}/a.txt')..writeAsStringSync('keep');
+    final client = MailApiClient(baseUrl: 'http://127.0.0.1:1');
+    await expectLater(
+      client.downloadAttachment(
+          accountId: 'a', messageId: 'm', part: '1', savePath: target.path),
+      throwsA(isA<DioException>()),
+    );
+    expect(target.readAsStringSync(), 'keep');
+    expect(File('${target.path}.part').existsSync(), isFalse);
+  });
+
+  test('successful attachment download writes destination, leaves no temp',
+      () async {
+    HttpOverrides.global = null; // test binding stubs HTTP with 400
+    final server = await HttpServer.bind('127.0.0.1', 0);
+    addTearDown(() => server.close(force: true));
+    server.listen((req) {
+      req.response.add([1, 2, 3]);
+      req.response.close();
+    });
+    final dir = Directory.systemTemp.createTempSync('dl');
+    addTearDown(() => dir.deleteSync(recursive: true));
+    final target = File('${dir.path}/a.bin')..writeAsStringSync('old');
+    final sibling = File('${dir.path}/a.bin.part')..writeAsStringSync('other');
+    final client = MailApiClient(baseUrl: 'http://127.0.0.1:${server.port}');
+    await client.downloadAttachment(
+        accountId: 'a', messageId: 'm', part: '1', savePath: target.path);
+    expect(target.readAsBytesSync(), [1, 2, 3]);
+    expect(sibling.readAsStringSync(), 'other');
+    expect(dir.listSync().length, 2);
+  });
+
   test('replySubject adds Re: once', () {
     expect(replySubject('Hello'), 'Re: Hello');
     expect(replySubject('Re: Hello'), 'Re: Hello');
@@ -604,6 +641,23 @@ void main() {
       resolveMailApiBaseUrl(configured: '', isRelease: false),
       'http://127.0.0.1:4000',
     );
+  });
+
+  test('parses attachments and formats their size', () {
+    final detail = MessageDetail.fromJson({
+      'attachments': [
+        {
+          'part': '2',
+          'filename': '보고서.pdf',
+          'contentType': 'application/pdf',
+          'size': 1536,
+        },
+      ],
+    });
+
+    expect(detail.attachments.single.filename, '보고서.pdf');
+    expect(formatAttachmentSize(detail.attachments.single.size), '1.5 KB');
+    expect(formatAttachmentSize(20 * 1024 * 1024), '20 MB');
   });
 
   test('replaces a long mail link with its anchor title', () {

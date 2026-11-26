@@ -1,4 +1,5 @@
 import type {
+  AttachmentDownload,
   IncomingMessageContent,
   IncomingMessageSummary,
   MailAccount
@@ -16,6 +17,12 @@ export interface MailReceiver {
     mailbox: string,
     providerMessageId: string
   ): Promise<IncomingMessageContent>;
+  downloadAttachment(
+    account: MailAccount,
+    mailbox: string,
+    providerMessageId: string,
+    part: string
+  ): Promise<AttachmentDownload | null>;
   watch?(
     account: MailAccount,
     mailbox: string,

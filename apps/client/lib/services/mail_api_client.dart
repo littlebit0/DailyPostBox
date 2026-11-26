@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -92,6 +94,28 @@ class MailApiClient {
       '/accounts/$accountId/messages/$messageId',
     );
     return MessageDetail.fromJson(response.data ?? {});
+  }
+
+  Future<void> downloadAttachment({
+    required String accountId,
+    required String messageId,
+    required String part,
+    required String savePath,
+  }) async {
+    // Download into a unique app-accessible temp dir (the sandbox may deny
+    // writes next to the selected file); touch the destination only on success.
+    final tempDir = await Directory.systemTemp.createTemp('attachment_');
+    try {
+      final temp = File('${tempDir.path}/download');
+      await _dio.download(
+        '/accounts/$accountId/messages/$messageId/attachments/$part',
+        temp.path,
+        options: Options(receiveTimeout: const Duration(minutes: 2)),
+      );
+      await temp.copy(savePath);
+    } finally {
+      await tempDir.delete(recursive: true);
+    }
   }
 
   Future<void> addAccount({
@@ -307,6 +331,7 @@ class MessageDetail {
     required this.body,
     required this.links,
     required this.receivedAtLabel,
+    this.attachments = const [],
     this.receivedAt,
     this.accountId,
     this.messageId,
@@ -328,6 +353,7 @@ class MessageDetail {
   final String body;
   final List<MessageLink> links;
   final String receivedAtLabel;
+  final List<MessageAttachment> attachments;
   final DateTime? receivedAt;
 
   factory MessageDetail.fromJson(Map<String, dynamic> json) {
@@ -341,6 +367,10 @@ class MessageDetail {
           .map(MessageLink.fromJson)
           .toList(growable: false),
       receivedAtLabel: _formatReceivedAt(json['receivedAt'] as String?),
+      attachments: (json['attachments'] as List<dynamic>? ?? const [])
+          .whereType<Map<String, dynamic>>()
+          .map(MessageAttachment.fromJson)
+          .toList(growable: false),
       receivedAt:
           DateTime.tryParse(json['receivedAt'] as String? ?? '')?.toLocal(),
       accountId: json['accountId'] as String?,
@@ -351,6 +381,41 @@ class MessageDetail {
       replyAllCc: _strings(json['replyAllCc']),
     );
   }
+}
+
+class MessageAttachment {
+  const MessageAttachment({
+    required this.part,
+    required this.filename,
+    required this.contentType,
+    required this.size,
+  });
+
+  final String part;
+  final String filename;
+  final String contentType;
+  final int size;
+
+  factory MessageAttachment.fromJson(Map<String, dynamic> json) {
+    return MessageAttachment(
+      part: json['part'] as String? ?? '',
+      filename: json['filename'] as String? ?? '',
+      contentType: json['contentType'] as String? ?? '',
+      size: (json['size'] as num?)?.toInt() ?? 0,
+    );
+  }
+}
+
+String formatAttachmentSize(int bytes) {
+  if (bytes < 1024) return '$bytes B';
+  const units = ['KB', 'MB', 'GB'];
+  var value = bytes / 1024;
+  var unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return '${value.toStringAsFixed(value < 10 ? 1 : 0)} ${units[unit]}';
 }
 
 List<String> _strings(Object? value) =>

@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { SearchObject } from "imapflow";
 import type { MailSender } from "../mail/MailSender.js";
 import type {
+  AttachmentDownload,
   AuthMode,
   IncomingMessageContent,
   IncomingMessageSummary,
@@ -91,16 +92,27 @@ const accountSchema = z.object({
 
 const demoUserId = "demo-user";
 
-// shortcut: no real auth yet (issue #20), so mail search and the IMAP
-// fallback require a loopback peer, a loopback Host (blocks DNS rebinding) and
-// no Origin header (browsers send one, the native client does not), unless
-// ALLOW_REMOTE_MAIL_SEARCH=true.
-function canReadUnstoredMail(request: FastifyRequest): boolean {
-  if (process.env.ALLOW_REMOTE_MAIL_SEARCH === "true") return true;
+// shortcut: no real auth yet (issue #20), so mail search, the IMAP fallback
+// and attachment downloads require a loopback peer, a loopback Host (blocks
+// DNS rebinding) and no Origin header (browsers send one, the native client
+// does not), unless their opt-out flag is "true".
+function isLocalMailRequest(
+  request: FastifyRequest,
+  optOutFlag: "ALLOW_REMOTE_MAIL_SEARCH" | "ALLOW_REMOTE_MAIL_ACCESS"
+): boolean {
+  if (process.env[optOutFlag] === "true") return true;
   const host = (request.headers.host ?? "").replace(/:\d+$/, "").toLowerCase();
   return ["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(request.ip) &&
     ["127.0.0.1", "localhost", "[::1]"].includes(host) &&
     request.headers.origin === undefined;
+}
+
+function canReadUnstoredMail(request: FastifyRequest): boolean {
+  return isLocalMailRequest(request, "ALLOW_REMOTE_MAIL_SEARCH");
+}
+
+function canReadAttachments(request: FastifyRequest): boolean {
+  return isLocalMailRequest(request, "ALLOW_REMOTE_MAIL_ACCESS");
 }
 
 export async function registerRoutes(
@@ -113,6 +125,11 @@ export async function registerRoutes(
       account: MailAccount,
       message: IncomingMessageSummary
     ) => Promise<IncomingMessageContent>;
+    downloadAttachment: (
+      account: MailAccount,
+      message: IncomingMessageSummary,
+      part: string
+    ) => Promise<AttachmentDownload | null>;
     searchMessages: (
       account: MailAccount,
       query: SearchObject
@@ -398,9 +415,63 @@ export async function registerRoutes(
       body: content.text,
       bodyTruncated: content.truncated,
       bodyLinks: content.links,
+      attachments: content.attachments,
       ...replyFields(message, content, account)
     };
   });
+
+  app.get(
+    "/accounts/:accountId/messages/:messageId/attachments/:part",
+    async (request, reply) => {
+      if (!canReadAttachments(request)) {
+        return reply.code(403).send({ error: "Attachments are only available locally." });
+      }
+      const params = z.object({
+        accountId: z.string(),
+        messageId: z.string(),
+        part: z.string().regex(/^\d+(\.\d+)*$/)
+      }).parse(request.params);
+      const account = await deps.accounts.getAccount(params.accountId);
+
+      if (!account || account.userId !== demoUserId) {
+        return reply.code(404).send({ error: "Account not found" });
+      }
+
+      const messages = await deps.accounts.listInbox(demoUserId);
+      // Search results can point at mail that was never imported; this route
+      // is already local-only, and canReadUnstoredMail keeps the search gate.
+      const message = messages.find(
+        (item) => item.accountId === params.accountId &&
+          item.providerMessageId === params.messageId
+      ) ?? (account.incomingProtocol === "imap" && canReadUnstoredMail(request)
+        ? await deps.fetchMessageSummary(account, params.messageId)
+        : null);
+      if (!message) {
+        return reply.code(404).send({ error: "Message not found" });
+      }
+
+      const download = await deps.downloadAttachment(
+        account,
+        message,
+        params.part
+      );
+      if (!download) {
+        return reply.code(404).send({ error: "Attachment not found" });
+      }
+
+      const closeOnce = () => void download.close();
+      reply.raw.once("close", closeOnce);
+      download.stream.once("error", closeOnce);
+      download.stream.once("end", closeOnce);
+      return reply
+        .header("Content-Type", download.contentType)
+        .header(
+          "Content-Disposition",
+          `attachment; filename*=UTF-8''${encodeURIComponent(download.filename)}`
+        )
+        .send(download.stream);
+    }
+  );
 
   app.get("/mail/inbox", async () => {
     const messages = await deps.accounts.listInbox(demoUserId);

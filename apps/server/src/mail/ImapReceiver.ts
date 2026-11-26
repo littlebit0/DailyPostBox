@@ -7,6 +7,8 @@ import type {
 import { simpleParser } from "mailparser";
 import type { OAuthTokenManager } from "../auth/OAuthTokenManager.js";
 import type {
+  AttachmentDownload,
+  IncomingMessageAttachment,
   IncomingMessageContent,
   IncomingMessageLink,
   IncomingMessageSummary,
@@ -27,6 +29,12 @@ import {
   newestFirstUidBatches
 } from "./imapSequenceRanges.js";
 import { isAuthenticationFailure } from "./authenticationFailure.js";
+import { Readable } from "node:stream";
+import {
+  decodeTransferEncoding,
+  extractAttachments,
+  rawAttachmentFetch
+} from "./attachments.js";
 import { extractMessageLinks } from "./messageLinks.js";
 import { createExistsQueue } from "./existsQueue.js";
 
@@ -194,6 +202,7 @@ export class ImapReceiver implements MailReceiver {
         throw new Error("Message body was not found on the IMAP server.");
       }
 
+      const attachments = extractAttachments(message.bodyStructure);
       const thread = toThreadHeaders(message);
       const bodyParts = selectBodyParts(message.bodyStructure);
       let htmlFallback: IncomingMessageContent | null = null;
@@ -214,7 +223,9 @@ export class ImapReceiver implements MailReceiver {
 
         if (bodyPart.type.toLowerCase() !== "text/html") {
           const text = cleanMessageText(decoded);
-          if (text) return { text, truncated, links: htmlLinks, thread };
+          if (text) {
+            return { text, truncated, links: htmlLinks, attachments, thread };
+          }
           continue;
         }
 
@@ -241,15 +252,85 @@ export class ImapReceiver implements MailReceiver {
             text,
             truncated,
             links: htmlLinks,
+            attachments,
             thread
           };
         }
       }
 
       if (htmlFallback) return { ...htmlFallback, links: htmlLinks };
-      return { text: "", truncated: false, links: [], thread };
+      return { text: "", truncated: false, links: [], attachments, thread };
     } finally {
       await client.logout().catch(() => undefined);
+    }
+  }
+
+  async downloadAttachment(
+    account: MailAccount,
+    mailbox: string,
+    providerMessageId: string,
+    part: string
+  ): Promise<AttachmentDownload | null> {
+    const client = await this.createClient(account);
+    await client.connect();
+    const close = async () => {
+      await client.logout().catch(() => undefined);
+    };
+
+    try {
+      await client.mailboxOpen(mailbox, { readOnly: true });
+      const message = await client.fetchOne(
+        providerMessageId,
+        { bodyStructure: true },
+        { uid: true }
+      );
+      const attachment: IncomingMessageAttachment | undefined = message &&
+        message.bodyStructure
+        ? extractAttachments(message.bodyStructure).find(
+            (item) => item.part === part
+          )
+        : undefined;
+      if (!attachment) {
+        await close();
+        return null;
+      }
+
+      const raw = rawAttachmentFetch(
+        (message as FetchMessageObject).bodyStructure!,
+        part
+      );
+      if (raw) {
+        // shortcut: buffers the whole text part in memory; stream it if large text attachments matter.
+        const fetched = await client.fetchOne(
+          providerMessageId,
+          { bodyParts: [raw.key] },
+          { uid: true }
+        );
+        const bytes = fetched ? fetched.bodyParts?.get(raw.key) : undefined;
+        if (!bytes) {
+          await close();
+          return null;
+        }
+        return {
+          filename: attachment.filename,
+          contentType: attachment.contentType,
+          stream: Readable.from([decodeTransferEncoding(bytes, raw.encoding)]),
+          close
+        };
+      }
+
+      const download = await client.download(providerMessageId, part, {
+        uid: true
+      });
+      return {
+        filename: attachment.filename,
+        contentType: attachment.contentType,
+        stream: download.content,
+        close
+      };
+    } catch (error) {
+      await close();
+      throw error;
     }
   }
 
