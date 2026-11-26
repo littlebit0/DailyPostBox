@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -47,6 +50,32 @@ class _SendApi extends MailApiClient {
 void main() {
   _failedSendsTests();
   _pendingSendsTests();
+
+  test('undo countdown subtracts the round trip of a slow response', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(() => server.close(force: true));
+    server.listen((req) async {
+      final now = DateTime.now().toUtc();
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+      req.response
+        ..headers.contentType = ContentType.json
+        ..write(jsonEncode({
+          'id': 'q1',
+          'now': now.toIso8601String(),
+          'sendAt': now.add(const Duration(seconds: 5)).toIso8601String(),
+        }));
+      await req.response.close();
+    });
+    // flutter_test answers every HTTP request with 400; use a real client here.
+    final receipt = await HttpOverrides.runWithHttpOverrides(
+        () => MailApiClient(baseUrl: 'http://127.0.0.1:${server.port}')
+            .sendMail(
+                accountId: 'a1', to: ['x@example.com'], subject: '', body: ''),
+        _RealHttp());
+    expect(receipt.remaining,
+        lessThanOrEqualTo(const Duration(milliseconds: 4600)));
+    expect(receipt.remaining, greaterThan(Duration.zero));
+  });
   const receipt = SendReceipt('id', Duration.zero);
   const tick = Duration(milliseconds: 1);
 
@@ -316,6 +345,8 @@ void _failedSendsTests() {
     expect(find.text('발송 실패 29건'), findsOneWidget);
   });
 }
+
+class _RealHttp extends HttpOverrides {}
 
 class _UndoApi extends _SendApi {
   int sent = 0;

@@ -229,6 +229,7 @@ class MailApiClient {
     required String body,
     int delaySeconds = 5,
   }) async {
+    final elapsed = Stopwatch()..start();
     final response = await _dio.post('/mail/send', data: {
       'accountId': accountId,
       'to': to,
@@ -237,9 +238,11 @@ class MailApiClient {
       'delaySeconds': delaySeconds,
     });
     final data = response.data as Map<String, dynamic>;
-    // remaining = sendAt - server now, so client clock skew and upload time do not matter.
+    // remaining = sendAt - server now, so client clock skew does not matter. The whole
+    // round trip is subtracted too: response transit is unknown, so err on the short side.
     final remaining = DateTime.parse(data['sendAt'] as String)
-        .difference(DateTime.parse(data['now'] as String));
+            .difference(DateTime.parse(data['now'] as String)) -
+        elapsed.elapsed;
     return SendReceipt(data['id'] as String, remaining);
   }
 
