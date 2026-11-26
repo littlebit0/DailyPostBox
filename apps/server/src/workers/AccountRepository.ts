@@ -43,6 +43,7 @@ export interface AccountRepository {
   saveIncomingMessage(message: IncomingMessageSummary): Promise<boolean>;
   recordSentRecipients(accountId: string, addresses: string[], sentAt: Date): Promise<void>;
   listSentRecipients(userId: string): Promise<SentRecipient[]>;
+  deleteMessages(accountId: string): Promise<void>;
 }
 
 export class InMemoryAccountRepository implements AccountRepository {
@@ -127,6 +128,12 @@ export class InMemoryAccountRepository implements AccountRepository {
   ): Promise<IncomingMessageSummary | undefined> {
     const inbox = await this.listInbox(userId);
     return inbox.find((message) => message.providerMessageId === messageId);
+  }
+
+  async deleteMessages(accountId: string): Promise<void> {
+    for (const [key, message] of this.messages) {
+      if (message.accountId === accountId) this.messages.delete(key);
+    }
   }
 
   async saveIncomingMessage(message: IncomingMessageSummary): Promise<boolean> {
