@@ -41,7 +41,7 @@ Git에서 제외됩니다.
 | 변수 | 설명 |
 | --- | --- |
 | `PORT` | API 포트, 기본값 `4000` |
-| `HOST` | 바인딩 주소, 기본값 `0.0.0.0` |
+| `HOST` | 바인딩 주소, 기본값 `127.0.0.1`(컨테이너 이미지는 `0.0.0.0`) |
 | `DATA_FILE_PATH` | 개발용 로컬 상태 파일 경로 |
 | `OAUTH_REDIRECT_BASE_URL` | OAuth 콜백을 제공하는 공개 API 기준 URL |
 | `GOOGLE_OAUTH_CLIENT_ID` | Google OAuth 클라이언트 ID |
