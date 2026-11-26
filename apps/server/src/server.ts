@@ -75,6 +75,18 @@ await registerRoutes(app, {
     }
     await imap.setFlags(account, message.mailbox, message.providerMessageId, change);
   },
+  downloadAttachment: async (account, message, part) => {
+    const receiver = account.incomingProtocol === "imap" ? imap : pop3;
+    return receiver.downloadAttachment(
+      account,
+      message.mailbox,
+      message.providerMessageId,
+      part
+    );
+  },
+  searchMessages: async (account, query) => imap.search(account, query),
+  fetchMessageSummary: async (account, providerMessageId) =>
+    imap.fetchSummary(account, "INBOX", providerMessageId),
   startAccountSync: async (account) => worker.startAccount(account),
   resumeAccountSync: async (account) => worker.resumeAccount(account),
   stopAccountSync: async (accountId) => worker.stopAccount(accountId)

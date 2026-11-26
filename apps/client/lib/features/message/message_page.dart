@@ -6,7 +6,9 @@ import '../../core/i18n/language_controller.dart';
 import '../../services/mail_api_client.dart';
 import '../accounts/account_providers.dart';
 import '../../widgets/app_shell.dart';
+import 'attachment_list.dart';
 import 'linked_message_body.dart';
+import 'reply_draft.dart';
 
 typedef MessageRequest = ({String messageId, String accountId});
 
@@ -18,19 +20,6 @@ final messageProvider =
         messageId: request.messageId,
       );
 });
-
-/// Opens the composer addressed to the sender with a "Re:" subject.
-String replyLocation({String? accountId, required MessageDetail message}) {
-  final subject = message.subject;
-  return Uri(
-    path: accountId == null ? '/compose' : '/accounts/$accountId/compose',
-    queryParameters: {
-      'to': message.sender,
-      'subject':
-          subject.toLowerCase().startsWith('re:') ? subject : 'Re: $subject',
-    },
-  ).toString();
-}
 
 class MessagePage extends ConsumerStatefulWidget {
   const MessagePage({
@@ -164,16 +153,18 @@ class _MessagePageState extends ConsumerState<MessagePage> {
                 ),
               ),
             ],
-            IconButton(
-              tooltip: strings.reply,
-              onPressed: switch (message.asData?.value) {
-                final item? => () => context.go(
-                      replyLocation(accountId: accountId, message: item),
-                    ),
-                null => null,
-              },
-              icon: const Icon(Icons.reply),
-            ),
+            if (message.value case final item?) ...[
+              IconButton(
+                tooltip: strings.reply,
+                onPressed: () => _reply(context, item, strings, all: false),
+                icon: const Icon(Icons.reply),
+              ),
+              IconButton(
+                tooltip: strings.replyAll,
+                onPressed: () => _reply(context, item, strings, all: true),
+                icon: const Icon(Icons.reply_all),
+              ),
+            ],
           ],
         ),
         Expanded(
@@ -190,6 +181,12 @@ class _MessagePageState extends ConsumerState<MessagePage> {
                 Text(item.receivedAtLabel),
                 const Divider(height: 32),
                 LinkedMessageBody(body: item.body, links: item.links),
+                if (item.attachments.isNotEmpty)
+                  AttachmentList(
+                    accountId: accountId,
+                    messageId: messageId,
+                    attachments: item.attachments,
+                  ),
               ],
             ),
             loading: () => const Center(child: CircularProgressIndicator()),
@@ -203,6 +200,18 @@ class _MessagePageState extends ConsumerState<MessagePage> {
     return AppShell(
       selectedDestinationId: AppShell.accountDestinationId(accountId),
       child: content,
+    );
+  }
+
+  void _reply(
+    BuildContext context,
+    MessageDetail item,
+    AppStrings strings, {
+    required bool all,
+  }) {
+    context.go(
+      '/accounts/${item.accountId ?? accountId}/compose',
+      extra: ReplyDraft.from(item, strings, all: all),
     );
   }
 }

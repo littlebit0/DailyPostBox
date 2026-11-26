@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -51,6 +53,21 @@ class MailApiClient {
         .toList();
   }
 
+  Future<List<MailSummary>> searchAccountMessages(
+    String accountId,
+    String query,
+  ) async {
+    final response = await _dio.get<List<dynamic>>(
+      '/accounts/$accountId/search',
+      queryParameters: {'q': query},
+      options: Options(receiveTimeout: const Duration(seconds: 60)),
+    );
+    final data = response.data ?? [];
+    return data
+        .map((item) => MailSummary.fromJson(item as Map<String, dynamic>))
+        .toList();
+  }
+
   Future<List<MailAccountSummary>> fetchAccounts() async {
     final response = await _dio.get<List<dynamic>>('/accounts');
     final data = response.data ?? [];
@@ -92,6 +109,28 @@ class MailApiClient {
         if (flagged != null) 'flagged': flagged,
       },
     );
+  }
+
+  Future<void> downloadAttachment({
+    required String accountId,
+    required String messageId,
+    required String part,
+    required String savePath,
+  }) async {
+    // Download into a unique app-accessible temp dir (the sandbox may deny
+    // writes next to the selected file); touch the destination only on success.
+    final tempDir = await Directory.systemTemp.createTemp('attachment_');
+    try {
+      final temp = File('${tempDir.path}/download');
+      await _dio.download(
+        '/accounts/$accountId/messages/$messageId/attachments/$part',
+        temp.path,
+        options: Options(receiveTimeout: const Duration(minutes: 2)),
+      );
+      await temp.copy(savePath);
+    } finally {
+      await tempDir.delete(recursive: true);
+    }
   }
 
   Future<void> addAccount({
@@ -183,6 +222,12 @@ class MailApiClient {
     await _dio.post('/accounts/$accountId/sync');
   }
 
+  Future<void> setAccountNotifications(String accountId, bool enabled) async {
+    await _dio.patch('/accounts/$accountId/notifications', data: {
+      'enabled': enabled,
+    });
+  }
+
   Future<void> deleteAccount(String accountId) async {
     await _dio.delete('/accounts/$accountId');
   }
@@ -202,12 +247,18 @@ class MailApiClient {
     required List<String> to,
     required String subject,
     required String body,
+    List<String> cc = const [],
+    String? inReplyTo,
+    List<String> references = const [],
   }) async {
     await _dio.post('/mail/send', data: {
       'accountId': accountId,
       'to': to,
+      if (cc.isNotEmpty) 'cc': cc,
       'subject': subject,
       'text': body,
+      if (inReplyTo != null) 'inReplyTo': inReplyTo,
+      if (inReplyTo != null && references.isNotEmpty) 'references': references,
     });
   }
 }
@@ -300,16 +351,32 @@ class MessageDetail {
     required this.receivedAtLabel,
     this.seen = false,
     this.flagged = false,
+    this.attachments = const [],
+    this.receivedAt,
+    this.accountId,
+    this.messageId,
+    this.references = const [],
+    this.replyTo = const [],
+    this.replyAllTo = const [],
+    this.replyAllCc = const [],
   });
 
   final bool seen;
   final bool flagged;
+  final String? accountId;
+  final String? messageId;
+  final List<String> references;
+  final List<String> replyTo;
+  final List<String> replyAllTo;
+  final List<String> replyAllCc;
   final String id;
   final String sender;
   final String subject;
   final String body;
   final List<MessageLink> links;
   final String receivedAtLabel;
+  final List<MessageAttachment> attachments;
+  final DateTime? receivedAt;
 
   factory MessageDetail.fromJson(Map<String, dynamic> json) {
     return MessageDetail(
@@ -324,9 +391,59 @@ class MessageDetail {
       receivedAtLabel: _formatReceivedAt(json['receivedAt'] as String?),
       seen: json['seen'] as bool? ?? false,
       flagged: json['flagged'] as bool? ?? false,
+      attachments: (json['attachments'] as List<dynamic>? ?? const [])
+          .whereType<Map<String, dynamic>>()
+          .map(MessageAttachment.fromJson)
+          .toList(growable: false),
+      receivedAt:
+          DateTime.tryParse(json['receivedAt'] as String? ?? '')?.toLocal(),
+      accountId: json['accountId'] as String?,
+      messageId: json['messageId'] as String?,
+      references: _strings(json['references']),
+      replyTo: _strings(json['replyTo']),
+      replyAllTo: _strings(json['replyAllTo']),
+      replyAllCc: _strings(json['replyAllCc']),
     );
   }
 }
+
+class MessageAttachment {
+  const MessageAttachment({
+    required this.part,
+    required this.filename,
+    required this.contentType,
+    required this.size,
+  });
+
+  final String part;
+  final String filename;
+  final String contentType;
+  final int size;
+
+  factory MessageAttachment.fromJson(Map<String, dynamic> json) {
+    return MessageAttachment(
+      part: json['part'] as String? ?? '',
+      filename: json['filename'] as String? ?? '',
+      contentType: json['contentType'] as String? ?? '',
+      size: (json['size'] as num?)?.toInt() ?? 0,
+    );
+  }
+}
+
+String formatAttachmentSize(int bytes) {
+  if (bytes < 1024) return '$bytes B';
+  const units = ['KB', 'MB', 'GB'];
+  var value = bytes / 1024;
+  var unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return '${value.toStringAsFixed(value < 10 ? 1 : 0)} ${units[unit]}';
+}
+
+List<String> _strings(Object? value) =>
+    (value as List<dynamic>? ?? const []).whereType<String>().toList();
 
 class MessageLink {
   const MessageLink({required this.url, required this.label});
@@ -354,6 +471,7 @@ class MailAccountSummary {
     this.syncErrorCode,
     required this.initialSync,
     required this.lastSyncedAtLabel,
+    this.notificationsEnabled = true,
   });
 
   final String id;
@@ -366,6 +484,7 @@ class MailAccountSummary {
   final String? syncErrorCode;
   final InitialSyncOption? initialSync;
   final String lastSyncedAtLabel;
+  final bool notificationsEnabled;
 
   factory MailAccountSummary.fromJson(Map<String, dynamic> json) {
     return MailAccountSummary(
@@ -382,6 +501,7 @@ class MailAccountSummary {
               json['initialSync'] as Map<String, dynamic>)
           : null,
       lastSyncedAtLabel: _formatReceivedAt(json['lastSyncedAt'] as String?),
+      notificationsEnabled: json['notificationsEnabled'] as bool? ?? true,
     );
   }
 }

@@ -1,17 +1,106 @@
 import 'dart:async';
+import 'dart:io';
+
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
+import 'package:intl/date_symbol_data_local.dart';
 
 import 'package:daily_postbox/features/accounts/accounts_page.dart';
 import 'package:daily_postbox/features/message/linked_message_body.dart';
 import 'package:daily_postbox/features/message/message_page.dart';
+import 'package:daily_postbox/core/i18n/language_controller.dart';
+import 'package:daily_postbox/features/message/reply_draft.dart';
 import 'package:daily_postbox/main.dart';
 import 'package:daily_postbox/services/mail_api_client.dart';
 
 void main() {
+  test('failed attachment download keeps the existing destination file',
+      () async {
+    final dir = Directory.systemTemp.createTempSync('dl');
+    addTearDown(() => dir.deleteSync(recursive: true));
+    final target = File('${dir.path}/a.txt')..writeAsStringSync('keep');
+    final client = MailApiClient(baseUrl: 'http://127.0.0.1:1');
+    await expectLater(
+      client.downloadAttachment(
+          accountId: 'a', messageId: 'm', part: '1', savePath: target.path),
+      throwsA(isA<DioException>()),
+    );
+    expect(target.readAsStringSync(), 'keep');
+    expect(File('${target.path}.part').existsSync(), isFalse);
+  });
+
+  test('successful attachment download writes destination, leaves no temp',
+      () async {
+    HttpOverrides.global = null; // test binding stubs HTTP with 400
+    final server = await HttpServer.bind('127.0.0.1', 0);
+    addTearDown(() => server.close(force: true));
+    server.listen((req) {
+      req.response.add([1, 2, 3]);
+      req.response.close();
+    });
+    final dir = Directory.systemTemp.createTempSync('dl');
+    addTearDown(() => dir.deleteSync(recursive: true));
+    final target = File('${dir.path}/a.bin')..writeAsStringSync('old');
+    final sibling = File('${dir.path}/a.bin.part')..writeAsStringSync('other');
+    final client = MailApiClient(baseUrl: 'http://127.0.0.1:${server.port}');
+    await client.downloadAttachment(
+        accountId: 'a', messageId: 'm', part: '1', savePath: target.path);
+    expect(target.readAsBytesSync(), [1, 2, 3]);
+    expect(sibling.readAsStringSync(), 'other');
+    expect(dir.listSync().length, 2);
+  });
+
+  test('replySubject adds Re: once', () {
+    expect(replySubject('Hello'), 'Re: Hello');
+    expect(replySubject('Re: Hello'), 'Re: Hello');
+    expect(replySubject('RE: Hello'), 'RE: Hello');
+  });
+
+  test('ReplyDraft quote header uses absolute local date-time', () async {
+    await initializeDateFormatting();
+    final iso = DateTime(2026, 11, 20, 17, 12).toIso8601String();
+    final message = MessageDetail.fromJson({
+      'id': '1',
+      'from': 'a@x.com',
+      'body': 'hi',
+      'receivedAt': iso,
+    });
+    expect(
+      ReplyDraft.from(message, AppStrings(AppLanguage.korean), all: false).body,
+      contains('2026-11-20 (금) 17:12 a@x.com 님이 작성:'),
+    );
+    expect(
+      ReplyDraft.from(message, AppStrings(AppLanguage.english), all: false)
+          .body,
+      contains('On Fri, Nov 20, 2026 at 17:12, a@x.com wrote:'),
+    );
+  });
+
+  test('ReplyDraft quotes the original and keeps thread ids', () {
+    final message = MessageDetail.fromJson({
+      'id': '1',
+      'from': 'a@x.com',
+      'subject': 'Hi',
+      'body': 'line1\nline2',
+      'messageId': '<m1@x>',
+      'references': ['<r0@x>'],
+      'replyTo': ['a@x.com'],
+      'replyAllTo': ['a@x.com', 'b@x.com'],
+      'replyAllCc': ['c@x.com'],
+    });
+    final strings = AppStrings(AppLanguage.english);
+    final all = ReplyDraft.from(message, strings, all: true);
+    expect(all.to, ['a@x.com', 'b@x.com']);
+    expect(all.cc, ['c@x.com']);
+    expect(all.subject, 'Re: Hi');
+    expect(all.body, contains('> line1\n> line2'));
+    expect(all.inReplyTo, '<m1@x>');
+    expect(ReplyDraft.from(message, strings, all: false).cc, isEmpty);
+  });
+
   testWidgets('renders mail app shell', (WidgetTester tester) async {
     await tester.pumpWidget(
       ProviderScope(
@@ -101,9 +190,121 @@ void main() {
     expect(find.text(account.emailAddress), findsWidgets);
   });
 
-  testWidgets('shows a progressive loading state during account sync', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('clears search results when switching to another account',
+      (WidgetTester tester) async {
+    const first = MailAccountSummary(
+      id: 'account-a',
+      providerId: 'gmail',
+      emailAddress: 'first@example.com',
+      incomingProtocol: 'imap',
+      authMode: 'oauth2',
+      syncStatus: 'idle',
+      syncError: null,
+      initialSync: InitialSyncOption.recommended,
+      lastSyncedAtLabel: 'now',
+    );
+    const second = MailAccountSummary(
+      id: 'account-b',
+      providerId: 'gmail',
+      emailAddress: 'second@example.com',
+      incomingProtocol: 'imap',
+      authMode: 'oauth2',
+      syncStatus: 'idle',
+      syncError: null,
+      initialSync: InitialSyncOption.recommended,
+      lastSyncedAtLabel: 'now',
+    );
+    final api = _SearchApi();
+    await tester.binding.setSurfaceSize(const Size(1200, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          mailApiClientProvider.overrideWithValue(api),
+          accountsProvider.overrideWith((ref) async => const [first, second]),
+          providersProvider.overrideWith((ref) async => const []),
+          accountMessagesProvider.overrideWith((ref, accountId) async => const []),
+        ],
+        child: const DailyPostBoxApp(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text(first.emailAddress).first);
+    await tester.pumpAndSettle();
+    final searchField = find.descendant(
+      of: find.byType(Scaffold).last,
+      matching: find.byType(TextField),
+    );
+    await tester.enterText(searchField.first, 'invoice');
+    await tester.testTextInput.receiveAction(TextInputAction.search);
+    await tester.pumpAndSettle();
+    expect(find.text(_SearchApi.resultSubject), findsOneWidget);
+
+    await tester.tap(find.text(second.emailAddress).first);
+    await tester.pumpAndSettle();
+
+    expect(find.text(_SearchApi.resultSubject), findsNothing);
+    expect(find.text('invoice'), findsNothing);
+  });
+
+  testWidgets('shows loading instead of previous results for a new search',
+      (WidgetTester tester) async {
+    const account = MailAccountSummary(
+      id: 'account-a',
+      providerId: 'gmail',
+      emailAddress: 'first@example.com',
+      incomingProtocol: 'imap',
+      authMode: 'oauth2',
+      syncStatus: 'idle',
+      syncError: null,
+      initialSync: InitialSyncOption.recommended,
+      lastSyncedAtLabel: 'now',
+    );
+    final api = _DelayedSearchApi();
+    await tester.binding.setSurfaceSize(const Size(1200, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          mailApiClientProvider.overrideWithValue(api),
+          accountsProvider.overrideWith((ref) async => const [account]),
+          providersProvider.overrideWith((ref) async => const []),
+          accountMessagesProvider.overrideWith((ref, accountId) async => const []),
+        ],
+        child: const DailyPostBoxApp(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text(account.emailAddress).first);
+    await tester.pumpAndSettle();
+    final searchField = find.descendant(
+      of: find.byType(Scaffold).last,
+      matching: find.byType(TextField),
+    ).first;
+    await tester.enterText(searchField, 'invoice');
+    await tester.testTextInput.receiveAction(TextInputAction.search);
+    await tester.pump();
+    api.pending.removeAt(0).complete(const [_DelayedSearchApi.firstResult]);
+    await tester.pumpAndSettle();
+    expect(find.text(_DelayedSearchApi.firstResult.subject), findsOneWidget);
+
+    await tester.enterText(searchField, 'receipt');
+    await tester.testTextInput.receiveAction(TextInputAction.search);
+    await tester.pump();
+
+    expect(find.text(_DelayedSearchApi.firstResult.subject), findsNothing);
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+
+    api.pending.removeAt(0).complete(const []);
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets('shows a progressive loading state during account sync',
+      (WidgetTester tester) async {
     const account = MailAccountSummary(
       id: 'syncing-account',
       providerId: 'naver',
@@ -338,7 +539,10 @@ void main() {
     final loadsBeforeReconnect = messageLoads;
     await tester.tap(find.widgetWithText(TextButton, '다시 연결'));
     await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextField), 'new-app-password');
+    await tester.enterText(
+        find.descendant(
+            of: find.byType(AlertDialog), matching: find.byType(TextField)),
+        'new-app-password');
     await tester.tap(find.widgetWithText(FilledButton, '다시 연결'));
     await tester.pumpAndSettle();
 
@@ -447,6 +651,23 @@ void main() {
       resolveMailApiBaseUrl(configured: '', isRelease: false),
       'http://127.0.0.1:4000',
     );
+  });
+
+  test('parses attachments and formats their size', () {
+    final detail = MessageDetail.fromJson({
+      'attachments': [
+        {
+          'part': '2',
+          'filename': '보고서.pdf',
+          'contentType': 'application/pdf',
+          'size': 1536,
+        },
+      ],
+    });
+
+    expect(detail.attachments.single.filename, '보고서.pdf');
+    expect(formatAttachmentSize(detail.attachments.single.size), '1.5 KB');
+    expect(formatAttachmentSize(20 * 1024 * 1024), '20 MB');
   });
 
   test('replaces a long mail link with its anchor title', () {
@@ -820,6 +1041,54 @@ class _FlagApi extends MailApiClient {
     calls.add(c);
     if (flagged != null) sent.add(flagged);
     return c.future;
+  }
+}
+
+class _SearchApi extends MailApiClient {
+  _SearchApi() : super(baseUrl: 'http://127.0.0.1:1');
+
+  static const resultSubject = '첫 계정 검색 결과';
+
+  @override
+  Future<List<MailSummary>> searchAccountMessages(
+    String accountId,
+    String query,
+  ) async {
+    return [
+      const MailSummary(
+        id: 'uid-1',
+        sender: 'billing@example.com',
+        subject: resultSubject,
+        snippet: '',
+        receivedAtLabel: 'now',
+        unread: false,
+      ),
+    ];
+  }
+}
+
+class _DelayedSearchApi extends MailApiClient {
+  _DelayedSearchApi() : super(baseUrl: 'http://127.0.0.1:1');
+
+  static const firstResult = MailSummary(
+    id: 'uid-1',
+    sender: 'billing@example.com',
+    subject: '이전 검색 결과',
+    snippet: '',
+    receivedAtLabel: 'now',
+    unread: false,
+  );
+
+  final pending = <Completer<List<MailSummary>>>[];
+
+  @override
+  Future<List<MailSummary>> searchAccountMessages(
+    String accountId,
+    String query,
+  ) {
+    final completer = Completer<List<MailSummary>>();
+    pending.add(completer);
+    return completer.future;
   }
 }
 

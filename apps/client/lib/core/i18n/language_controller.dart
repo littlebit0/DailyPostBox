@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 enum AppLanguage {
@@ -81,9 +82,22 @@ class AppStrings {
   String get flagUpdateFailed => _ko
       ? '메일 상태를 서버에 반영하지 못했습니다.'
       : 'Could not update the message on the server.';
+  String get replyAll => _ko ? '전체 답장' : 'Reply all';
+  String get cc => _ko ? '참조' : 'Cc';
+
+  /// Absolute local date-time for the reply quote header.
+  String quoteDate(DateTime time) => _ko
+      ? DateFormat('yyyy-MM-dd (E) HH:mm', 'ko').format(time)
+      : DateFormat("E, MMM d, y 'at' HH:mm", 'en').format(time);
+  String quoteHeader(String date, String sender) =>
+      _ko ? '$date $sender 님이 작성:' : 'On $date, $sender wrote:';
   String get back => _ko ? '뒤로' : 'Back';
   String get from => _ko ? '보낸 사람' : 'From';
   String get to => _ko ? '받는 사람' : 'To';
+  String get recipientRequired =>
+      _ko ? '받는 사람을 입력하세요.' : 'Enter at least one recipient.';
+  String sendFailed(String reason) =>
+      _ko ? '메일을 보내지 못했습니다: $reason' : 'Could not send the mail: $reason';
   String get subject => _ko ? '제목' : 'Subject';
   String get body => _ko ? '내용' : 'Message';
   String get emptyInboxTitle => _ko ? '받은 메일이 없습니다' : 'No messages yet';
@@ -154,6 +168,8 @@ class AppStrings {
   String get accountMessages => _ko ? '계정별 메일' : 'Account Mail';
   String get syncNow => _ko ? '동기화' : 'Sync';
   String get validateConnection => _ko ? '연결 테스트' : 'Test connection';
+  String get accountNotifications =>
+      _ko ? '이 계정의 새 메일 알림' : 'New mail notifications for this account';
   String get deleteAccount => _ko ? '삭제' : 'Delete';
   String get more => _ko ? '더보기' : 'More';
   String get serverSettings => _ko ? '서버 설정' : 'Server settings';
@@ -170,6 +186,13 @@ class AppStrings {
   String get syncRange => _ko ? '동기화 범위' : 'Sync range';
   String get comingSoon => _ko ? '준비 중' : 'Coming soon';
   String get noAccountSelected => _ko ? '계정을 선택하세요' : 'Select an account';
+  String get searchMail => _ko ? '메일 검색' : 'Search mail';
+  String get searchHint => _ko
+      ? '검색: 제목·보낸 사람, from: subject: after: before:'
+      : 'Search subject or sender, from: subject: after: before:';
+  String get clearSearch => _ko ? '검색 지우기' : 'Clear search';
+  String get noSearchResults => _ko ? '검색 결과가 없습니다' : 'No messages found';
+  String get searchFailedTitle => _ko ? '검색하지 못했습니다' : 'Search failed';
   String get noMessagesForAccount =>
       _ko ? '이 계정에 표시할 메일이 없습니다' : 'No mail for this account yet';
   String get loadingAccountMail => _ko ? '메일을 가져오는 중입니다' : 'Importing mail';
@@ -181,6 +204,12 @@ class AppStrings {
       : 'The new password is checked before saving. Stored mail and settings are kept.';
   String get reconnectSucceeded =>
       _ko ? '다시 연결했습니다. 메일을 가져오는 중입니다.' : 'Reconnected. Fetching mail now.';
+  String get attachments => _ko ? '첨부파일' : 'Attachments';
+  String get saveAttachment => _ko ? '저장' : 'Save';
+  String attachmentSaved(String path) =>
+      _ko ? '$path에 저장했습니다' : 'Saved to $path';
+  String get attachmentSaveFailed =>
+      _ko ? '첨부파일을 저장하지 못했습니다' : 'Could not save the attachment';
   String get messageLoadFailedTitle =>
       _ko ? '메일 본문을 불러오지 못했습니다' : 'Could not open this message';
   String syncFailure(String? code, String? error) {

@@ -6,6 +6,7 @@ import 'package:daily_postbox/core/app_router.dart';
 import 'package:daily_postbox/features/accounts/accounts_page.dart';
 import 'package:daily_postbox/features/message/compose_page.dart';
 import 'package:daily_postbox/features/message/message_page.dart';
+import 'package:daily_postbox/features/message/reply_draft.dart';
 import 'package:daily_postbox/main.dart';
 import 'package:daily_postbox/services/mail_api_client.dart';
 
@@ -28,23 +29,13 @@ MessageDetail _message(String subject) => MessageDetail(
       body: 'Hello',
       links: const [],
       receivedAtLabel: 'now',
+      replyTo: const ['friend@example.com'],
     );
 
 void main() {
   test('a reply keeps an existing Re: prefix', () {
-    expect(
-      Uri.parse(replyLocation(accountId: 'a', message: _message('Re: Hi')))
-          .queryParameters['subject'],
-      'Re: Hi',
-    );
-    final location = Uri.parse(
-      replyLocation(accountId: 'a', message: _message('Hi')),
-    );
-    expect(location.path, '/accounts/a/compose');
-    expect(location.queryParameters, {
-      'to': 'friend@example.com',
-      'subject': 'Re: Hi',
-    });
+    expect(replySubject('Re: Hi'), 'Re: Hi');
+    expect(replySubject('Hi'), 'Re: Hi');
   });
 
   testWidgets('reply opens the composer filled in; no dead buttons remain',
