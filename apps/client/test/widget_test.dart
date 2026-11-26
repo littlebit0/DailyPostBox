@@ -608,6 +608,57 @@ void main() {
     });
   });
 
+  testWidgets('shows mail that arrives after sync without a manual refresh',
+      (WidgetTester tester) async {
+    const idle = MailAccountSummary(
+      id: 'idle-account',
+      providerId: 'naver',
+      emailAddress: 'idle@example.com',
+      incomingProtocol: 'imap',
+      authMode: 'app-password',
+      syncStatus: 'idle',
+      syncError: null,
+      initialSync: InitialSyncOption.recommended,
+      lastSyncedAtLabel: 'now',
+    );
+    const arrived = MailSummary(
+      id: '42',
+      sender: 'sender@example.com',
+      subject: 'Arrived by IDLE',
+      snippet: '',
+      receivedAtLabel: 'now',
+      unread: true,
+    );
+    var messageLoads = 0;
+    await tester.binding.setSurfaceSize(const Size(1200, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          accountsProvider.overrideWith((ref) async => const [idle]),
+          providersProvider.overrideWith((ref) async => const []),
+          accountMessagesProvider.overrideWith((ref, accountId) async {
+            messageLoads += 1;
+            return messageLoads == 1 ? const [] : const [arrived];
+          }),
+        ],
+        child: const DailyPostBoxApp(),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text(idle.emailAddress).first);
+    await tester.pumpAndSettle();
+    expect(find.text('Arrived by IDLE'), findsNothing);
+
+    await tester.pump(const Duration(seconds: 31));
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.text('Arrived by IDLE'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   group('message flag updates', () {
     Future<_FlagApi> pumpMessage(WidgetTester tester, _FlagApi api) async {
       final router = GoRouter(

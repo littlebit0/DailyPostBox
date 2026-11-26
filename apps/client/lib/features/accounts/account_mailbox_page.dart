@@ -99,18 +99,19 @@ class _MailboxContentState extends ConsumerState<_MailboxContent> {
     super.dispose();
   }
 
-  void _configureRefreshTimer() {
-    if (_isSyncing) {
-      if (_refreshTimer == null && !_refreshing) _scheduleRefresh();
-      return;
-    }
+  // The server saves IDLE mail at any time, so the list keeps polling after
+  // sync too, just less often.
+  Duration get _refreshInterval =>
+      _isSyncing ? const Duration(seconds: 3) : const Duration(seconds: 30);
 
+  void _configureRefreshTimer() {
     _refreshTimer?.cancel();
     _refreshTimer = null;
+    if (!_refreshing) _scheduleRefresh();
   }
 
   void _scheduleRefresh() {
-    _refreshTimer = Timer(const Duration(seconds: 3), () {
+    _refreshTimer = Timer(_refreshInterval, () {
       _refreshTimer = null;
       unawaited(_refresh());
     });
@@ -131,7 +132,7 @@ class _MailboxContentState extends ConsumerState<_MailboxContent> {
     } finally {
       _refreshing = false;
     }
-    if (mounted && _isSyncing && _refreshTimer == null) _scheduleRefresh();
+    if (mounted && _refreshTimer == null) _scheduleRefresh();
   }
 
   @override
