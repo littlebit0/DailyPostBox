@@ -50,8 +50,12 @@ const finishSchema = z.object({
   })
 });
 
+// The login link and its session (which holds tokens) expire together.
+const sessionLifetimeMs = 10 * 60_000;
+
 export class OAuthAccountFlow {
   private readonly sessions = new Map<string, OAuthSession>();
+  private readonly now: () => number;
 
   constructor(
     private readonly deps: {
@@ -59,8 +63,26 @@ export class OAuthAccountFlow {
       validateAccount: (account: MailAccount) => Promise<void>;
       startAccountSync: (account: MailAccount) => Promise<void>;
       stopAccountSync: (accountId: string) => Promise<void>;
+      now?: () => number;
     }
-  ) {}
+  ) {
+    this.now = deps.now ?? Date.now;
+  }
+
+  /** Returns the session if it has not expired; expired sessions are deleted. */
+  private activeSession(state: string): OAuthSession | undefined {
+    this.pruneExpiredSessions();
+    return this.sessions.get(state);
+  }
+
+  private pruneExpiredSessions(): void {
+    const now = this.now();
+    for (const [state, session] of this.sessions) {
+      if (now - session.createdAt.getTime() >= sessionLifetimeMs) {
+        this.sessions.delete(state);
+      }
+    }
+  }
 
   register(app: FastifyInstance): void {
     app.post("/auth/:providerId/start", async (request, reply) => {
@@ -93,6 +115,7 @@ export class OAuthAccountFlow {
         });
       }
 
+      this.pruneExpiredSessions();
       const state = randomUUID();
       const codeVerifier = base64Url(randomBytes(48));
       const session: OAuthSession = {
@@ -101,7 +124,7 @@ export class OAuthAccountFlow {
         codeVerifier,
         status: "waiting",
         reconnectAccountId: body.accountId,
-        createdAt: new Date()
+        createdAt: new Date(this.now())
       };
       this.sessions.set(state, session);
 
@@ -121,13 +144,13 @@ export class OAuthAccountFlow {
       return {
         state,
         authorizationUrl: authorizationUrl.toString(),
-        expiresAt: new Date(Date.now() + 10 * 60_000).toISOString()
+        expiresAt: new Date(session.createdAt.getTime() + sessionLifetimeMs).toISOString()
       };
     });
 
     app.get("/auth/sessions/:state", async (request, reply) => {
       const params = z.object({ state: z.string() }).parse(request.params);
-      const session = this.sessions.get(params.state);
+      const session = this.activeSession(params.state);
       if (!session) return reply.code(404).send({ error: "Login session not found" });
       return {
         state: session.state,
@@ -141,7 +164,7 @@ export class OAuthAccountFlow {
     app.post("/auth/sessions/:state/complete", async (request, reply) => {
       const params = z.object({ state: z.string() }).parse(request.params);
       const options = finishSchema.parse(request.body);
-      const session = this.sessions.get(params.state);
+      const session = this.activeSession(params.state);
 
       if (!session) return reply.code(404).send({ error: "Login session not found" });
       if (session.status === "completed" && session.accountId) {
@@ -162,6 +185,9 @@ export class OAuthAccountFlow {
         session.status = "error";
         session.error = error instanceof Error ? error.message : String(error);
         return reply.code(400).send({ error: session.error });
+      } finally {
+        // The tokens now live only in the account (or nowhere on failure).
+        session.token = undefined;
       }
     });
 
@@ -174,7 +200,7 @@ export class OAuthAccountFlow {
         state: z.string(),
         error: z.string().optional()
       }).parse(request.query);
-      const session = this.sessions.get(query.state);
+      const session = this.activeSession(query.state);
 
       if (!session || session.providerId !== params.providerId) {
         return reply.type("text/html").send(renderResultPage("로그인 세션을 찾을 수 없습니다."));
