@@ -10,16 +10,30 @@ import type {
   MessageThreadHeaders
 } from "../domain/types.js";
 import { getProvider } from "../providers/providerRegistry.js";
-import { resolveIncomingSettings } from "../providers/resolveConnectionSettings.js";
+import {
+  resolveIncomingSettings,
+  supportsImapIdle
+} from "../providers/resolveConnectionSettings.js";
 import type { SecretResolver } from "../security/SecretResolver.js";
 import type { MailReceiver } from "./MailReceiver.js";
 import {
+  batchLimit,
+  cursorUid,
   latestUidSearchQuery,
   newestFirstUidBatches
 } from "./imapSequenceRanges.js";
 import { isAuthenticationFailure } from "./authenticationFailure.js";
 import { extractMessageLinks } from "./messageLinks.js";
 import { createExistsQueue } from "./existsQueue.js";
+
+export type { ImapSyncCursor } from "./imapSequenceRanges.js";
+import type { ImapSyncCursor } from "./imapSequenceRanges.js";
+
+export interface ImapSyncResult {
+  uidValidity: string;
+  // Newest UID that existed when the sync opened the mailbox.
+  highestUid?: number;
+}
 
 export class ImapReceiver implements MailReceiver {
   private static readonly maxBodyBytes = 2 * 1024 * 1024;
@@ -54,23 +68,37 @@ export class ImapReceiver implements MailReceiver {
     account: MailAccount,
     mailbox: string,
     limit: number | "all",
-    onBatch: (messages: IncomingMessageSummary[]) => Promise<void>
-  ): Promise<void> {
+    onBatch: (messages: IncomingMessageSummary[]) => Promise<void>,
+    cursor?: ImapSyncCursor
+  ): Promise<ImapSyncResult> {
     const initial = await this.withConnectionRetry(async () => {
       return this.withConnectedClient(account, async (client) => {
         const openedMailbox = await client.mailboxOpen(mailbox, {
           readOnly: true
         });
-        const uids = await this.searchLatestUids(
-          client,
-          openedMailbox.exists,
-          limit
+        const uidValidity = String(openedMailbox.uidValidity);
+        const afterUid = cursorUid(cursor, uidValidity);
+        const uids = afterUid === undefined
+          ? await this.searchLatestUids(client, openedMailbox.exists, limit)
+          : await this.searchUidsAfter(client, afterUid);
+        const batches = newestFirstUidBatches(
+          uids,
+          batchLimit(afterUid, limit)
         );
-        const batches = newestFirstUidBatches(uids, limit);
         const firstUids = batches.at(0);
+        const newestSeen = uids.reduce(
+          (newest, uid) => Math.max(newest, uid),
+          afterUid ?? 0
+        );
 
         return {
-          uidValidity: openedMailbox.uidValidity,
+          rawUidValidity: openedMailbox.uidValidity,
+          result: {
+            uidValidity,
+            highestUid: openedMailbox.uidNext
+              ? Number(openedMailbox.uidNext) - 1
+              : newestSeen || undefined
+          },
           firstBatch: firstUids
             ? await this.fetchUids(client, account, mailbox, firstUids)
             : [],
@@ -92,7 +120,7 @@ export class ImapReceiver implements MailReceiver {
           const openedMailbox = await client.mailboxOpen(mailbox, {
             readOnly: true
           });
-          if (openedMailbox.uidValidity !== initial.uidValidity) {
+          if (openedMailbox.uidValidity !== initial.rawUidValidity) {
             throw new Error("Mailbox UIDVALIDITY changed during import");
           }
           return this.fetchUids(client, account, mailbox, uids);
@@ -103,6 +131,7 @@ export class ImapReceiver implements MailReceiver {
         await onBatch(batch);
       }
     }
+    return initial.result;
   }
 
   async fetchMessageContent(
@@ -189,8 +218,8 @@ export class ImapReceiver implements MailReceiver {
     onMessage: (message: IncomingMessageSummary) => Promise<void>,
     onDisconnect?: (error: Error) => void
   ): Promise<() => Promise<void>> {
-    const provider = getProvider(account.providerId);
-    if (!provider.incoming.supportsIdle) {
+    if (!supportsImapIdle(account)) {
+      const provider = getProvider(account.providerId);
       throw new Error(`${provider.displayName} does not support IMAP IDLE`);
     }
 
@@ -287,6 +316,15 @@ export class ImapReceiver implements MailReceiver {
     return (await client.search(query, { uid: true })) || [];
   }
 
+  private async searchUidsAfter(
+    client: ImapFlow,
+    afterUid: number
+  ): Promise<number[]> {
+    // "n:*" always matches the newest message even when its UID is below n.
+    const uids = (await client.search({ uid: `${afterUid + 1}:*` }, { uid: true })) || [];
+    return uids.filter((uid) => uid > afterUid);
+  }
+
   private async fetchUids(
     client: ImapFlow,
     account: MailAccount,
@@ -297,6 +335,7 @@ export class ImapReceiver implements MailReceiver {
     for await (const message of client.fetch(uids, {
       envelope: true,
       flags: true,
+      internalDate: true,
       uid: true
     }, { uid: true })) {
       const summary = toIncomingMessage(account, mailbox, message);
@@ -338,6 +377,7 @@ function toIncomingMessage(
     from: envelope.from?.map((item) => item.address).filter(Boolean).join(", ") ?? "",
     subject: envelope.subject ?? "",
     receivedAt: envelope.date instanceof Date ? envelope.date : new Date(),
+    arrivedAt: message.internalDate instanceof Date ? message.internalDate : undefined,
     hasAttachments: false
   };
 }
