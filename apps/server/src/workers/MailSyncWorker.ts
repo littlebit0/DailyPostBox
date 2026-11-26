@@ -114,8 +114,12 @@ export class MailSyncWorker {
     const polled = account.lastSyncedAt !== undefined &&
       account.incomingProtocol === "imap" &&
       !supportsImapIdle(account);
+    // Set once a changed UIDVALIDITY dropped the saved mail; the re-import
+    // restores mail the user already had, so it announces nothing.
+    let recovering = false;
     const notifies = (message: IncomingMessageSummary) =>
-      polled && (message.arrivedAt ?? message.receivedAt) >= account.createdAt;
+      !recovering && polled &&
+      (message.arrivedAt ?? message.receivedAt) >= account.createdAt;
     // An account that opted out of previous mail keeps only mail that
     // reached the server after it was added. The server's arrival time is
     // used, not the sender's Date header, so delayed new mail is kept.
@@ -148,7 +152,16 @@ export class MailSyncWorker {
               )
             );
           },
-          cursor
+          cursor,
+          async (uidValidity) => {
+            if (await this.reconcileUidValidity(account, uidValidity)) {
+              recovering = true;
+            }
+            // An opted-out account takes back everything since it was added
+            // (isWanted drops older mail) instead of a zero-message import.
+            // Derived on every call so a connection retry keeps it.
+            return recovering && skipHistory ? "all" : this.initialSyncLimit(account);
+          }
         );
       } else if (limit !== 0) {
         const messages = await this.pop3.fetchLatest(
@@ -406,7 +419,9 @@ export class MailSyncWorker {
     account.threadBackfill = "running";
     await this.accounts.updateAccount(account);
     for (const [mailbox, stored] of byMailbox) {
-      let expectedUidValidity: string | undefined;
+      // The synced mailbox is checked against the UIDVALIDITY the sync recorded.
+      let expectedUidValidity = mailbox === this.options.mailbox ? account.uidValidity : undefined;
+      const tracked = expectedUidValidity !== undefined;
       for (let i = 0; i < stored.length; i += MailSyncWorker.backfillBatch) {
         // Yield first so sync and other accounts are not starved.
         await new Promise((resolve) => setTimeout(resolve, this.options.backfillYieldMs ?? 250));
@@ -422,6 +437,8 @@ export class MailSyncWorker {
         }
         const fetched = new Map(messages.map((m) => [m.providerMessageId, m]));
         if (!active()) return;
+        // A sync that saw a new UIDVALIDITY meanwhile dropped this mail; saving would restore it.
+        if (tracked && account.uidValidity !== expectedUidValidity) return;
         // Concurrent saves share one coalesced file write instead of one per message.
         entry.saving = Promise.all(batch.map((message) => {
           const found = fetched.get(message.providerMessageId);
@@ -436,6 +453,25 @@ export class MailSyncWorker {
         await entry.saving;
       }
     }
+  }
+
+  // Saved UIDs point at other messages once the mailbox's UIDVALIDITY
+  // changes, so the account's mail is dropped to be imported again.
+  // Returns true when it dropped the mail.
+  private async reconcileUidValidity(
+    account: MailAccount,
+    current: string
+  ): Promise<boolean> {
+    if (account.uidValidity === current) return false;
+    const changed = account.uidValidity !== undefined;
+    if (changed) {
+      console.warn("imap:uidvalidity-changed", { accountId: account.id });
+      await this.accounts.deleteMessages(account.id);
+      account.lastSyncedAt = undefined;
+    }
+    account.uidValidity = current;
+    await this.accounts.updateAccount(account);
+    return changed;
   }
 
   // Resyncs continue after the last completed sync, however many messages

@@ -303,6 +303,39 @@ test("backfill rejects a batch after the mailbox UIDVALIDITY changes", async () 
   assert.equal((await repository.getAccount(mailAccount.id))?.threadBackfill, undefined);
 });
 
+test("backfill saves nothing once a sync records a new UIDVALIDITY", async () => {
+  const repository = new InMemoryAccountRepository();
+  const mailAccount = account();
+  await repository.addAccount(mailAccount);
+  for (let uid = 1; uid <= 10; uid += 1) {
+    await repository.saveIncomingMessage({
+      accountId: mailAccount.id, providerMessageId: String(uid), mailbox: "INBOX",
+      from: "a@example.com", subject: "old", receivedAt: new Date(uid), hasAttachments: false
+    });
+  }
+  const imap = {
+    fetchLatestBatches: async () => {
+      mailAccount.uidValidity = "1";
+      return undefined;
+    },
+    fetchSummariesByUid: async (_a: MailAccount, _m: string, uids: number[]) => {
+      // A concurrent sync saw a recreated mailbox and dropped the stored mail.
+      mailAccount.uidValidity = "2";
+      return { uidValidity: "1", messages: uids.map((uid) => ({
+        accountId: mailAccount.id, providerMessageId: String(uid), mailbox: "INBOX",
+        from: "a@example.com", subject: "old", receivedAt: new Date(uid),
+        hasAttachments: false, messageId: `<m${uid}@example.com>`, references: []
+      })) };
+    }
+  };
+  const syncWorker = worker(repository, imap);
+  await syncWorker.syncAccount(mailAccount);
+  await syncWorker.backfillSettled(mailAccount.id);
+
+  const inbox = await repository.listInbox(mailAccount.userId);
+  assert.ok(!inbox.some((m) => m.messageId !== undefined), "stale headers must not be saved");
+});
+
 test("backfill drains 4,000 stored messages across batches without refetching", async () => {
   const repository = new InMemoryAccountRepository();
   const mailAccount = account();

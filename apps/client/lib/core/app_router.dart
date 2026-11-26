@@ -50,7 +50,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           state: state,
           disableTransition: true,
           child: MessagePage(
-            accountId: state.pathParameters['accountId'],
+            accountId: state.pathParameters['accountId']!,
             messageId: state.pathParameters['messageId']!,
           ),
         ),
@@ -61,16 +61,6 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           state: state,
           child: ComposePage(
             initialAccountId: state.pathParameters['accountId'],
-          ),
-        ),
-      ),
-      GoRoute(
-        path: '/messages/:id',
-        pageBuilder: (context, state) => _verticalPage(
-          state: state,
-          disableTransition: true,
-          child: MessagePage(
-            messageId: state.pathParameters['id']!,
           ),
         ),
       ),
