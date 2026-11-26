@@ -179,6 +179,13 @@ class AppStrings {
   String get syncRange => _ko ? '동기화 범위' : 'Sync range';
   String get comingSoon => _ko ? '준비 중' : 'Coming soon';
   String get noAccountSelected => _ko ? '계정을 선택하세요' : 'Select an account';
+  String get searchMail => _ko ? '메일 검색' : 'Search mail';
+  String get searchHint => _ko
+      ? '검색: 제목·보낸 사람, from: subject: after: before:'
+      : 'Search subject or sender, from: subject: after: before:';
+  String get clearSearch => _ko ? '검색 지우기' : 'Clear search';
+  String get noSearchResults => _ko ? '검색 결과가 없습니다' : 'No messages found';
+  String get searchFailedTitle => _ko ? '검색하지 못했습니다' : 'Search failed';
   String get noMessagesForAccount =>
       _ko ? '이 계정에 표시할 메일이 없습니다' : 'No mail for this account yet';
   String get loadingAccountMail => _ko ? '메일을 가져오는 중입니다' : 'Importing mail';

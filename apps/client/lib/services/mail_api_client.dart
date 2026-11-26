@@ -51,6 +51,21 @@ class MailApiClient {
         .toList();
   }
 
+  Future<List<MailSummary>> searchAccountMessages(
+    String accountId,
+    String query,
+  ) async {
+    final response = await _dio.get<List<dynamic>>(
+      '/accounts/$accountId/search',
+      queryParameters: {'q': query},
+      options: Options(receiveTimeout: const Duration(seconds: 60)),
+    );
+    final data = response.data ?? [];
+    return data
+        .map((item) => MailSummary.fromJson(item as Map<String, dynamic>))
+        .toList();
+  }
+
   Future<List<MailAccountSummary>> fetchAccounts() async {
     final response = await _dio.get<List<dynamic>>('/accounts');
     final data = response.data ?? [];
