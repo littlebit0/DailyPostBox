@@ -13,6 +13,7 @@ import type {
   ProviderId
 } from "../domain/types.js";
 import type { AccountRepository } from "../workers/AccountRepository.js";
+import { replyFields } from "../mail/replyRecipients.js";
 import { providerRegistry } from "../providers/providerRegistry.js";
 import {
   applySyncFailure,
@@ -31,7 +32,9 @@ const sendSchema = z.object({
   bcc: z.array(z.string().email()).optional(),
   subject: z.string().default(""),
   html: z.string().optional(),
-  text: z.string().optional()
+  text: z.string().optional(),
+  inReplyTo: z.string().regex(/^<[^<>\s]+>$/).optional(),
+  references: z.array(z.string().regex(/^<[^<>\s]+>$/)).optional()
 });
 
 const pushTokenSchema = z.object({
@@ -73,6 +76,15 @@ const accountSchema = z.object({
       code: z.ZodIssueCode.custom,
       path: ["authMode"],
       message: `${provider.displayName} does not support ${account.authMode} authentication.`
+    });
+  }
+  // The custom provider has no default host to fall back on.
+  if (account.providerId === "custom" &&
+    (!account.connectionOverride?.incoming || !account.connectionOverride.outgoing)) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["connectionOverride"],
+      message: "사용자 지정 메일 서버는 수신(IMAP)·발신(SMTP) 서버 주소와 포트가 필요합니다."
     });
   }
 });
@@ -194,6 +206,23 @@ export async function registerRoutes(
     await deps.stopAccountSync(params.id);
     await deps.accounts.deleteAccount(params.id);
     return reply.code(204).send();
+  });
+
+  app.patch("/accounts/:id/notifications", async (request, reply) => {
+    const params = z.object({ id: z.string() }).parse(request.params);
+    const body = z.object({ enabled: z.boolean() }).parse(request.body);
+    const account = await deps.accounts.getAccount(params.id);
+
+    if (!account || account.userId !== demoUserId) {
+      return reply.code(404).send({ error: "Account not found" });
+    }
+
+    account.notificationsEnabled = body.enabled;
+    account.updatedAt = new Date();
+    await deps.accounts.updateAccount(account);
+
+    const { encryptedSecretRef: _secret, ...publicAccount } = account;
+    return publicAccount;
   });
 
   app.post("/accounts/:id/validate", async (request, reply) => {
@@ -368,7 +397,8 @@ export async function registerRoutes(
       receivedAt: message.receivedAt.toISOString(),
       body: content.text,
       bodyTruncated: content.truncated,
-      bodyLinks: content.links
+      bodyLinks: content.links,
+      ...replyFields(message, content, account)
     };
   });
 
@@ -379,29 +409,6 @@ export async function registerRoutes(
       id: message.providerMessageId,
       receivedAt: message.receivedAt.toISOString()
     }));
-  });
-
-  app.get("/mail/messages/:id", async (request, reply) => {
-    const params = z.object({ id: z.string() }).parse(request.params);
-    const message = await deps.accounts.getMessage(demoUserId, params.id);
-
-    if (!message) {
-      return reply.code(404).send({ error: "Message not found" });
-    }
-    const account = await deps.accounts.getAccount(message.accountId);
-    if (!account || account.userId !== demoUserId) {
-      return reply.code(404).send({ error: "Account not found" });
-    }
-    const content = await deps.fetchMessageContent(account, message);
-
-    return {
-      ...message,
-      id: message.providerMessageId,
-      receivedAt: message.receivedAt.toISOString(),
-      body: content.text,
-      bodyTruncated: content.truncated,
-      bodyLinks: content.links
-    };
   });
 
   app.post("/mail/send", async (request, reply) => {

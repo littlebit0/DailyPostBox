@@ -18,6 +18,7 @@ const account = {
 const summary = {
   accountId: "a1",
   providerMessageId: "9",
+  from: "sender@example.test",
   receivedAt: new Date(0)
 } as unknown as IncomingMessageSummary;
 
