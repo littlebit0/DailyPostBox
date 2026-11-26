@@ -86,6 +86,13 @@ export interface IncomingMessageSummary {
   // receivedAt, which is the sender-set Date header.
   arrivedAt?: Date;
   hasAttachments: boolean;
+  seen?: boolean;
+  flagged?: boolean;
+}
+
+export interface MessageFlagChange {
+  seen?: boolean;
+  flagged?: boolean;
 }
 
 export interface IncomingMessageContent {

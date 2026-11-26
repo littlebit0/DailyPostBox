@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../core/i18n/language_controller.dart';
 import '../../services/mail_api_client.dart';
+import '../accounts/account_providers.dart';
 import '../../widgets/app_shell.dart';
 import 'attachment_list.dart';
 import 'linked_message_body.dart';
@@ -20,7 +21,7 @@ final messageProvider =
       );
 });
 
-class MessagePage extends ConsumerWidget {
+class MessagePage extends ConsumerStatefulWidget {
   const MessagePage({
     super.key,
     required this.messageId,
@@ -31,10 +32,91 @@ class MessagePage extends ConsumerWidget {
   final String accountId;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final message = ref.watch(
-      messageProvider((messageId: messageId, accountId: accountId)),
-    );
+  ConsumerState<MessagePage> createState() => _MessagePageState();
+}
+
+class _MessagePageState extends ConsumerState<MessagePage> {
+  // Local overrides until the server confirms; null means "as loaded".
+  bool? _seen;
+  bool? _flagged;
+  bool _autoMarked = false;
+
+  String get messageId => widget.messageId;
+  String get accountId => widget.accountId;
+
+  // Last server-confirmed values (null = as loaded); failures roll back to these.
+  bool? _confirmedSeen;
+  bool? _confirmedFlagged;
+
+  // Bumped per request so a failure only rolls back when no newer request for the field is pending.
+  int _seenVersion = 0;
+  int _flaggedVersion = 0;
+
+  // Requests run one at a time so the server applies them in tap order.
+  Future<void> _queue = Future.value();
+
+  Future<void> _setFlags({bool? seen, bool? flagged}) async {
+    final id = accountId;
+    // The container outlives this widget, so invalidation still works after dispose.
+    final container = ProviderScope.containerOf(context, listen: false);
+    final seenVersion = seen != null ? ++_seenVersion : _seenVersion;
+    final flaggedVersion =
+        flagged != null ? ++_flaggedVersion : _flaggedVersion;
+    setState(() {
+      if (seen != null) _seen = seen;
+      if (flagged != null) _flagged = flagged;
+    });
+    try {
+      final run = _queue.then(
+        (_) => container.read(mailApiClientProvider).setMessageFlags(
+              accountId: id,
+              messageId: messageId,
+              seen: seen,
+              flagged: flagged,
+            ),
+      );
+      _queue = run.catchError((_) {});
+      await run;
+      if (seen != null) _confirmedSeen = seen;
+      if (flagged != null) _confirmedFlagged = flagged;
+      container.invalidate(accountMessagesProvider(id));
+      container.invalidate(
+        messageProvider((messageId: messageId, accountId: id)),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        if (seen != null && seenVersion == _seenVersion) _seen = _confirmedSeen;
+        if (flagged != null && flaggedVersion == _flaggedVersion) {
+          _flagged = _confirmedFlagged;
+        }
+      });
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        SnackBar(content: Text(ref.read(appStringsProvider).flagUpdateFailed)),
+      );
+    }
+  }
+
+  // Opening a message marks it read, matching other mail apps.
+  void _markReadOnOpen(AsyncValue<MessageDetail> value) {
+    final item = value.valueOrNull;
+    if (item == null || _autoMarked) return;
+    _autoMarked = true;
+    if (!item.seen) _setFlags(seen: true);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final request = (messageId: messageId, accountId: accountId);
+    final message = ref.watch(messageProvider(request));
+    final detail = message.valueOrNull;
+    if (!_autoMarked && detail != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _markReadOnOpen(message);
+      });
+    }
+    final seen = _seen ?? detail?.seen ?? false;
+    final flagged = _flagged ?? detail?.flagged ?? false;
     final strings = ref.watch(appStringsProvider);
     final mailboxPath = '/accounts/$accountId/mail';
 
@@ -52,6 +134,25 @@ class MessagePage extends ConsumerWidget {
           ),
           title: Text(strings.message),
           actions: [
+            if (detail != null) ...[
+              IconButton(
+                tooltip: flagged ? strings.removeStar : strings.addStar,
+                onPressed: () => _setFlags(flagged: !flagged),
+                icon: Icon(
+                  flagged ? Icons.star : Icons.star_border,
+                  color: flagged ? Colors.amber : null,
+                ),
+              ),
+              IconButton(
+                tooltip: seen ? strings.markUnread : strings.markRead,
+                onPressed: () => _setFlags(seen: !seen),
+                icon: Icon(
+                  seen
+                      ? Icons.mark_email_unread_outlined
+                      : Icons.drafts_outlined,
+                ),
+              ),
+            ],
             if (message.value case final item?) ...[
               IconButton(
                 tooltip: strings.reply,
@@ -89,9 +190,8 @@ class MessagePage extends ConsumerWidget {
               ],
             ),
             loading: () => const Center(child: CircularProgressIndicator()),
-            error: (error, stackTrace) => Center(
-              child: Text(strings.messageLoadFailedTitle),
-            ),
+            error: (error, stackTrace) =>
+                Center(child: Text(strings.messageLoadFailedTitle)),
           ),
         ),
       ],

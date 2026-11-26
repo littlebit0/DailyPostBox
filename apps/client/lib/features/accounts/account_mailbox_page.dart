@@ -182,7 +182,16 @@ class _MailboxContentState extends ConsumerState<_MailboxContent> {
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
           ),
-          trailing: Text(message.receivedAtLabel),
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (message.flagged) ...[
+                const Icon(Icons.star, size: 18, color: Colors.amber),
+                const SizedBox(width: 6),
+              ],
+              Text(message.receivedAtLabel),
+            ],
+          ),
           onTap: () => context.go(
             '/accounts/${account.id}/messages/${Uri.encodeComponent(message.id)}',
             extra: const {'disableTransition': true},

@@ -66,6 +66,15 @@ await registerRoutes(app, {
       message.providerMessageId
     );
   },
+  setMessageFlags: async (account, message, change) => {
+    if (account.incomingProtocol !== "imap") {
+      throw Object.assign(
+        new Error("Flag sync is only supported for IMAP accounts."),
+        { statusCode: 501 }
+      );
+    }
+    await imap.setFlags(account, message.mailbox, message.providerMessageId, change);
+  },
   downloadAttachment: async (account, message, part) => {
     const receiver = account.incomingProtocol === "imap" ? imap : pop3;
     return receiver.downloadAttachment(

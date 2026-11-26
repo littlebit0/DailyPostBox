@@ -96,6 +96,21 @@ class MailApiClient {
     return MessageDetail.fromJson(response.data ?? {});
   }
 
+  Future<void> setMessageFlags({
+    required String accountId,
+    required String messageId,
+    bool? seen,
+    bool? flagged,
+  }) async {
+    await _dio.post(
+      '/accounts/$accountId/messages/${Uri.encodeComponent(messageId)}/flags',
+      data: {
+        if (seen != null) 'seen': seen,
+        if (flagged != null) 'flagged': flagged,
+      },
+    );
+  }
+
   Future<void> downloadAttachment({
     required String accountId,
     required String messageId,
@@ -302,6 +317,7 @@ class MailSummary {
     required this.snippet,
     required this.receivedAtLabel,
     required this.unread,
+    this.flagged = false,
   });
 
   final String id;
@@ -310,6 +326,7 @@ class MailSummary {
   final String snippet;
   final String receivedAtLabel;
   final bool unread;
+  final bool flagged;
 
   factory MailSummary.fromJson(Map<String, dynamic> json) {
     return MailSummary(
@@ -318,7 +335,8 @@ class MailSummary {
       subject: json['subject'] as String? ?? '',
       snippet: json['snippet'] as String? ?? '',
       receivedAtLabel: _formatReceivedAt(json['receivedAt'] as String?),
-      unread: true,
+      unread: !(json['seen'] as bool? ?? false),
+      flagged: json['flagged'] as bool? ?? false,
     );
   }
 }
@@ -331,6 +349,8 @@ class MessageDetail {
     required this.body,
     required this.links,
     required this.receivedAtLabel,
+    this.seen = false,
+    this.flagged = false,
     this.attachments = const [],
     this.receivedAt,
     this.accountId,
@@ -341,6 +361,8 @@ class MessageDetail {
     this.replyAllCc = const [],
   });
 
+  final bool seen;
+  final bool flagged;
   final String? accountId;
   final String? messageId;
   final List<String> references;
@@ -367,6 +389,8 @@ class MessageDetail {
           .map(MessageLink.fromJson)
           .toList(growable: false),
       receivedAtLabel: _formatReceivedAt(json['receivedAt'] as String?),
+      seen: json['seen'] as bool? ?? false,
+      flagged: json['flagged'] as bool? ?? false,
       attachments: (json['attachments'] as List<dynamic>? ?? const [])
           .whereType<Map<String, dynamic>>()
           .map(MessageAttachment.fromJson)

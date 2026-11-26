@@ -5,10 +5,12 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
 import 'package:intl/date_symbol_data_local.dart';
 
 import 'package:daily_postbox/features/accounts/accounts_page.dart';
 import 'package:daily_postbox/features/message/linked_message_body.dart';
+import 'package:daily_postbox/features/message/message_page.dart';
 import 'package:daily_postbox/core/i18n/language_controller.dart';
 import 'package:daily_postbox/features/message/reply_draft.dart';
 import 'package:daily_postbox/main.dart';
@@ -115,8 +117,9 @@ void main() {
     expect(find.text('계정관리'), findsWidgets);
   });
 
-  testWidgets('shows a friendly server connection error',
-      (WidgetTester tester) async {
+  testWidgets('shows a friendly server connection error', (
+    WidgetTester tester,
+  ) async {
     final error = DioException.connectionError(
       requestOptions: RequestOptions(path: '/accounts'),
       reason: 'Failed host lookup',
@@ -139,8 +142,9 @@ void main() {
     expect(find.textContaining('DioException'), findsNothing);
   });
 
-  testWidgets('opens a connected account mailbox from the sidebar',
-      (WidgetTester tester) async {
+  testWidgets('opens a connected account mailbox from the sidebar', (
+    WidgetTester tester,
+  ) async {
     const account = MailAccountSummary(
       id: 'account-1',
       providerId: 'gmail',
@@ -320,8 +324,9 @@ void main() {
         overrides: [
           accountsProvider.overrideWith((ref) async => const [account]),
           providersProvider.overrideWith((ref) async => const []),
-          accountMessagesProvider
-              .overrideWith((ref, accountId) async => const []),
+          accountMessagesProvider.overrideWith(
+            (ref, accountId) async => const [],
+          ),
         ],
         child: const DailyPostBoxApp(),
       ),
@@ -339,8 +344,9 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
-  testWidgets('keeps the syncing mailbox when an account refresh fails',
-      (WidgetTester tester) async {
+  testWidgets('keeps the syncing mailbox when an account refresh fails', (
+    WidgetTester tester,
+  ) async {
     const account = MailAccountSummary(
       id: 'syncing-account',
       providerId: 'naver',
@@ -365,8 +371,9 @@ void main() {
             return const [account];
           }),
           providersProvider.overrideWith((ref) async => const []),
-          accountMessagesProvider
-              .overrideWith((ref, accountId) async => const []),
+          accountMessagesProvider.overrideWith(
+            (ref, accountId) async => const [],
+          ),
         ],
         child: const DailyPostBoxApp(),
       ),
@@ -385,8 +392,9 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
-  testWidgets('reloads mail once more when account sync finishes',
-      (WidgetTester tester) async {
+  testWidgets('reloads mail once more when account sync finishes', (
+    WidgetTester tester,
+  ) async {
     const syncing = MailAccountSummary(
       id: 'syncing-account',
       providerId: 'naver',
@@ -450,8 +458,9 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
-  testWidgets('explains an authentication failure in the mailbox',
-      (WidgetTester tester) async {
+  testWidgets('explains an authentication failure in the mailbox', (
+    WidgetTester tester,
+  ) async {
     const account = MailAccountSummary(
       id: 'auth-failed-account',
       providerId: 'naver',
@@ -472,8 +481,9 @@ void main() {
         overrides: [
           accountsProvider.overrideWith((ref) async => const [account]),
           providersProvider.overrideWith((ref) async => const []),
-          accountMessagesProvider
-              .overrideWith((ref, accountId) async => const []),
+          accountMessagesProvider.overrideWith(
+            (ref, accountId) async => const [],
+          ),
         ],
         child: const DailyPostBoxApp(),
       ),
@@ -483,16 +493,14 @@ void main() {
     await tester.tap(find.text(account.emailAddress).first);
     await tester.pumpAndSettle();
 
-    expect(
-      find.textContaining('로그인 정보가 만료됐거나 올바르지 않아'),
-      findsOneWidget,
-    );
+    expect(find.textContaining('로그인 정보가 만료됐거나 올바르지 않아'), findsOneWidget);
     expect(find.text('Command failed'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('reconnects an app password account from the mailbox banner',
-      (WidgetTester tester) async {
+  testWidgets('reconnects an app password account from the mailbox banner', (
+    WidgetTester tester,
+  ) async {
     const account = MailAccountSummary(
       id: 'auth-failed-account',
       providerId: 'naver',
@@ -545,8 +553,9 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('keeps account management readable at the default window size',
-      (WidgetTester tester) async {
+  testWidgets('keeps account management readable at the default window size', (
+    WidgetTester tester,
+  ) async {
     const accounts = [
       MailAccountSummary(
         id: 'account-1',
@@ -599,8 +608,9 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('guides Naver setup through an application password',
-      (WidgetTester tester) async {
+  testWidgets('guides Naver setup through an application password', (
+    WidgetTester tester,
+  ) async {
     const providers = [
       MailProviderSummary(
         id: 'naver',
@@ -675,7 +685,9 @@ void main() {
     expect(segments.map((item) => item.text).join(), '설정을 완료하려면 시작하기');
     expect(segments.where((item) => item.uri != null).single.text, '시작하기');
     expect(
-        segments.where((item) => item.uri != null).single.uri.toString(), url);
+      segments.where((item) => item.uri != null).single.uri.toString(),
+      url,
+    );
   });
 
   test('uses a domain label for a bare URL and preserves punctuation', () {
@@ -685,12 +697,15 @@ void main() {
     );
 
     expect(segments.map((item) => item.text).join(), '문서: docs.example.com.');
-    expect(segments.where((item) => item.uri != null).single.text,
-        'docs.example.com');
+    expect(
+      segments.where((item) => item.uri != null).single.text,
+      'docs.example.com',
+    );
   });
 
-  testWidgets('opens a rendered mail link with the external launcher',
-      (WidgetTester tester) async {
+  testWidgets('opens a rendered mail link with the external launcher', (
+    WidgetTester tester,
+  ) async {
     const url = 'https://example.com/account/setup';
     Uri? openedUri;
 
@@ -813,6 +828,7 @@ void main() {
       'outgoing': {'host': 'smtp.example.com', 'port': 587, 'secure': false},
     });
   });
+
   testWidgets('shows mail that arrives after sync without a manual refresh',
       (WidgetTester tester) async {
     const idle = MailAccountSummary(
@@ -863,6 +879,169 @@ void main() {
     expect(find.text('Arrived by IDLE'), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
   });
+
+  group('message flag updates', () {
+    Future<_FlagApi> pumpMessage(WidgetTester tester, _FlagApi api) async {
+      final router = GoRouter(
+        initialLocation: '/m',
+        routes: [
+          GoRoute(
+            path: '/m',
+            builder: (context, state) =>
+                const MessagePage(messageId: 'm1', accountId: 'a1'),
+          ),
+          GoRoute(
+              path: '/other', builder: (context, state) => const SizedBox()),
+        ],
+      );
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            mailApiClientProvider.overrideWithValue(api),
+            accountsProvider.overrideWith((ref) async => const []),
+            providersProvider.overrideWith((ref) async => const []),
+          ],
+          child: MaterialApp.router(routerConfig: router),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+      return api;
+    }
+
+    testWidgets('failed older request does not undo newer star', (
+      tester,
+    ) async {
+      final api = await pumpMessage(tester, _FlagApi());
+      expect(api.calls, hasLength(1)); // auto mark-read, pending
+      await tester.tap(find.byIcon(Icons.star_border));
+      await tester.pump();
+      expect(find.byIcon(Icons.star), findsOneWidget);
+      expect(api.calls, hasLength(1)); // second request waits for the first
+      api.calls[0].completeError(Exception('x'));
+      await tester.pump();
+      await tester.pump();
+      expect(api.calls, hasLength(2));
+      api.calls[1].complete();
+      await tester.pump();
+      await tester.pump();
+      expect(find.byIcon(Icons.star), findsOneWidget);
+    });
+
+    testWidgets('consecutive failures restore the confirmed state', (
+      tester,
+    ) async {
+      final api = await pumpMessage(tester, _FlagApi());
+      api.calls[0].complete();
+      await tester.pump();
+      await tester.pump();
+      await tester.tap(find.byIcon(Icons.star_border));
+      await tester.pump();
+      await tester.tap(find.byIcon(Icons.star));
+      await tester.pump();
+      api.calls[1].completeError(Exception('x'));
+      await tester.pump();
+      await tester.pump();
+      api.calls[2].completeError(Exception('x'));
+      await tester.pump();
+      await tester.pump();
+      expect(find.byIcon(Icons.star_border), findsOneWidget);
+      expect(find.byIcon(Icons.star), findsNothing);
+    });
+
+    testWidgets('failure after confirmed star restores starred', (
+      tester,
+    ) async {
+      final api = await pumpMessage(tester, _FlagApi());
+      api.calls[0].complete();
+      await tester.pump();
+      await tester.pump();
+      await tester.tap(find.byIcon(Icons.star_border));
+      await tester.pump();
+      await tester.tap(find.byIcon(Icons.star));
+      await tester.pump();
+      api.calls[1].complete();
+      await tester.pump();
+      await tester.pump();
+      api.calls[2].completeError(Exception('x'));
+      await tester.pump();
+      await tester.pump();
+      expect(find.byIcon(Icons.star), findsOneWidget);
+    });
+
+    testWidgets('same-flag requests are sent in order', (tester) async {
+      final api = await pumpMessage(tester, _FlagApi());
+      api.calls[0].complete();
+      await tester.pump();
+      await tester.pump();
+      await tester.tap(find.byIcon(Icons.star_border));
+      await tester.pump();
+      await tester.tap(find.byIcon(Icons.star));
+      await tester.pump();
+      expect(api.sent, [true]); // unstar not sent until star finishes
+      api.calls[1].complete();
+      await tester.pump();
+      await tester.pump();
+      expect(api.sent, [true, false]);
+    });
+
+    testWidgets('success after leaving page refreshes cached detail', (
+      tester,
+    ) async {
+      final api = await pumpMessage(tester, _FlagApi());
+      final fetchesBefore = api.fetches;
+      final router = GoRouter.of(tester.element(find.byType(MessagePage)));
+      router.go('/other');
+      await tester.pump();
+      await tester.pump();
+      api.calls[0].complete();
+      await tester.pump();
+      await tester.pump();
+      // Cache is only dropped; it refetches when the detail page reopens.
+      router.go('/m');
+      await tester.pump();
+      await tester.pump();
+      expect(api.fetches, greaterThan(fetchesBefore));
+      expect(tester.takeException(), isNull);
+    });
+  });
+}
+
+class _FlagApi extends MailApiClient {
+  _FlagApi() : super(baseUrl: 'http://127.0.0.1:1');
+
+  final calls = <Completer<void>>[];
+  var fetches = 0;
+  final sent = <bool>[]; // flagged values in send order
+
+  @override
+  Future<MessageDetail> fetchAccountMessage({
+    required String accountId,
+    required String messageId,
+  }) async {
+    fetches++;
+    return const MessageDetail(
+      id: 'm1',
+      sender: 's',
+      subject: 'sub',
+      body: 'b',
+      links: [],
+      receivedAtLabel: 'now',
+    );
+  }
+
+  @override
+  Future<void> setMessageFlags({
+    required String accountId,
+    required String messageId,
+    bool? seen,
+    bool? flagged,
+  }) {
+    final c = Completer<void>();
+    calls.add(c);
+    if (flagged != null) sent.add(flagged);
+    return c.future;
+  }
 }
 
 class _SearchApi extends MailApiClient {

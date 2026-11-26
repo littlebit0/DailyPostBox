@@ -13,6 +13,7 @@ import type {
   IncomingMessageLink,
   IncomingMessageSummary,
   MailAccount,
+  MessageFlagChange,
   MessageThreadHeaders
 } from "../domain/types.js";
 import { getProvider } from "../providers/providerRegistry.js";
@@ -265,6 +266,26 @@ export class ImapReceiver implements MailReceiver {
     }
   }
 
+  async setFlags(
+    account: MailAccount,
+    mailbox: string,
+    providerMessageId: string,
+    change: MessageFlagChange
+  ): Promise<void> {
+    await this.withConnectedClient(account, async (client) => {
+      await client.mailboxOpen(mailbox);
+      const options = { uid: true };
+      for (const [flag, value] of [
+        ["\\Seen", change.seen],
+        ["\\Flagged", change.flagged]
+      ] as const) {
+        if (value === undefined) continue;
+        const apply = value ? client.messageFlagsAdd : client.messageFlagsRemove;
+        await apply.call(client, providerMessageId, [flag], options);
+      }
+    });
+  }
+
   async downloadAttachment(
     account: MailAccount,
     mailbox: string,
@@ -500,7 +521,9 @@ function toIncomingMessage(
     subject: envelope.subject ?? "",
     receivedAt: envelope.date instanceof Date ? envelope.date : new Date(),
     arrivedAt: message.internalDate instanceof Date ? message.internalDate : undefined,
-    hasAttachments: false
+    hasAttachments: false,
+    seen: message.flags?.has("\\Seen") ?? false,
+    flagged: message.flags?.has("\\Flagged") ?? false
   };
 }
 

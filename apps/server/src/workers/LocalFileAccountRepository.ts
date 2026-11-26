@@ -1,6 +1,6 @@
 import { dirname } from "node:path";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import type { IncomingMessageSummary, MailAccount } from "../domain/types.js";
+import type { IncomingMessageSummary, MailAccount, MessageFlagChange } from "../domain/types.js";
 import type { PushTarget } from "../notifications/PushNotifier.js";
 import type { AccountRepository } from "./AccountRepository.js";
 
@@ -127,6 +127,19 @@ export class LocalFileAccountRepository implements AccountRepository {
     this.messages.set(key, message);
     await this.persist();
     return isNew;
+  }
+
+  async updateMessageFlags(
+    accountId: string,
+    providerMessageId: string,
+    change: MessageFlagChange
+  ): Promise<void> {
+    await this.ensureLoaded();
+    const key = `${accountId}:${providerMessageId}`;
+    const message = this.messages.get(key);
+    if (!message) return;
+    this.messages.set(key, { ...message, ...change });
+    await this.persist();
   }
 
   private async ensureLoaded(): Promise<void> {
