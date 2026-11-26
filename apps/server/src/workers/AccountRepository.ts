@@ -13,6 +13,7 @@ export interface AccountRepository {
   deletePushTarget(target: PushTarget): Promise<void>;
   listInbox(userId: string): Promise<IncomingMessageSummary[]>;
   saveIncomingMessage(message: IncomingMessageSummary): Promise<boolean>;
+  deleteMessages(accountId: string): Promise<void>;
 }
 
 export class InMemoryAccountRepository implements AccountRepository {
@@ -85,6 +86,12 @@ export class InMemoryAccountRepository implements AccountRepository {
     return [...this.messages.values()]
       .filter((message) => accountIds.has(message.accountId))
       .sort((a, b) => b.receivedAt.getTime() - a.receivedAt.getTime());
+  }
+
+  async deleteMessages(accountId: string): Promise<void> {
+    for (const [key, message] of this.messages) {
+      if (message.accountId === accountId) this.messages.delete(key);
+    }
   }
 
   async saveIncomingMessage(message: IncomingMessageSummary): Promise<boolean> {
