@@ -50,3 +50,26 @@ test("resumes the watcher after a passing validation", async () => {
   // An earlier failed check may have cleared the code; still resume.
   assert.deepEqual(await validate(undefined), { status: 200, starts: 1 });
 });
+
+test("deleting an unknown account answers 404 without touching sync", async () => {
+  const accounts = new InMemoryAccountRepository();
+  let stops = 0;
+  const app = Fastify();
+  await registerRoutes(app, {
+    accounts,
+    sender: {} as never,
+    validateAccount: async () => undefined,
+    fetchMessageContent: async () => {
+      throw new Error("unused");
+    },
+    startAccountSync: async () => undefined,
+    resumeAccountSync: async () => undefined,
+    stopAccountSync: async () => {
+      stops += 1;
+    }
+  });
+
+  const response = await app.inject({ method: "DELETE", url: "/accounts/missing" });
+  assert.equal(response.statusCode, 404);
+  assert.equal(stops, 0);
+});

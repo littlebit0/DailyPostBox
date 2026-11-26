@@ -178,6 +178,10 @@ export async function registerRoutes(
 
   app.delete("/accounts/:id", async (request, reply) => {
     const params = z.object({ id: z.string() }).parse(request.params);
+    const account = await deps.accounts.getAccount(params.id);
+    if (!account || account.userId !== demoUserId) {
+      return reply.code(404).send({ error: "Account not found" });
+    }
     await deps.stopAccountSync(params.id);
     await deps.accounts.deleteAccount(params.id);
     return reply.code(204).send();
