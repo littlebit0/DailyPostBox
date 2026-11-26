@@ -566,6 +566,39 @@ void main() {
       Rect.fromLTRB(0, 24, 36, 44),
     ]);
   });
+
+  testWidgets('does not offer the unimplemented POP3 protocol',
+      (WidgetTester tester) async {
+    const daum = MailProviderSummary(
+      id: 'daum',
+      displayName: 'Daum / Kakao Mail',
+      authModes: ['password', 'app-password'],
+      defaultProtocol: 'imap',
+      supportsOAuth: false,
+    );
+    tester.view.physicalSize = const Size(1400, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          accountsProvider.overrideWith((ref) async => const []),
+          providersProvider.overrideWith((ref) async => const [daum]),
+        ],
+        child: const DailyPostBoxApp(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('계정 추가').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Daum / Kakao Mail'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(TextField), findsWidgets);
+    expect(find.text('POP3'), findsNothing);
+  });
 }
 
 class _SearchApi extends MailApiClient {
