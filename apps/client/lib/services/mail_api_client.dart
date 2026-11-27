@@ -515,6 +515,7 @@ class MessageDetail {
     required this.body,
     required this.links,
     required this.receivedAtLabel,
+    this.authenticationFailures = const [],
     this.unsubscribeUrl,
     this.unsubscribeMailto,
     this.html = '',
@@ -546,6 +547,7 @@ class MessageDetail {
   final String html;
   final int remoteImageCount;
   final List<MessageLink> links;
+  final List<String> authenticationFailures;
   final String receivedAtLabel;
   final String? unsubscribeUrl;
   final String? unsubscribeMailto;
@@ -573,6 +575,10 @@ class MessageDetail {
           .map(MessageLink.fromJson)
           .toList(growable: false),
       receivedAtLabel: _formatReceivedAt(json['receivedAt'] as String?),
+      authenticationFailures:
+          (json['authenticationFailures'] as List<dynamic>? ?? const [])
+              .whereType<String>()
+              .toList(growable: false),
       seen: json['seen'] as bool? ?? false,
       flagged: json['flagged'] as bool? ?? false,
       attachments: (json['attachments'] as List<dynamic>? ?? const [])

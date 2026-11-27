@@ -5,6 +5,7 @@ import type {
   SearchObject
 } from "imapflow";
 import { simpleParser } from "mailparser";
+import { parseAuthenticationFailures } from "./authenticationResults.js";
 import type { OAuthTokenManager } from "../auth/OAuthTokenManager.js";
 import type {
   AttachmentDownload,
@@ -227,7 +228,12 @@ export class ImapReceiver implements MailReceiver {
         {
           bodyStructure: true,
           envelope: true,
-          headers: ["references", "list-unsubscribe", "list-unsubscribe-post"]
+          headers: [
+            "references",
+            "list-unsubscribe",
+            "list-unsubscribe-post",
+            "authentication-results"
+          ]
         },
         { uid: true }
       );
@@ -235,6 +241,10 @@ export class ImapReceiver implements MailReceiver {
         throw new Error("Message body was not found on the IMAP server.");
       }
       const unsubscribe = unsubscribeFromHeaders(message.headers);
+      const authenticationFailures = parseAuthenticationFailures(
+        message.headers?.toString("utf8") ?? "",
+        account.providerId
+      );
 
       const attachments = extractAttachments(message.bodyStructure);
       const thread = toThreadHeaders(message);
@@ -266,7 +276,8 @@ export class ImapReceiver implements MailReceiver {
               html: rawHtml,
               attachments,
               thread,
-              unsubscribe
+              unsubscribe,
+              authenticationFailures
             };
           }
           continue;
@@ -300,7 +311,8 @@ export class ImapReceiver implements MailReceiver {
             links: htmlLinks,
             html: rawHtml,
             attachments,
-            thread
+            thread,
+            authenticationFailures
           };
         }
       }
@@ -317,10 +329,19 @@ export class ImapReceiver implements MailReceiver {
           html: rawHtml,
           attachments,
           thread,
-          unsubscribe
+          unsubscribe,
+          authenticationFailures
         };
       }
-      return { text: "", truncated: false, links: [], attachments, thread, unsubscribe };
+      return {
+        text: "",
+        truncated: false,
+        links: [],
+        attachments,
+        thread,
+        unsubscribe,
+        authenticationFailures
+      };
     } finally {
       await client.logout().catch(() => undefined);
     }

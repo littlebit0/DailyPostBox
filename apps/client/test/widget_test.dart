@@ -1536,6 +1536,15 @@ void main() {
     ]);
   });
 
+  test('parses authentication failures from message detail', () {
+    final detail = MessageDetail.fromJson({
+      'id': '1',
+      'authenticationFailures': ['dmarc', 'spf'],
+    });
+    expect(detail.authenticationFailures, ['dmarc', 'spf']);
+    expect(MessageDetail.fromJson({'id': '2'}).authenticationFailures, isEmpty);
+  });
+
   testWidgets('shows unsubscribe only for messages with the header', (
     WidgetTester tester,
   ) async {

@@ -122,10 +122,13 @@ export interface MessageFlagChange {
   flagged?: boolean;
 }
 
+export type AuthenticationFailure = "dmarc" | "spf" | "dkim";
+
 export interface IncomingMessageContent {
   text: string;
   truncated: boolean;
   links: IncomingMessageLink[];
+  authenticationFailures?: AuthenticationFailure[];
   unsubscribe?: ListUnsubscribe | null;
   /** Raw HTML alternative. Must go through sanitizeHtml before leaving the server. */
   html?: string;
