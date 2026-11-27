@@ -7,6 +7,7 @@ import '../../core/i18n/language_controller.dart';
 import '../../services/browser_launcher.dart';
 import '../../services/mail_api_client.dart';
 import '../../widgets/app_shell.dart';
+import '../message/compose_page.dart' show composeAccountsProvider;
 import 'account_providers.dart';
 
 export 'account_providers.dart' show accountsProvider, accountMessagesProvider;
@@ -448,12 +449,32 @@ class _AccountDetail extends ConsumerWidget {
           ],
         ),
         const SizedBox(height: 16),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: Text(strings.accountNotifications),
+          value: account.notificationsEnabled,
+          onChanged: (enabled) async {
+            await ref
+                .read(mailApiClientProvider)
+                .setAccountNotifications(account.id, enabled);
+            ref.invalidate(accountsProvider);
+          },
+        ),
         _InfoRow(
           label: strings.lastSynced,
           value: account.lastSyncedAtLabel.isEmpty
               ? strings.neverSynced
               : account.lastSyncedAtLabel,
         ),
+        if (account.incomingProtocol == 'imap') ...[
+          const SizedBox(height: 8),
+          _InfoRow(
+            label: strings.receiveMode,
+            value: _receiveModeLabel(account, strings),
+          ),
+        ],
+        const SizedBox(height: 24),
+        _SignatureEditor(key: ValueKey(account.id), account: account),
         if (account.syncError != null) ...[
           const SizedBox(height: 12),
           Text(
@@ -464,6 +485,95 @@ class _AccountDetail extends ConsumerWidget {
       ],
     );
   }
+}
+
+/// Saves a signature and refreshes caches; lives in the provider scope so it
+/// completes even if the editor widget is disposed mid-request.
+final _saveSignatureProvider = Provider<
+    Future<void> Function(String accountId, String signature)>((ref) {
+  return (accountId, signature) async {
+    await ref.read(mailApiClientProvider).updateAccountSignature(
+          accountId: accountId,
+          signature: signature,
+        );
+    ref.invalidate(accountsProvider);
+    ref.invalidate(composeAccountsProvider);
+  };
+}, name: 'saveSignature');
+
+class _SignatureEditor extends ConsumerStatefulWidget {
+  const _SignatureEditor({super.key, required this.account});
+
+  final MailAccountSummary account;
+
+  @override
+  ConsumerState<_SignatureEditor> createState() => _SignatureEditorState();
+}
+
+class _SignatureEditorState extends ConsumerState<_SignatureEditor> {
+  late final _controller = TextEditingController(text: widget.account.signature);
+  bool _saving = false;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    final strings = ref.read(appStringsProvider);
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    final save = ref.read(_saveSignatureProvider);
+    setState(() => _saving = true);
+    try {
+      await save(widget.account.id, _controller.text);
+      if (!mounted) return;
+      messenger?.showSnackBar(SnackBar(content: Text(strings.signatureSaved)));
+    } catch (error) {
+      if (!mounted) return;
+      messenger?.showSnackBar(
+        SnackBar(content: Text(friendlyError(error, strings))),
+      );
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final strings = ref.watch(appStringsProvider);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        TextField(
+          controller: _controller,
+          minLines: 3,
+          maxLines: 8,
+          maxLength: 2000,
+          decoration: InputDecoration(
+            labelText: strings.signature,
+            helperText: strings.signatureHint,
+            border: const OutlineInputBorder(),
+          ),
+        ),
+        const SizedBox(height: 8),
+        FilledButton(
+          onPressed: _saving ? null : _save,
+          child: Text(strings.save),
+        ),
+      ],
+    );
+  }
+}
+
+String _receiveModeLabel(MailAccountSummary account, AppStrings strings) {
+  final idle = account.idleSupported;
+  if (idle == null) return strings.receiveUnknown;
+  final mode = idle ? strings.receiveRealtime : strings.receivePolling;
+  final checked = account.capabilitiesCheckedAtLabel;
+  return checked.isEmpty
+      ? mode
+      : '$mode · ${strings.capabilitiesChecked} $checked';
 }
 
 class _InfoRow extends StatelessWidget {
@@ -949,6 +1059,12 @@ class _AddAccountDialog extends ConsumerStatefulWidget {
 class _AddAccountDialogState extends ConsumerState<_AddAccountDialog> {
   final _emailController = TextEditingController();
   final _secretController = TextEditingController();
+  final _incomingHostController = TextEditingController();
+  final _incomingPortController = TextEditingController(text: '993');
+  final _outgoingHostController = TextEditingController();
+  final _outgoingPortController = TextEditingController(text: '465');
+  bool _incomingSecure = true;
+  bool _outgoingSecure = true;
   late String _providerId;
   late String _authMode;
   late String _protocol;
@@ -958,6 +1074,7 @@ class _AddAccountDialogState extends ConsumerState<_AddAccountDialog> {
   String? _error;
 
   bool get _isNaver => _providerId == 'naver';
+  bool get _isCustom => _providerId == 'custom';
 
   @override
   void initState() {
@@ -972,7 +1089,83 @@ class _AddAccountDialogState extends ConsumerState<_AddAccountDialog> {
   void dispose() {
     _emailController.dispose();
     _secretController.dispose();
+    _incomingHostController.dispose();
+    _incomingPortController.dispose();
+    _outgoingHostController.dispose();
+    _outgoingPortController.dispose();
     super.dispose();
+  }
+
+  Widget _serverFields({
+    required String title,
+    required TextEditingController host,
+    required TextEditingController port,
+    required bool secure,
+    required ValueChanged<bool> onSecureChanged,
+  }) {
+    final strings = ref.watch(appStringsProvider);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const SizedBox(height: 16),
+        Text(title, style: Theme.of(context).textTheme.labelLarge),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Expanded(
+              flex: 3,
+              child: TextField(
+                controller: host,
+                enabled: !_busy,
+                keyboardType: TextInputType.url,
+                decoration: InputDecoration(labelText: strings.serverHost),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: TextField(
+                controller: port,
+                enabled: !_busy,
+                keyboardType: TextInputType.number,
+                decoration: InputDecoration(labelText: strings.serverPort),
+              ),
+            ),
+          ],
+        ),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: Text(strings.serverUsesSsl),
+          value: secure,
+          onChanged: _busy ? null : onSecureChanged,
+        ),
+      ],
+    );
+  }
+
+  /// Null when a custom account's server fields are incomplete or invalid.
+  ConnectionOverride? _customConnection() {
+    ServerEndpoint? endpoint(
+      TextEditingController host,
+      TextEditingController port,
+      bool secure,
+    ) {
+      final hostValue = host.text.trim();
+      final portValue = int.tryParse(port.text.trim());
+      if (hostValue.isEmpty ||
+          portValue == null ||
+          portValue < 1 ||
+          portValue > 65535) {
+        return null;
+      }
+      return ServerEndpoint(host: hostValue, port: portValue, secure: secure);
+    }
+
+    final incoming = endpoint(
+        _incomingHostController, _incomingPortController, _incomingSecure);
+    final outgoing = endpoint(
+        _outgoingHostController, _outgoingPortController, _outgoingSecure);
+    if (incoming == null || outgoing == null) return null;
+    return ConnectionOverride(incoming: incoming, outgoing: outgoing);
   }
 
   @override
@@ -1043,6 +1236,24 @@ class _AddAccountDialogState extends ConsumerState<_AddAccountDialog> {
                   helperText: _isNaver ? strings.naverAppPasswordHelper : null,
                 ),
               ),
+              if (_isCustom) ...[
+                _serverFields(
+                  title: strings.incomingServer,
+                  host: _incomingHostController,
+                  port: _incomingPortController,
+                  secure: _incomingSecure,
+                  onSecureChanged: (value) =>
+                      setState(() => _incomingSecure = value),
+                ),
+                _serverFields(
+                  title: strings.outgoingServer,
+                  host: _outgoingHostController,
+                  port: _outgoingPortController,
+                  secure: _outgoingSecure,
+                  onSecureChanged: (value) =>
+                      setState(() => _outgoingSecure = value),
+                ),
+              ],
               const SizedBox(height: 20),
               Text(
                 strings.importPreviousMail,
@@ -1123,6 +1334,11 @@ class _AddAccountDialogState extends ConsumerState<_AddAccountDialog> {
       });
       return;
     }
+    final connectionOverride = _isCustom ? _customConnection() : null;
+    if (_isCustom && connectionOverride == null) {
+      setState(() => _error = strings.customServerRequired);
+      return;
+    }
 
     setState(() {
       _busy = true;
@@ -1139,6 +1355,7 @@ class _AddAccountDialogState extends ConsumerState<_AddAccountDialog> {
         incomingProtocol: _protocol,
         secret: secret,
         initialSync: _initialSync,
+        connectionOverride: connectionOverride,
       );
 
       setState(() => _status = strings.checkingSync);
@@ -1150,6 +1367,7 @@ class _AddAccountDialogState extends ConsumerState<_AddAccountDialog> {
         incomingProtocol: _protocol,
         secret: secret,
         initialSync: _initialSync,
+        connectionOverride: connectionOverride,
       );
 
       ref.invalidate(accountsProvider);
