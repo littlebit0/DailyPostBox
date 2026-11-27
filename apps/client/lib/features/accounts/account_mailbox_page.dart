@@ -149,16 +149,6 @@ class _MailboxContentState extends ConsumerState<_MailboxContent> {
       _searchController.clear();
       _search = null;
     }
-    final wasSyncing = _busy(oldWidget.account);
-    if (oldWidget.account.id == widget.account.id &&
-        wasSyncing &&
-        !_isSyncing) {
-      // The last poll may have read messages before the final batch was
-      // saved, so fetch the list once more after sync finishes.
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) ref.invalidate(accountMessagesProvider(widget.account.id));
-      });
-    }
     if (oldWidget.account.id != widget.account.id ||
         _busy(oldWidget.account) != _isSyncing) {
       _configureRefreshTimer();

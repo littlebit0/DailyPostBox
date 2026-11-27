@@ -7,6 +7,7 @@ import 'core/app_menu_bar.dart';
 import 'core/app_router.dart';
 import 'core/app_theme.dart';
 import 'core/i18n/language_controller.dart';
+import 'services/badge_service.dart';
 import 'services/push_service.dart';
 
 Future<void> main() async {
@@ -36,6 +37,7 @@ class DailyPostBoxApp extends ConsumerWidget {
     final router = ref.watch(appRouterProvider);
     final language = ref.watch(languageControllerProvider);
     final strings = ref.watch(appStringsProvider);
+    ref.watch(badgeSyncProvider);
 
     return MaterialApp.router(
       title: strings.appTitle,
