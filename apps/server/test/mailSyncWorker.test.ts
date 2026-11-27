@@ -1,11 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { IncomingMessageSummary, MailAccount } from "../src/domain/types.js";
 import type { ImapReceiver } from "../src/mail/ImapReceiver.js";
 import type { Pop3Receiver } from "../src/mail/Pop3Receiver.js";
 import type { PushNotifier } from "../src/notifications/PushNotifier.js";
 import { authenticationFailure } from "../src/mail/authenticationFailure.js";
 import { InMemoryAccountRepository } from "../src/workers/AccountRepository.js";
+import { LocalFileAccountRepository } from "../src/workers/LocalFileAccountRepository.js";
 import { MailSyncWorker } from "../src/workers/MailSyncWorker.js";
 
 function account(): MailAccount {
@@ -24,7 +28,7 @@ function account(): MailAccount {
   };
 }
 
-function worker(repository: InMemoryAccountRepository, imap: object) {
+function worker(repository: InMemoryAccountRepository | LocalFileAccountRepository, imap: object) {
   return new MailSyncWorker(
     repository,
     imap as ImapReceiver,
@@ -34,7 +38,8 @@ function worker(repository: InMemoryAccountRepository, imap: object) {
       mailbox: "INBOX",
       pop3PollIntervalMs: 60_000,
       imapReconnectBaseDelayMs: 1,
-      imapReconnectMaxDelayMs: 1
+      imapReconnectMaxDelayMs: 1,
+      backfillYieldMs: 0
     }
   );
 }
@@ -215,6 +220,400 @@ test("a failing push does not disturb mail handling", async () => {
       hasAttachments: false
     });
     assert.equal((await repository.listInbox("demo-user")).length, 1);
+  } finally {
+    await syncWorker.stop();
+  }
+});
+
+test("backfills thread metadata for stored messages once, in bounded batches", async () => {
+  const repository = new InMemoryAccountRepository();
+  const mailAccount = account();
+  await repository.addAccount(mailAccount);
+  const stored = (uid: number): IncomingMessageSummary => ({
+    accountId: mailAccount.id,
+    providerMessageId: String(uid),
+    mailbox: "INBOX",
+    from: "a@example.com",
+    subject: "old",
+    receivedAt: new Date(uid * 1000),
+    hasAttachments: false
+  });
+  for (let uid = 1; uid <= 120; uid += 1) {
+    await repository.saveIncomingMessage(stored(uid));
+  }
+  const requests: number[][] = [];
+  const imap = {
+    fetchLatestBatches: async () => undefined,
+    fetchSummariesByUid: async (_a: MailAccount, _m: string, uids: number[]) => {
+      requests.push(uids);
+      // uid 1 is gone from the server; the rest carry a Message-ID.
+      return { uidValidity: "1", messages: uids.filter((uid) => uid !== 1).map((uid) => ({
+        ...stored(uid),
+        messageId: `<m${uid}@example.com>`,
+        references: ["<root@example.com>"],
+        seen: uid === 2
+      })) };
+    }
+  };
+  const syncWorker = worker(repository, imap);
+
+  await syncWorker.syncAccount(mailAccount);
+  await syncWorker.backfillSettled(mailAccount.id);
+  assert.deepEqual(requests.map((r) => r.length), [50, 50, 20]);
+  const inbox = await repository.listInbox(mailAccount.userId);
+  assert.equal(inbox.find((m) => m.providerMessageId === "2")?.messageId, "<m2@example.com>");
+  // A read flag set on the server during the backfill is not reverted.
+  assert.equal(inbox.find((m) => m.providerMessageId === "2")?.seen, true);
+  assert.deepEqual(inbox.find((m) => m.providerMessageId === "1")?.references, []);
+
+  await syncWorker.syncAccount(mailAccount);
+  await syncWorker.backfillSettled(mailAccount.id);
+  assert.equal(requests.length, 3);
+});
+
+test("backfill rejects a batch after the mailbox UIDVALIDITY changes", async () => {
+  const repository = new InMemoryAccountRepository();
+  const mailAccount = account();
+  await repository.addAccount(mailAccount);
+  for (let uid = 1; uid <= 100; uid += 1) {
+    await repository.saveIncomingMessage({
+      accountId: mailAccount.id, providerMessageId: String(uid), mailbox: "INBOX",
+      from: "a@example.com", subject: "old", receivedAt: new Date(uid), hasAttachments: false
+    });
+  }
+  let calls = 0;
+  const imap = {
+    fetchLatestBatches: async () => undefined,
+    fetchSummariesByUid: async (_a: MailAccount, _m: string, uids: number[]) => {
+      calls += 1;
+      // The second batch opens a recreated mailbox whose UIDs name other messages.
+      return { uidValidity: calls === 1 ? "1" : "2", messages: uids.map((uid) => ({
+        accountId: mailAccount.id, providerMessageId: String(uid), mailbox: "INBOX",
+        from: "a@example.com", subject: "other", receivedAt: new Date(uid),
+        hasAttachments: false, messageId: `<v${calls}-${uid}@example.com>`, references: []
+      })) };
+    }
+  };
+  const syncWorker = worker(repository, imap);
+  await syncWorker.syncAccount(mailAccount);
+  await syncWorker.backfillSettled(mailAccount.id);
+
+  const inbox = await repository.listInbox(mailAccount.userId);
+  assert.equal(calls, 2);
+  assert.equal(inbox.filter((m) => m.messageId?.startsWith("<v1-")).length, 50);
+  assert.ok(!inbox.some((m) => m.messageId?.startsWith("<v2-")), "headers from the new UIDVALIDITY must not be merged");
+  assert.equal(inbox.filter((m) => m.references === undefined).length, 50, "rejected batch must stay pending, not marked backfilled");
+  assert.equal((await repository.getAccount(mailAccount.id))?.threadBackfill, undefined);
+});
+
+test("backfill saves nothing once a sync records a new UIDVALIDITY", async () => {
+  const repository = new InMemoryAccountRepository();
+  const mailAccount = account();
+  await repository.addAccount(mailAccount);
+  for (let uid = 1; uid <= 10; uid += 1) {
+    await repository.saveIncomingMessage({
+      accountId: mailAccount.id, providerMessageId: String(uid), mailbox: "INBOX",
+      from: "a@example.com", subject: "old", receivedAt: new Date(uid), hasAttachments: false
+    });
+  }
+  const imap = {
+    fetchLatestBatches: async () => {
+      mailAccount.uidValidity = "1";
+      return undefined;
+    },
+    fetchSummariesByUid: async (_a: MailAccount, _m: string, uids: number[]) => {
+      // A concurrent sync saw a recreated mailbox and dropped the stored mail.
+      mailAccount.uidValidity = "2";
+      return { uidValidity: "1", messages: uids.map((uid) => ({
+        accountId: mailAccount.id, providerMessageId: String(uid), mailbox: "INBOX",
+        from: "a@example.com", subject: "old", receivedAt: new Date(uid),
+        hasAttachments: false, messageId: `<m${uid}@example.com>`, references: []
+      })) };
+    }
+  };
+  const syncWorker = worker(repository, imap);
+  await syncWorker.syncAccount(mailAccount);
+  await syncWorker.backfillSettled(mailAccount.id);
+
+  const inbox = await repository.listInbox(mailAccount.userId);
+  assert.ok(!inbox.some((m) => m.messageId !== undefined), "stale headers must not be saved");
+});
+
+test("backfill drains 4,000 stored messages across batches without refetching", async () => {
+  const repository = new InMemoryAccountRepository();
+  const mailAccount = account();
+  await repository.addAccount(mailAccount);
+  const total = 4000;
+  for (let uid = 1; uid <= total; uid += 1) {
+    await repository.saveIncomingMessage({
+      accountId: mailAccount.id,
+      providerMessageId: String(uid),
+      mailbox: "INBOX",
+      from: "a@example.com",
+      subject: "old",
+      receivedAt: new Date(uid * 1000),
+      hasAttachments: false
+    });
+  }
+  const seen: number[] = [];
+  const imap = {
+    fetchLatestBatches: async () => undefined,
+    fetchSummariesByUid: async (_a: MailAccount, _m: string, uids: number[]) => {
+      assert.ok(uids.length <= 50);
+      seen.push(...uids);
+      return { uidValidity: "1", messages: uids.map((uid) => ({
+        accountId: mailAccount.id,
+        providerMessageId: String(uid),
+        mailbox: "INBOX",
+        from: "a@example.com",
+        subject: "old",
+        receivedAt: new Date(uid * 1000),
+        hasAttachments: false,
+        messageId: `<m${uid}@example.com>`,
+        references: []
+      })) };
+    }
+  };
+  const syncWorker = worker(repository, imap);
+
+  await syncWorker.syncAccount(mailAccount);
+  await syncWorker.backfillSettled(mailAccount.id);
+  assert.equal(seen.length, total);
+  assert.equal(new Set(seen).size, total);
+  const inbox = await repository.listInbox(mailAccount.userId);
+  assert.ok(inbox.every((m) => m.references !== undefined));
+
+  await syncWorker.syncAccount(mailAccount);
+  await syncWorker.backfillSettled(mailAccount.id);
+  assert.equal(seen.length, total);
+});
+
+test("backfill stops when the account is removed", async () => {
+  const repository = new InMemoryAccountRepository();
+  const mailAccount = account();
+  await repository.addAccount(mailAccount);
+  for (let uid = 1; uid <= 200; uid += 1) {
+    await repository.saveIncomingMessage({
+      accountId: mailAccount.id,
+      providerMessageId: String(uid),
+      mailbox: "INBOX",
+      from: "a@example.com",
+      subject: "old",
+      receivedAt: new Date(uid * 1000),
+      hasAttachments: false
+    });
+  }
+  let calls = 0;
+  let syncWorker: MailSyncWorker;
+  const imap = {
+    fetchLatestBatches: async () => undefined,
+    fetchSummariesByUid: async () => {
+      calls += 1;
+      await syncWorker.stopAccount(mailAccount.id);
+      return { uidValidity: "1", messages: [] };
+    }
+  };
+  syncWorker = worker(repository, imap);
+  await syncWorker.syncAccount(mailAccount);
+  await syncWorker.backfillSettled(mailAccount.id);
+  assert.equal(calls, 1);
+});
+
+test("backfill persists each 50-message batch with bounded file writes", async () => {
+  const repository = new LocalFileAccountRepository(join(await mkdtemp(join(tmpdir(), "backfill-")), "state.json"));
+  const mailAccount = account();
+  await repository.addAccount(mailAccount);
+  const total = 200;
+  for (let uid = 1; uid <= total; uid += 1) {
+    await repository.saveIncomingMessage({
+      accountId: mailAccount.id,
+      providerMessageId: String(uid),
+      mailbox: "INBOX",
+      from: "a@example.com",
+      subject: "old",
+      receivedAt: new Date(uid * 1000),
+      hasAttachments: false
+    });
+  }
+  const imap = {
+    fetchLatestBatches: async () => undefined,
+    fetchSummariesByUid: async (_a: MailAccount, _m: string, uids: number[]) => ({
+      uidValidity: "1",
+      messages: uids.map((uid) => ({
+        accountId: mailAccount.id,
+        providerMessageId: String(uid),
+        mailbox: "INBOX",
+        from: "a@example.com",
+        subject: "old",
+        receivedAt: new Date(uid * 1000),
+        hasAttachments: false,
+        messageId: `<m${uid}@example.com>`,
+        references: []
+      }))
+    })
+  };
+  const internals = repository as unknown as { flush: () => Promise<void> };
+  const originalFlush = internals.flush.bind(repository);
+  let flushes = 0;
+  internals.flush = () => {
+    flushes += 1;
+    return originalFlush();
+  };
+
+  const syncWorker = worker(repository as unknown as InMemoryAccountRepository, imap);
+  await syncWorker.syncAccount(mailAccount);
+  await syncWorker.backfillSettled(mailAccount.id);
+
+  const inbox = await repository.listInbox(mailAccount.userId);
+  assert.ok(inbox.every((m) => m.messageId !== undefined));
+  // 4 batches of 50; per-message writes would be 200.
+  assert.ok(flushes <= 8, `expected bounded writes, got ${flushes}`);
+});
+
+test("stopAccount waits for the in-flight backfill batch save and nothing is written after", async () => {
+  const mailAccount = account();
+  const inner = new InMemoryAccountRepository();
+  await inner.addAccount(mailAccount);
+  for (let uid = 1; uid <= 3; uid += 1) {
+    await inner.saveIncomingMessage({
+      accountId: mailAccount.id, providerMessageId: String(uid), mailbox: "INBOX",
+      from: "a@example.com", subject: "old", receivedAt: new Date(uid), hasAttachments: false
+    });
+  }
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  let saveStarted!: () => void;
+  const started = new Promise<void>((resolve) => { saveStarted = resolve; });
+  let saves = 0;
+  const repository = Object.create(inner) as InMemoryAccountRepository;
+  repository.saveIncomingMessage = async (message) => {
+    if (message.messageId !== undefined) {
+      saves += 1;
+      saveStarted();
+      await gate;
+    }
+    return inner.saveIncomingMessage(message);
+  };
+  const imap = {
+    fetchLatestBatches: async () => undefined,
+    fetchSummariesByUid: async (_a: MailAccount, _m: string, uids: number[]) => ({
+      uidValidity: "1",
+      messages: uids.map((uid) => ({
+        accountId: mailAccount.id, providerMessageId: String(uid), mailbox: "INBOX",
+        from: "a@example.com", subject: "old", receivedAt: new Date(uid),
+        hasAttachments: false, messageId: `<m${uid}@example.com>`, references: []
+      }))
+    })
+  };
+  const syncWorker = worker(repository, imap);
+  await syncWorker.syncAccount(mailAccount);
+  await started;
+
+  let stopped = false;
+  const stopping = syncWorker.stopAccount(mailAccount.id).then(() => { stopped = true; });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(stopped, false, "stopAccount must wait for the pending save");
+  release();
+  await stopping;
+  await inner.deleteAccount(mailAccount.id);
+  await syncWorker.backfillSettled(mailAccount.id);
+  assert.equal(saves, 3);
+  assert.equal((await inner.listInbox(mailAccount.userId)).length, 0);
+});
+
+test("backfill exposes threadBackfill while running and clears it on completion", async () => {
+  const repository = new InMemoryAccountRepository();
+  const mailAccount = account();
+  await repository.addAccount(mailAccount);
+  await repository.saveIncomingMessage({
+    accountId: mailAccount.id, providerMessageId: "1", mailbox: "INBOX",
+    from: "a@example.com", subject: "old", receivedAt: new Date(1), hasAttachments: false
+  });
+  let during: string | undefined;
+  const imap = {
+    fetchLatestBatches: async () => undefined,
+    fetchSummariesByUid: async (_a: MailAccount, _m: string, uids: number[]) => {
+      during = (await repository.getAccount(mailAccount.id))?.threadBackfill;
+      return { uidValidity: "1", messages: uids.map((uid) => ({
+        accountId: mailAccount.id, providerMessageId: String(uid), mailbox: "INBOX",
+        from: "a@example.com", subject: "old", receivedAt: new Date(uid),
+        hasAttachments: false, messageId: `<m${uid}@example.com>`, references: []
+      })) };
+    }
+  };
+  const syncWorker = worker(repository, imap);
+  await syncWorker.syncAccount(mailAccount);
+  await syncWorker.backfillSettled(mailAccount.id);
+  assert.equal(during, "running");
+  assert.equal((await repository.getAccount(mailAccount.id))?.threadBackfill, undefined);
+});
+
+test("backfill target grouping stays linear for 60,000 stored messages", async () => {
+  const repository = new InMemoryAccountRepository();
+  const mailAccount = account();
+  await repository.addAccount(mailAccount);
+  for (let uid = 1; uid <= 60_000; uid += 1) {
+    await repository.saveIncomingMessage({
+      accountId: mailAccount.id, providerMessageId: String(uid), mailbox: "INBOX",
+      from: "a@example.com", subject: "old", receivedAt: new Date(uid), hasAttachments: false
+    });
+  }
+  const imap = {
+    fetchLatestBatches: async () => undefined,
+    fetchSummariesByUid: async () => { throw new Error("stop"); }
+  };
+  const syncWorker = worker(repository, imap);
+  const startedAt = Date.now();
+  await syncWorker.syncAccount(mailAccount);
+  await syncWorker.backfillSettled(mailAccount.id);
+  assert.ok(Date.now() - startedAt < 3000, "grouping 60,000 targets should be fast");
+});
+
+test("skips push but still stores mail when account notifications are off", async () => {
+  const repository = new InMemoryAccountRepository();
+  const mailAccount = account();
+  mailAccount.notificationsEnabled = false;
+  await repository.addAccount(mailAccount);
+  let deliver: ((message: IncomingMessageSummary) => Promise<void>) | undefined;
+  const imap = {
+    watch: async (
+      _account: MailAccount,
+      _mailbox: string,
+      onMessage: (message: IncomingMessageSummary) => Promise<void>
+    ) => {
+      deliver = onMessage;
+      return async () => undefined;
+    },
+    fetchLatestBatches: async () => undefined
+  };
+  let pushes = 0;
+  const syncWorker = new MailSyncWorker(
+    repository,
+    imap as unknown as ImapReceiver,
+    {} as Pop3Receiver,
+    { notifyNewMessage: async () => { pushes += 1; } },
+    { mailbox: "INBOX", pop3PollIntervalMs: 60_000, imapReconnectBaseDelayMs: 1, imapReconnectMaxDelayMs: 1 }
+  );
+  const message = (id: string): IncomingMessageSummary => ({
+    accountId: mailAccount.id,
+    providerMessageId: id,
+    mailbox: "INBOX",
+    from: "a@example.com",
+    subject: "hi",
+    receivedAt: new Date(),
+    hasAttachments: false
+  });
+
+  try {
+    await syncWorker.startAccount(mailAccount);
+    await deliver!(message("1"));
+    assert.equal(pushes, 0);
+    assert.equal((await repository.listInbox("demo-user")).length, 1);
+
+    // Accounts stored before the setting existed (undefined) still notify.
+    mailAccount.notificationsEnabled = undefined;
+    await deliver!(message("2"));
+    assert.equal(pushes, 1);
   } finally {
     await syncWorker.stop();
   }
@@ -453,6 +852,65 @@ test("a reconnect during a running import queues another sync", async () => {
   } finally {
     await syncWorker.stop();
   }
+});
+
+test("one backfill fetch fills missing categories and thread metadata separately", async () => {
+  const repository = new InMemoryAccountRepository();
+  const mailAccount = account();
+  await repository.addAccount(mailAccount);
+  const stored = (uid: number): IncomingMessageSummary => ({
+    accountId: mailAccount.id,
+    providerMessageId: String(uid),
+    mailbox: "INBOX",
+    from: "a@example.com",
+    subject: "old",
+    receivedAt: new Date(uid * 1000),
+    hasAttachments: false
+  });
+  // 1..100: neither; 101..110: thread done, no category; 111..120: category done, no thread.
+  for (let uid = 1; uid <= 120; uid += 1) {
+    await repository.saveIncomingMessage({
+      ...stored(uid),
+      ...(uid > 100 && uid <= 110 && { messageId: `<old${uid}@example.com>`, references: [] }),
+      ...(uid > 110 && { category: "notification" as const })
+    });
+  }
+  const requests: number[][] = [];
+  const imap = {
+    fetchLatestBatches: async () => undefined,
+    fetchSummariesByUid: async (_a: MailAccount, _m: string, uids: number[]) => {
+      requests.push(uids);
+      // uid 1 is gone from the server; even uids are newsletters.
+      return { uidValidity: "1", messages: uids.filter((uid) => uid !== 1).map((uid) => ({
+        ...stored(uid),
+        messageId: `<m${uid}@example.com>`,
+        references: ["<root@example.com>"],
+        category: uid % 2 === 0 ? "newsletter" as const : "person" as const
+      })) };
+    }
+  };
+  const syncWorker = worker(repository, imap);
+
+  await syncWorker.syncAccount(mailAccount);
+  await syncWorker.backfillSettled(mailAccount.id);
+  assert.deepEqual(requests.map((r) => r.length), [50, 50, 20]);
+  const byUid = new Map(
+    (await repository.listInbox(mailAccount.userId)).map((m) => [m.providerMessageId, m])
+  );
+  assert.equal(byUid.get("2")?.category, "newsletter");
+  assert.equal(byUid.get("2")?.messageId, "<m2@example.com>");
+  assert.equal(byUid.get("1")?.category, "person");
+  assert.deepEqual(byUid.get("1")?.references, []);
+  // Thread metadata already stored is kept; only the category is added.
+  assert.equal(byUid.get("102")?.messageId, "<old102@example.com>");
+  assert.equal(byUid.get("102")?.category, "newsletter");
+  // A stored category is kept; only thread metadata is added.
+  assert.equal(byUid.get("112")?.category, "notification");
+  assert.equal(byUid.get("112")?.messageId, "<m112@example.com>");
+
+  await syncWorker.syncAccount(mailAccount);
+  await syncWorker.backfillSettled(mailAccount.id);
+  assert.equal(requests.length, 3);
 });
 
 function customAccount(supportsIdle?: boolean): MailAccount {
