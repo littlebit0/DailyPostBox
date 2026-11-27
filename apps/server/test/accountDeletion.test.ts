@@ -9,6 +9,7 @@ import { registerRoutes } from "../src/api/routes.js";
 import { OAuthTokenRevoker } from "../src/auth/OAuthTokenRevoker.js";
 import { DevelopmentSecretResolver } from "../src/security/SecretResolver.js";
 import { LocalFileAccountRepository } from "../src/workers/LocalFileAccountRepository.js";
+import { SnoozeStore } from "../src/workers/SnoozeStore.js";
 
 const oauthSecret = JSON.stringify({
   type: "oauth2",
@@ -96,10 +97,15 @@ test("DELETE removes only that account's credentials and messages, even if revok
   await accounts.saveIncomingMessage(message("a"));
   await accounts.saveIncomingMessage(message("b"));
 
+  const snoozes = new SnoozeStore(undefined, () => undefined);
+  await snoozes.snooze("a", "1", new Date(Date.now() + 60_000));
+  await snoozes.snooze("b", "1", new Date(Date.now() + 60_000));
+
   const revoker = new OAuthTokenRevoker(new DevelopmentSecretResolver(), mockFetch(500).fn);
   const app = Fastify();
   await registerRoutes(app, {
     accounts,
+    snoozes,
     sender: {} as never,
     validateAccount: async () => undefined,
     fetchMessageContent: async () => {
@@ -119,4 +125,6 @@ test("DELETE removes only that account's credentials and messages, even if revok
   const state = JSON.parse(persisted) as { accounts: MailAccount[]; messages: { accountId: string }[] };
   assert.deepEqual(state.accounts.map((item) => item.id), ["b"]);
   assert.deepEqual(state.messages.map((item) => item.accountId), ["b"]);
+  assert.deepEqual(snoozes.list().map((item) => item.accountId), ["b"]);
+  snoozes.stop();
 });

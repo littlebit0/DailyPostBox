@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:intl/date_symbol_data_local.dart';
 
+import 'core/app_menu_bar.dart';
 import 'core/app_router.dart';
 import 'core/app_theme.dart';
 import 'core/i18n/language_controller.dart';
@@ -9,14 +11,17 @@ import 'services/push_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await initializeDateFormatting();
 
   final pushService = PushService();
   await pushService.initialize();
+  final language = await loadSavedLanguage();
 
   runApp(
     ProviderScope(
       overrides: [
         pushServiceProvider.overrideWithValue(pushService),
+        initialLanguageProvider.overrideWithValue(language),
       ],
       child: const DailyPostBoxApp(),
     ),
@@ -44,6 +49,7 @@ class DailyPostBoxApp extends ConsumerWidget {
       theme: buildAppTheme(Brightness.light),
       darkTheme: buildAppTheme(Brightness.dark),
       routerConfig: router,
+      builder: (context, child) => AppMenuBar(child: child!),
       debugShowCheckedModeBanner: false,
     );
   }
