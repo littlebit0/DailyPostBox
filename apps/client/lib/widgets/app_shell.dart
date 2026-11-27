@@ -76,10 +76,15 @@ class AppShell extends ConsumerWidget {
       );
     }
 
-    final navigation = _SideNavigation(
-      selectedIndex: selectedIndex,
-      destinations: destinations,
-      onDestinationSelected: selectDestination,
+    final navigation = Semantics(
+      container: true,
+      explicitChildNodes: true,
+      label: strings.sidebarLabel,
+      child: _SideNavigation(
+        selectedIndex: selectedIndex,
+        destinations: destinations,
+        onDestinationSelected: selectDestination,
+      ),
     );
 
     return Scaffold(

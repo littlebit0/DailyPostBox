@@ -346,41 +346,59 @@ class _MailboxContentState extends ConsumerState<_MailboxContent> {
       separatorBuilder: (context, index) => const Divider(height: 1),
       itemBuilder: (context, index) {
         final message = items[index];
-        return ListTile(
-          key: _rowKeys.putIfAbsent(message.id, GlobalKey.new),
+        void open() => _openMessage(message, threaded: threaded);
+        final thread = threaded && message.threadCount > 1
+            ? ', ${strings.threadMessageCount(message.threadCount)}'
+            : '';
+        // One spoken label: state, sender, subject, time (and thread size).
+        return Semantics(
+          button: true,
           selected: message.id == _selectedId,
-          minLeadingWidth: 28,
-          leading: Icon(
-            message.unread
-                ? Icons.mark_email_unread_outlined
-                : Icons.mail_outline,
-          ),
-          title: Text(
-            message.subject,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-          subtitle: Text(
-            '${message.sender}\n${message.snippet}',
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-          ),
-          trailing: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (message.flagged) ...[
-                const Icon(Icons.star, size: 18, color: Colors.amber),
-                const SizedBox(width: 6),
+          label: strings.mailRowLabel(
+                unread: message.unread,
+                sender: message.sender,
+                subject: message.subject,
+                receivedAt: message.receivedAtLabel,
+              ) +
+              thread,
+          onTap: open,
+          excludeSemantics: true,
+          child: ListTile(
+            key: _rowKeys.putIfAbsent(message.id, GlobalKey.new),
+            selected: message.id == _selectedId,
+            minLeadingWidth: 28,
+            leading: Icon(
+              message.unread
+                  ? Icons.mark_email_unread_outlined
+                  : Icons.mail_outline,
+            ),
+            title: Text(
+              message.subject,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            subtitle: Text(
+              '${message.sender}\n${message.snippet}',
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (message.flagged) ...[
+                  const Icon(Icons.star, size: 18, color: Colors.amber),
+                  const SizedBox(width: 6),
+                ],
+                Text(
+                  threaded && message.threadCount > 1
+                      ? '${strings.threadMessageCount(message.threadCount)}\n${message.receivedAtLabel}'
+                      : message.receivedAtLabel,
+                  textAlign: TextAlign.end,
+                ),
               ],
-              Text(
-                threaded && message.threadCount > 1
-                    ? '${strings.threadMessageCount(message.threadCount)}\n${message.receivedAtLabel}'
-                    : message.receivedAtLabel,
-                textAlign: TextAlign.end,
-              ),
-            ],
+            ),
+            onTap: open,
           ),
-          onTap: () => _openMessage(message, threaded: threaded),
         );
       },
     );
