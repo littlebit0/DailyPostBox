@@ -55,6 +55,8 @@ class MailCache {
   static const _sharedFolder = 'shared';
   static const _providersFolder = 'providers';
   static final _accountPath = RegExp(r'^/accounts/([^/]+)/');
+  // Distinct temp names keep concurrent writes of one path from mixing.
+  static var _tempSeq = 0;
 
   static String _folderFor(String path) {
     if (path == '/providers') return _providersFolder;
@@ -80,11 +82,23 @@ class MailCache {
     try {
       final file = await _file(path);
       await file.parent.create(recursive: true);
-      await file.writeAsString(jsonEncode({
-        'path': path,
-        'savedAt': DateTime.now().toUtc().toIso8601String(),
-        'data': data,
-      }));
+      // Write beside the target, then rename over it, so a failed or
+      // interrupted write leaves the last complete copy in place.
+      final temp = File('${file.path}.${_tempSeq++}.tmp');
+      try {
+        await temp.writeAsString(
+          jsonEncode({
+            'path': path,
+            'savedAt': DateTime.now().toUtc().toIso8601String(),
+            'data': data,
+          }),
+          flush: true,
+        );
+        await temp.rename(file.path);
+      } catch (_) {
+        if (await temp.exists()) await temp.delete();
+        rethrow;
+      }
     } catch (_) {
       // A cache write failure must never break a live response.
     }

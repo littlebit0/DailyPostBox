@@ -92,15 +92,23 @@ class MessagePage extends ConsumerWidget {
       ],
     );
 
+    final cachePaths = [
+      MailApiClient.messagePath(messageId: messageId, accountId: accountId),
+    ];
     final selectedAccountId = accountId;
     if (selectedAccountId == null) {
-      return Scaffold(body: content);
+      return Scaffold(
+        body: Column(
+          children: [
+            Expanded(child: content),
+            OfflineBanner(cachePaths: cachePaths),
+          ],
+        ),
+      );
     }
     return AppShell(
       selectedDestinationId: AppShell.accountDestinationId(selectedAccountId),
-      cachePaths: [
-        MailApiClient.messagePath(messageId: messageId, accountId: accountId),
-      ],
+      cachePaths: cachePaths,
       child: content,
     );
   }

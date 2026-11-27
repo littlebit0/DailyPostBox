@@ -125,4 +125,29 @@ void main() {
       isNull,
     );
   });
+
+  test('overwrite replaces the file without leaving temp files', () async {
+    await cache.write('/accounts/acc1/messages', ['old']);
+    await cache.write('/accounts/acc1/messages', ['new']);
+
+    expect((await cache.read('/accounts/acc1/messages'))?.data, ['new']);
+    final files = Directory('${dir.path}/a_acc1').listSync();
+    expect(files, hasLength(1));
+    expect(files.single.path, endsWith('.json'));
+  });
+
+  test('failed write keeps the last complete copy', () async {
+    await cache.write('/accounts/acc1/messages', ['old']);
+    final folder = Directory('${dir.path}/a_acc1');
+    final target = folder.listSync().single as File;
+    // Read-only folder: a temp file cannot be created, but the target itself
+    // stays writable, so an in-place write would still replace it.
+    await Process.run('chmod', ['555', folder.path]);
+    addTearDown(() => Process.runSync('chmod', ['755', folder.path]));
+
+    await cache.write('/accounts/acc1/messages', ['new']);
+
+    expect(target.existsSync(), isTrue);
+    expect((await cache.read('/accounts/acc1/messages'))?.data, ['old']);
+  }, skip: Platform.isWindows);
 }
