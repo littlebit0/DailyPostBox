@@ -82,7 +82,7 @@ test("backfills unsubscribe for messages synced before the field existed", async
     accounts,
     sender: {} as never,
     validateAccount: async () => {},
-    fetchMessageContent: async () => ({ text: "hi", truncated: false, links: [], unsubscribe: headerValue }),
+    fetchMessageContent: async () => ({ text: "hi", truncated: false, links: [], attachments: [], unsubscribe: headerValue }),
     startAccountSync: async () => {},
     resumeAccountSync: async () => {},
     stopAccountSync: async () => {}
@@ -91,13 +91,13 @@ test("backfills unsubscribe for messages synced before the field existed", async
   const response = await app.inject({ method: "GET", url: "/accounts/account-1/messages/7" });
   assert.equal(response.statusCode, 200);
   assert.deepEqual(response.json().unsubscribe, { url: "https://example.test/u", oneClick: false });
-  assert.deepEqual((await accounts.getMessage("demo-user", "7"))?.unsubscribe, {
+  assert.deepEqual((await accounts.listInbox("demo-user")).find((m) => m.providerMessageId === "7")?.unsubscribe, {
     url: "https://example.test/u",
     oneClick: false
   });
 
   // Once stored, a later detail fetch does not overwrite it.
   headerValue = null;
-  await app.inject({ method: "GET", url: "/mail/messages/7" });
-  assert.equal((await accounts.getMessage("demo-user", "7"))?.unsubscribe?.url, "https://example.test/u");
+  await app.inject({ method: "GET", url: "/accounts/account-1/messages/7" });
+  assert.equal((await accounts.listInbox("demo-user")).find((m) => m.providerMessageId === "7")?.unsubscribe?.url, "https://example.test/u");
 });

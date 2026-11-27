@@ -1,0 +1,1079 @@
+import 'dart:math' as math;
+
+import 'package:flutter/gestures.dart';
+import 'package:flutter/material.dart';
+import 'package:html/dom.dart' as dom;
+import 'package:html/parser.dart' as html_parser;
+
+import 'bounded_network_image.dart';
+import 'linked_message_body.dart';
+
+/// Renders HTML that the server already sanitized with an allow-list.
+///
+/// Only a small tag set is understood and no network request is made unless
+/// the HTML itself contains an http(s) `img`, which the server only returns
+/// after the user asked to load remote images.
+class HtmlMessageBody extends StatefulWidget {
+  const HtmlMessageBody({super.key, required this.html, this.linkLauncher});
+
+  final String html;
+  final MessageLinkLauncher? linkLauncher;
+
+  @override
+  State<HtmlMessageBody> createState() => _HtmlMessageBodyState();
+}
+
+class _HtmlMessageBodyState extends State<HtmlMessageBody> {
+  final List<TapGestureRecognizer> _recognizers = [];
+  Widget? _content;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _rebuild();
+  }
+
+  @override
+  void didUpdateWidget(covariant HtmlMessageBody oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.html != widget.html ||
+        oldWidget.linkLauncher != widget.linkLauncher) {
+      _rebuild();
+    }
+  }
+
+  @override
+  void dispose() {
+    _disposeRecognizers();
+    super.dispose();
+  }
+
+  void _disposeRecognizers() {
+    for (final recognizer in _recognizers) {
+      recognizer.dispose();
+    }
+    _recognizers.clear();
+  }
+
+  void _rebuild() {
+    _disposeRecognizers();
+    final body = html_parser.parseFragment(widget.html);
+    if (_countElements(body) > maxHtmlElements) {
+      // Same order as the server budget; avoids building a huge widget tree.
+      _content = Text(body.text ?? '', style: _baseStyle);
+      return;
+    }
+    final linkColor = Theme.of(context).colorScheme.primary;
+    final renderer = _Renderer(
+      linkColor: linkColor,
+      onLink: (uri) => (widget.linkLauncher ?? launchMessageLink)(uri),
+      recognizers: _recognizers,
+    );
+    const base = _baseStyle;
+    try {
+      _content = Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: renderer.children(body.nodes, base, Colors.white),
+      );
+    } on _WorkBudgetExceeded {
+      _disposeRecognizers();
+      _content = Text(body.text ?? '', style: _baseStyle);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Mail HTML assumes a light background, so keep it on a light surface
+    // even in the dark theme.
+    return SelectionArea(
+      child: DecoratedBox(
+        key: const ValueKey('html-message-body'),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Padding(padding: const EdgeInsets.all(16), child: _content),
+      ),
+    );
+  }
+}
+
+// Fixed white surface: text must not follow the (possibly dark) theme.
+const _baseStyle = TextStyle(color: Colors.black87, fontSize: 15, height: 1.45);
+
+/// Above this many elements the body is shown as plain text.
+const maxHtmlElements = 5000;
+
+/// Largest colspan/rowspan honored, and rows x columns budget per table.
+const maxHtmlSpan = 50;
+const maxHtmlTableSlots = 10000;
+
+/// Style attribute caps (same as the server) and total render work budget.
+const maxHtmlStyleLength = 1024;
+const maxHtmlStyleDeclarations = 32;
+const maxHtmlWork = 100000;
+
+/// Tap recognizers allowed per message.
+const maxHtmlRecognizers = 2000;
+
+/// Remote images rendered per message; extras show alt text only.
+const maxHtmlImages = 20;
+
+/// Decode bound per image: 1200x1200 RGBA is about 5.5MiB.
+const _maxImageDecode = 1200;
+
+class _WorkBudgetExceeded implements Exception {
+  const _WorkBudgetExceeded();
+}
+
+int _countElements(dom.Node root) {
+  var count = 0;
+  final stack = <dom.Node>[root];
+  while (stack.isNotEmpty) {
+    final node = stack.removeLast();
+    if (node is dom.Element) count++;
+    if (count > maxHtmlElements) break;
+    stack.addAll(node.nodes);
+  }
+  return count;
+}
+
+const _blockTags = {
+  'p',
+  'div',
+  'h1',
+  'h2',
+  'h3',
+  'h4',
+  'h5',
+  'h6',
+  'blockquote',
+  'pre',
+  'ul',
+  'ol',
+  'li',
+  'hr',
+  'table',
+  'center',
+  'dl',
+  'dt',
+  'dd',
+  'caption',
+};
+
+class _Renderer {
+  _Renderer({
+    required this.linkColor,
+    required this.onLink,
+    required this.recognizers,
+  });
+
+  final Color linkColor;
+  final void Function(Uri uri) onLink;
+  final List<TapGestureRecognizer> recognizers;
+
+  final _declCache = <dom.Element, List<(String, String)>>{};
+  final _whiteSpaceCache = <dom.Element, String>{};
+
+  /// Collapsed text and bare-URL ranges per text node, found per inline run so
+  /// a URL split across styled children stays one link.
+  final _runText =
+      <dom.Text, (String, List<(int, int, TapGestureRecognizer)>)>{};
+  int _work = 0;
+  int _images = 0;
+
+  /// Counts work units; past [maxHtmlWork] the caller falls back to text.
+  void _tick([int units = 1]) {
+    _work += units;
+    if (_work > maxHtmlWork) throw const _WorkBudgetExceeded();
+  }
+
+  /// Style declarations of an element, parsed once and capped in size.
+  List<(String, String)> _decls(dom.Element el) => _declCache[el] ??= () {
+        final raw = el.attributes['style'] ?? '';
+        final out = <(String, String)>[];
+        final parts = raw
+            .substring(0, math.min(raw.length, maxHtmlStyleLength))
+            .split(';');
+        for (final declaration in parts) {
+          _tick();
+          if (out.length >= maxHtmlStyleDeclarations) break;
+          final index = declaration.indexOf(':');
+          if (index < 0) continue;
+          out.add((
+            declaration.substring(0, index).trim().toLowerCase(),
+            declaration.substring(index + 1).trim().toLowerCase(),
+          ));
+        }
+        return out;
+      }();
+
+  /// [bg] is the background actually painted behind the content: the nearest
+  /// widget/decoration color passed down, overridden for text by an inline
+  /// `TextStyle.backgroundColor`.
+  List<Widget> children(
+    List<dom.Node> nodes,
+    TextStyle style,
+    Color bg, {
+    TextAlign align = TextAlign.start,
+    TapGestureRecognizer? recognizer,
+  }) {
+    final widgets = <Widget>[];
+    var spans = <InlineSpan>[];
+
+    if (recognizer == null) {
+      var run = <dom.Node>[];
+      for (final node in nodes) {
+        final breaks = node is dom.Element &&
+            ((node.localName == 'a' && _hasBlock(node)) ||
+                _blockTags.contains(node.localName));
+        if (breaks) {
+          _scanRun(run);
+          run = <dom.Node>[];
+        } else {
+          run.add(node);
+        }
+      }
+      _scanRun(run);
+    }
+
+    void flush() {
+      if (spans.isEmpty) return;
+      final onlySpace = spans.every(
+        (span) => span.toPlainText().trim().isEmpty,
+      );
+      if (!onlySpace) {
+        widgets.add(
+          Text.rich(
+            TextSpan(style: style, children: spans),
+            textAlign: align,
+          ),
+        );
+      }
+      spans = <InlineSpan>[];
+    }
+
+    for (final node in nodes) {
+      _tick();
+      if (node is dom.Element && node.localName == 'a' && _hasBlock(node)) {
+        // Keep block structure inside a link and hand the tap down to it.
+        flush();
+        final (linkStyle, linkRecognizer) = _link(node, style);
+        widgets.addAll(
+          children(
+            node.nodes,
+            linkStyle,
+            bg,
+            align: align,
+            recognizer: linkRecognizer,
+          ),
+        );
+      } else if (node is dom.Element && _blockTags.contains(node.localName)) {
+        flush();
+        widgets.add(_block(node, style, bg, recognizer));
+      } else {
+        _inline(node, style, bg, spans, recognizer: recognizer);
+      }
+    }
+    flush();
+    return widgets;
+  }
+
+  /// Detects URLs once over the joined text of an inline run. Anchors, images
+  /// and `<br>` count as separators so they never join a URL.
+  void _scanRun(List<dom.Node> run) {
+    final texts = <(dom.Text, String, int)>[];
+    final buffer = StringBuffer();
+    void walk(dom.Node node) {
+      _tick();
+      if (node is dom.Text) {
+        final collapsed = _collapse(node);
+        // Separators below shift offsets, so record the real buffer start.
+        texts.add((node, collapsed, buffer.length));
+        buffer.write(collapsed);
+      } else if (node is dom.Element) {
+        if (const {'a', 'img', 'br'}.contains(node.localName)) {
+          buffer.write('\n');
+        } else {
+          node.nodes.forEach(walk);
+        }
+      }
+    }
+
+    run.forEach(walk);
+    final urls = findMessageUrls(buffer.toString());
+    _tick(urls.length);
+    final taps = List<TapGestureRecognizer?>.filled(urls.length, null);
+    // URLs are sorted and disjoint, as are the text nodes, so one cursor maps
+    // every range in linear time.
+    var first = 0;
+    for (final (text, collapsed, offset) in texts) {
+      final end = offset + collapsed.length;
+      while (first < urls.length && urls[first].end <= offset) {
+        first++;
+      }
+      final ranges = <(int, int, TapGestureRecognizer)>[];
+      for (var i = first; i < urls.length && urls[i].start < end; i++) {
+        _tick();
+        final url = urls[i];
+        final tap = taps[i] ??= () {
+          _tick();
+          if (recognizers.length >= maxHtmlRecognizers) {
+            throw const _WorkBudgetExceeded();
+          }
+          final created = TapGestureRecognizer()..onTap = () => onLink(url.uri);
+          recognizers.add(created);
+          return created;
+        }();
+        ranges.add((
+          (url.start - offset).clamp(0, collapsed.length),
+          (url.end - offset).clamp(0, collapsed.length),
+          tap,
+        ));
+      }
+      _runText[text] = (collapsed, ranges);
+    }
+  }
+
+  bool _hasBlock(dom.Element el) =>
+      el.nodes.any((c) => c is dom.Element && _blockTags.contains(c.localName));
+
+  (TextStyle, TapGestureRecognizer?) _link(dom.Element a, TextStyle style) {
+    // The anchor background is painted as a text background.
+    final anchorBg = _background(a);
+    if (anchorBg != null) style = style.copyWith(backgroundColor: anchorBg);
+    final uri = _safeLink(a.attributes['href']);
+    if (uri == null) return (style, null);
+    final recognizer = TapGestureRecognizer()..onTap = () => onLink(uri);
+    recognizers.add(recognizer);
+    return (
+      style.copyWith(
+        color: linkColor,
+        decoration: TextDecoration.underline,
+        decorationColor: linkColor,
+      ),
+      recognizer,
+    );
+  }
+
+  /// Every block path paints its own element's background (never inherited).
+  Widget _paint(dom.Element el, Widget child) {
+    final color = _background(el);
+    return color == null ? child : ColoredBox(color: color, child: child);
+  }
+
+  Widget _block(
+    dom.Element el,
+    TextStyle parent,
+    Color outer,
+    TapGestureRecognizer? recognizer,
+  ) {
+    final style = _styled(el, parent);
+    final bg = _background(el) ?? outer;
+    final align = _align(el) ?? TextAlign.start;
+    final tag = el.localName;
+
+    switch (tag) {
+      case 'hr':
+        return const Padding(
+          padding: EdgeInsets.symmetric(vertical: 8),
+          child: Divider(height: 1),
+        );
+      case 'table':
+        final caption = el.children.where((c) => c.localName == 'caption');
+        final table = _table(el, style, outer, recognizer);
+        if (caption.isEmpty) return table;
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            for (final c in caption)
+              _paint(
+                c,
+                _column(
+                  c,
+                  _styled(c, style),
+                  _background(c) ?? outer,
+                  _align(c) ?? TextAlign.center,
+                  recognizer,
+                ),
+              ),
+            table,
+          ],
+        );
+      case 'ul':
+      case 'ol':
+        var index = 0;
+        final items = <Widget>[];
+        for (final child in el.children.where((c) => c.localName == 'li')) {
+          index += 1;
+          items.add(
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SizedBox(
+                  width: 28,
+                  child: Text(
+                    tag == 'ol' ? '$index.' : '•',
+                    style: _fix(style, bg),
+                  ),
+                ),
+                Expanded(
+                  child: _paint(
+                    child,
+                    _column(
+                      child,
+                      _styled(child, style),
+                      _background(child) ?? bg,
+                      align,
+                      recognizer,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          );
+        }
+        return _paint(
+          el,
+          Padding(
+            padding: const EdgeInsets.only(left: 8, top: 4, bottom: 4),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: items,
+            ),
+          ),
+        );
+      case 'blockquote':
+        return Container(
+          margin: const EdgeInsets.symmetric(vertical: 6),
+          padding: const EdgeInsets.only(left: 12),
+          decoration: BoxDecoration(
+            color: _background(el),
+            border: const Border(
+              left: BorderSide(color: Colors.black26, width: 3),
+            ),
+          ),
+          child: _column(el, style, bg, align, recognizer),
+        );
+      default:
+        final spacing =
+            (tag == 'p' || (tag?.startsWith('h') ?? false)) ? 6.0 : 0.0;
+        return _paint(
+          el,
+          Padding(
+            padding: EdgeInsets.symmetric(vertical: spacing),
+            child: _column(el, style, bg, align, recognizer),
+          ),
+        );
+    }
+  }
+
+  Widget _column(
+    dom.Element el,
+    TextStyle style,
+    Color bg,
+    TextAlign align,
+    TapGestureRecognizer? recognizer,
+  ) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: children(
+        el.nodes,
+        style,
+        bg,
+        align: align,
+        recognizer: recognizer,
+      ),
+    );
+  }
+
+  Widget _table(
+    dom.Element table,
+    TextStyle style,
+    Color outer,
+    TapGestureRecognizer? recognizer,
+  ) {
+    final tableBg = _background(table) ?? outer;
+    final rows = <Map<int, (dom.Element cell, dom.Element row)>>[];
+    // column -> number of following rows still covered by a rowspan cell.
+    var pending = <int, int>{};
+    for (final row in _descendants(table, 'tr')) {
+      final cells = row.children
+          .where((c) => c.localName == 'td' || c.localName == 'th')
+          .toList();
+      if (cells.isEmpty) continue;
+      final slots = <int, (dom.Element, dom.Element)>{};
+      final next = <int, int>{
+        for (final e in pending.entries)
+          if (e.value > 1) e.key: e.value - 1,
+      };
+      var col = 0;
+      for (final cell in cells) {
+        while ((pending[col] ?? 0) > 0) {
+          col++;
+        }
+        final colspan = _span(cell, 'colspan');
+        final rowspan = _span(cell, 'rowspan');
+        slots[col] = (cell, row);
+        for (var i = 0; i < colspan; i++) {
+          if (rowspan > 1) next[col + i] = rowspan - 1;
+        }
+        col += colspan;
+      }
+      pending = next;
+      rows.add(slots);
+    }
+    if (rows.isEmpty) return const SizedBox.shrink();
+    final columns = rows.fold<int>(0, (m, r) {
+      // A cell occupies [start, start + colspan), so use its end, not start + 1.
+      final width = r.entries.fold<int>(0, (a, e) {
+        final end = e.key + _span(e.value.$1, 'colspan');
+        return end > a ? end : a;
+      });
+      return width > m ? width : m;
+    });
+    // Every row builds `columns` children, so spans can blow up the count
+    // even when the element count is small.
+    if (rows.length * columns > maxHtmlTableSlots) {
+      // The table background is dropped here, so correct against [outer].
+      return Text(table.text, style: _fix(style, outer));
+    }
+    // Slots count toward the whole-body budget, not just this table.
+    _tick(rows.length * columns);
+
+    Color? cellBg(dom.Element cell, dom.Element row) =>
+        _background(cell) ?? _background(row) ?? _groupBackground(row);
+
+    Widget cellBox(dom.Element cell, dom.Element row, bool bordered) {
+      final color = cellBg(cell, row);
+      final padded = Padding(
+        padding: const EdgeInsets.all(4),
+        child: _column(
+          cell,
+          _cellStyle(cell, row, style),
+          color ?? tableBg,
+          _align(cell) ?? _align(row) ?? TextAlign.start,
+          recognizer,
+        ),
+      );
+      return ColoredBox(
+        color: color ?? Colors.transparent,
+        child: bordered
+            ? DecoratedBox(
+                decoration: BoxDecoration(
+                  border: Border.all(color: Colors.black26),
+                ),
+                child: padded,
+              )
+            : padded,
+      );
+    }
+
+    final bordered = (int.tryParse(table.attributes['border'] ?? '') ?? 0) > 0;
+    bool anySpan(String name) =>
+        rows.any((r) => r.values.any((v) => _span(v.$1, name) > 1));
+    // Flutter's Table cannot merge cells. Without rowspan, each row becomes a
+    // Row of Expanded(flex: colspan) so merged cells span their full width.
+    // shortcut: colspan + rowspan together stays on Table (merged cells only
+    // approximate), upgrade with a real grid layout if it matters.
+    if (anySpan('colspan') && !anySpan('rowspan')) {
+      Widget spanRow(Map<int, (dom.Element, dom.Element)> slots) {
+        final children = <Widget>[];
+        var used = 0;
+        for (final i in slots.keys.toList()..sort()) {
+          final (cell, row) = slots[i]!;
+          final span = _span(cell, 'colspan');
+          used += span;
+          children.add(
+            Expanded(flex: span, child: cellBox(cell, row, bordered)),
+          );
+        }
+        if (used < columns) children.add(Spacer(flex: columns - used));
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: children,
+        );
+      }
+
+      return ColoredBox(
+        color: _background(table) ?? Colors.transparent,
+        child: Column(children: rows.map(spanRow).toList(growable: false)),
+      );
+    }
+
+    TableRow toRow(Map<int, (dom.Element cell, dom.Element row)> slots) =>
+        TableRow(
+          children: [
+            for (var i = 0; i < columns; i++)
+              if (slots[i] case (final cell, final row))
+                cellBox(cell, row, false)
+              else
+                const SizedBox.shrink(),
+          ],
+        );
+
+    return ColoredBox(
+      color: _background(table) ?? Colors.transparent,
+      child: Table(
+        border: bordered ? TableBorder.all(color: Colors.black26) : null,
+        children: rows.map(toRow).toList(growable: false),
+      ),
+    );
+  }
+
+  static const _rowGroups = {'tbody', 'thead', 'tfoot'};
+
+  dom.Element? _group(dom.Element row) {
+    final parent = row.parent;
+    return parent != null && _rowGroups.contains(parent.localName)
+        ? parent
+        : null;
+  }
+
+  Color? _groupBackground(dom.Element row) {
+    final group = _group(row);
+    return group == null ? null : _background(group);
+  }
+
+  /// Merges styles along table -> row group -> tr -> td/th.
+  TextStyle _cellStyle(dom.Element cell, dom.Element row, TextStyle table) {
+    final group = _group(row);
+    final inherited = _styled(
+      row,
+      group == null ? table : _styled(group, table),
+    );
+    final style = _styled(cell, inherited);
+    return cell.localName == 'th'
+        ? style.copyWith(fontWeight: FontWeight.bold)
+        : style;
+  }
+
+  /// Final step for every text style: text that would be unreadable on [bg]
+  /// (contrast < 3:1) falls back to black87 or white, whichever contrasts
+  /// better. Corrects the underline color too, so links stay visible.
+  TextStyle _fix(TextStyle style, Color bg) {
+    final under = style.backgroundColor ?? bg;
+    final color = style.color ?? Colors.black87;
+    final fixed = readableTextColor(color, under);
+    final line = style.decorationColor;
+    final fixedLine = line == null ? null : readableTextColor(line, under);
+    return style.copyWith(
+      color: fixed,
+      decorationColor: fixedLine,
+      fontSize: _clampMetric(style.fontSize, 8, 48),
+      letterSpacing: _clampMetric(style.letterSpacing, -2, 10),
+      wordSpacing: _clampMetric(style.wordSpacing, -4, 40),
+      height: _clampMetric(style.height, 0.8, 3),
+    );
+  }
+
+  /// Leaf text style: only color and underline color, the rest is inherited.
+  TextStyle _leaf(TextStyle composed, Color bg) {
+    final f = _fix(composed, bg);
+    return TextStyle(color: f.color, decorationColor: f.decorationColor);
+  }
+
+  int _span(dom.Element cell, String attribute) =>
+      (int.tryParse(cell.attributes[attribute] ?? '') ?? 1).clamp(
+        1,
+        maxHtmlSpan,
+      );
+
+  /// `bgcolor` attribute or inline `background-color` of a table element.
+  Color? _background(dom.Element el) {
+    Color? color = _color(el.attributes['bgcolor']);
+    for (final (prop, value) in _decls(el)) {
+      if (prop == 'background-color') color = _color(value) ?? color;
+    }
+    return color;
+  }
+
+  Iterable<dom.Element> _descendants(dom.Element root, String tag) sync* {
+    for (final child in root.children) {
+      if (child.localName == tag) {
+        yield child;
+      } else if (child.localName != 'table') {
+        yield* _descendants(child, tag);
+      }
+    }
+  }
+
+  void _inline(
+    dom.Node node,
+    TextStyle style,
+    Color bg,
+    List<InlineSpan> out, {
+    TapGestureRecognizer? recognizer,
+  }) {
+    if (node is dom.Text) {
+      final scanned = _runText[node];
+      final text = scanned?.$1 ?? _collapse(node);
+      if (text.isNotEmpty && recognizer == null) {
+        // Bare URLs outside an anchor stay tappable, as in the plain-text view.
+        var cursor = 0;
+        void plain(int end) {
+          if (end > cursor) {
+            out.add(
+              TextSpan(
+                text: text.substring(cursor, end),
+                style: _leaf(style, bg),
+              ),
+            );
+          }
+        }
+
+        for (final (start, end, tap)
+            in scanned?.$2 ?? const <(int, int, TapGestureRecognizer)>[]) {
+          plain(start);
+          if (end > start) {
+            out.add(
+              TextSpan(
+                text: text.substring(start, end),
+                recognizer: tap,
+                mouseCursor: SystemMouseCursors.click,
+                style: _fix(
+                  style.copyWith(
+                    color: linkColor,
+                    decoration: TextDecoration.underline,
+                    decorationColor: linkColor,
+                  ),
+                  bg,
+                ),
+              ),
+            );
+          }
+          cursor = end;
+        }
+        plain(text.length);
+      } else if (text.isNotEmpty) {
+        // Recognizers only fire on the innermost span, so every text leaf of
+        // a link carries its own.
+        out.add(
+          TextSpan(
+            text: text,
+            style: _leaf(style, bg),
+            recognizer: recognizer,
+            mouseCursor: recognizer == null ? null : SystemMouseCursors.click,
+          ),
+        );
+      }
+      return;
+    }
+    if (node is! dom.Element) return;
+
+    switch (node.localName) {
+      case 'br':
+        out.add(const TextSpan(text: '\n'));
+      case 'img':
+        out.add(_image(node, style, bg, recognizer));
+      case 'a':
+        final (linkStyle, linkRecognizer) = _link(node, style);
+        if (_hasBlock(node)) {
+          // Nested inside other inline content: blocks inside a link keep their structure in a nested column.
+          out.add(
+            WidgetSpan(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: children(
+                  node.nodes,
+                  linkStyle,
+                  bg,
+                  recognizer: linkRecognizer,
+                ),
+              ),
+            ),
+          );
+          return;
+        }
+        final spans = <InlineSpan>[];
+        for (final child in node.nodes) {
+          _inline(child, linkStyle, bg, spans, recognizer: linkRecognizer);
+        }
+        out.add(TextSpan(style: linkStyle, children: spans));
+      default:
+        final next = _styled(node, style);
+        final children = <InlineSpan>[];
+        for (final child in node.nodes) {
+          _inline(child, next, bg, children, recognizer: recognizer);
+        }
+        out.add(TextSpan(style: next, children: children));
+    }
+  }
+
+  /// Whitespace mode of an element, inherited and computed once per element.
+  String _whiteSpace(dom.Element el) => _whiteSpaceCache[el] ??= () {
+        var mode = el.localName == 'pre' ? 'pre' : null;
+        for (final (prop, value) in _decls(el)) {
+          if (prop == 'white-space') mode = value;
+        }
+        final parent = el.parent;
+        return mode ?? (parent == null ? 'normal' : _whiteSpace(parent));
+      }();
+
+  /// Collapses whitespace unless the element is `<pre>` or `white-space: pre*`.
+  String _collapse(dom.Text node) {
+    _tick();
+    final parent = node.parent;
+    final mode = parent == null ? 'normal' : _whiteSpace(parent);
+    if (mode == 'pre' || mode == 'pre-wrap' || mode == 'break-spaces') {
+      return node.text;
+    }
+    if (mode == 'pre-line') {
+      return node.text.replaceAll(RegExp(r'[ \t\r\f]+'), ' ');
+    }
+    return node.text.replaceAll(RegExp(r'\s+'), ' ');
+  }
+
+  InlineSpan _image(
+    dom.Element img,
+    TextStyle style,
+    Color bg,
+    TapGestureRecognizer? recognizer,
+  ) {
+    final src = img.attributes['src'] ?? '';
+    final width = _imageSize(img.attributes['width']);
+    final height = _imageSize(img.attributes['height']);
+    Widget? image;
+
+    // data: URIs are never decoded: a tiny PNG can claim a huge pixel size.
+    final scheme = Uri.tryParse(src)?.scheme.toLowerCase();
+    final remote = scheme == 'http' || scheme == 'https';
+    final tooMany = remote && ++_images > maxHtmlImages;
+    if (remote && !tooMany) {
+      // shortcut: animated images are bounded per frame only; cap frames later.
+      image = Image(
+        image: ResizeImage(
+          BoundedNetworkImage(src),
+          width: _maxImageDecode,
+          height: _maxImageDecode,
+          policy: ResizeImagePolicy.fit,
+        ),
+        width: width,
+        height: height,
+        // Keep alt text (or a marker) so the enclosing link stays usable.
+        errorBuilder: (_, __, ___) => Text(
+          _altText(img, inLink: recognizer != null),
+          style: _leaf(style, bg),
+        ),
+      );
+    }
+    if (image == null) {
+      // Blocked, data:, unsupported scheme and count cap all land here and
+      // keep the enclosing link's tap handler.
+      final alt = _altText(img, inLink: recognizer != null);
+      return TextSpan(
+        text: tooMany ? '$alt [이미지 생략 / omitted]' : alt,
+        style: _leaf(style, bg),
+        recognizer: recognizer,
+        mouseCursor: recognizer == null ? null : SystemMouseCursors.click,
+      );
+    }
+    final onTap = recognizer?.onTap;
+    return WidgetSpan(
+      alignment: PlaceholderAlignment.middle,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 600),
+        child: onTap == null
+            ? image
+            : MouseRegion(
+                cursor: SystemMouseCursors.click,
+                child: GestureDetector(onTap: onTap, child: image),
+              ),
+      ),
+    );
+  }
+
+  bool _paintsOwnBackground(dom.Element el) =>
+      _blockTags.contains(el.localName) ||
+      const {
+        'tr',
+        'td',
+        'th',
+        'tbody',
+        'thead',
+        'tfoot',
+      }.contains(el.localName);
+
+  /// Alt text; a marker when empty inside a link so there is something to tap.
+  String _altText(dom.Element img, {required bool inLink}) {
+    final alt = img.attributes['alt'] ?? '';
+    return alt.trim().isEmpty && inLink ? '[이미지]' : alt;
+  }
+
+  /// Finite positive size, capped; anything else (NaN, Infinity, 0, negative,
+  /// percentages) is ignored.
+  double? _imageSize(String? raw) {
+    final n = double.tryParse((raw ?? '').trim().replaceAll('px', ''));
+    return n != null && n.isFinite && n > 0
+        ? n.clamp(1, 2000).toDouble()
+        : null;
+  }
+
+  TextStyle _styled(dom.Element el, TextStyle parent) {
+    var style = parent;
+    switch (el.localName) {
+      case 'b':
+      case 'strong':
+      case 'th':
+        style = style.copyWith(fontWeight: FontWeight.bold);
+      case 'i':
+      case 'em':
+        style = style.copyWith(fontStyle: FontStyle.italic);
+      case 'u':
+        style = style.copyWith(decoration: TextDecoration.underline);
+      case 's':
+      case 'strike':
+        style = style.copyWith(decoration: TextDecoration.lineThrough);
+      case 'small':
+        style = style.copyWith(
+          fontSize: _clampFont((style.fontSize ?? 15) * 0.85),
+        );
+      case 'big':
+        style = style.copyWith(
+          fontSize: _clampFont((style.fontSize ?? 15) * 1.2),
+        );
+      case 'h1':
+      case 'h2':
+      case 'h3':
+      case 'h4':
+      case 'h5':
+      case 'h6':
+        final scale = const {
+          'h1': 1.8,
+          'h2': 1.5,
+          'h3': 1.3,
+          'h4': 1.15,
+          'h5': 1.0,
+          'h6': 0.9,
+        }[el.localName]!;
+        style = style.copyWith(
+          fontSize: 15 * scale,
+          fontWeight: FontWeight.bold,
+        );
+      case 'pre':
+      case 'code':
+        style = style.copyWith(fontFamily: 'monospace');
+      case 'font':
+        final color = _color(el.attributes['color']);
+        if (color != null) style = style.copyWith(color: color);
+    }
+
+    for (final (prop, value) in _decls(el)) {
+      switch (prop) {
+        case 'color':
+          final color = _color(value);
+          if (color != null) style = style.copyWith(color: color);
+        case 'background-color':
+          final color = _color(value);
+          // Blocks paint their own box (_background); text background would be
+          // inherited by children that set a different box color.
+          if (color != null && !_paintsOwnBackground(el)) {
+            style = style.copyWith(backgroundColor: color);
+          }
+        case 'font-weight':
+          final bold = value == 'bold' ||
+              value == 'bolder' ||
+              (int.tryParse(value) ?? 0) >= 600;
+          style = style.copyWith(
+            fontWeight: bold ? FontWeight.bold : FontWeight.normal,
+          );
+        case 'font-style':
+          if (value == 'italic') {
+            style = style.copyWith(fontStyle: FontStyle.italic);
+          }
+        case 'text-decoration':
+          if (value.contains('underline')) {
+            style = style.copyWith(decoration: TextDecoration.underline);
+          } else if (value.contains('line-through')) {
+            style = style.copyWith(decoration: TextDecoration.lineThrough);
+          }
+        case 'font-size':
+          final px = double.tryParse(value.replaceAll('px', ''));
+          if (px != null && px >= 8 && px <= 48) {
+            style = style.copyWith(fontSize: px);
+          }
+      }
+    }
+    return style;
+  }
+
+  TextAlign? _align(dom.Element el) {
+    var value = el.attributes['align']?.toLowerCase();
+    if (el.localName == 'center') value = 'center';
+    for (final (prop, v) in _decls(el)) {
+      if (prop == 'text-align') value = v;
+    }
+    return switch (value) {
+      'center' => TextAlign.center,
+      'right' => TextAlign.right,
+      'left' => TextAlign.left,
+      _ => null,
+    };
+  }
+}
+
+/// Composed font size stays readable however deep relative tags nest.
+double _clampFont(double v) => _clampMetric(v, 8, 48)!;
+
+/// NaN becomes the lower bound; infinities and overflow are capped.
+double? _clampMetric(double? v, double lo, double hi) =>
+    v == null ? null : (v.isNaN ? lo : v.clamp(lo, hi));
+
+double _contrast(Color a, Color b) {
+  final la = a.computeLuminance();
+  final lb = b.computeLuminance();
+  return (math.max(la, lb) + 0.05) / (math.min(la, lb) + 0.05);
+}
+
+@visibleForTesting
+Color readableTextColor(Color text, Color background) {
+  if (_contrast(text, background) >= 3) return text;
+  return _contrast(Colors.black87, background) >=
+          _contrast(Colors.white, background)
+      ? Colors.black87
+      : Colors.white;
+}
+
+Uri? _safeLink(String? value) {
+  final uri = Uri.tryParse((value ?? '').trim());
+  if (uri == null) return null;
+  final scheme = uri.scheme.toLowerCase();
+  if (scheme == 'mailto') return uri.path.isEmpty ? null : uri;
+  if ((scheme == 'http' || scheme == 'https') && uri.host.isNotEmpty) {
+    return uri;
+  }
+  return null;
+}
+
+Color? _color(String? value) {
+  if (value == null) return null;
+  final v = value.trim().toLowerCase();
+  const names = {
+    'black': Colors.black,
+    'white': Colors.white,
+    'red': Colors.red,
+    'green': Colors.green,
+    'blue': Colors.blue,
+    'gray': Colors.grey,
+    'grey': Colors.grey,
+    'orange': Colors.orange,
+    'yellow': Colors.yellow,
+    'purple': Colors.purple,
+    'navy': Color(0xFF000080),
+  };
+  if (names.containsKey(v)) return names[v];
+  final hex = RegExp(r'^#([0-9a-f]{3}|[0-9a-f]{6})$').firstMatch(v)?.group(1);
+  if (hex != null) {
+    final full = hex.length == 3 ? hex.split('').map((c) => c + c).join() : hex;
+    return Color(0xFF000000 | int.parse(full, radix: 16));
+  }
+  final rgb = RegExp(
+    r'^rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)$',
+  ).firstMatch(v);
+  if (rgb != null) {
+    // Oversized digit runs overflow int.parse on native; treat them as max.
+    int c(int i) => (int.tryParse(rgb.group(i)!) ?? 255).clamp(0, 255);
+    return Color.fromARGB(255, c(1), c(2), c(3));
+  }
+  return null;
+}
