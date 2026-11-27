@@ -31,11 +31,14 @@ final badgeSyncProvider = Provider<void>((ref) {
 
   // The mailbox page polls only the open account, and the server saves new
   // mail at any time, so the badge refreshes every account on its own.
+  // A request still in flight is skipped: invalidating it would drop its result.
   final timer = Timer.periodic(badgeRefreshInterval, (_) {
-    final accounts = ref.read(accountsProvider).valueOrNull ?? const [];
-    ref.invalidate(accountsProvider);
+    final accountsState = ref.read(accountsProvider);
+    final accounts = accountsState.valueOrNull ?? const [];
+    if (!accountsState.isLoading) ref.invalidate(accountsProvider);
     for (final account in accounts) {
-      ref.invalidate(accountMessagesProvider(account.id));
+      final messages = accountMessagesProvider(account.id);
+      if (!ref.read(messages).isLoading) ref.invalidate(messages);
     }
   });
   ref.onDispose(timer.cancel);

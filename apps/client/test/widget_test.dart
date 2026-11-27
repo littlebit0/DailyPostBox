@@ -1380,6 +1380,43 @@ void main() {
     container.dispose();
   });
 
+  testWidgets('badge polling skips a mailbox request still in flight', (
+    tester,
+  ) async {
+    var fetches = 0;
+    final pending = Completer<List<MailSummary>>();
+    final container = ProviderContainer(
+      overrides: [
+        badgeServiceProvider.overrideWithValue(_NoopBadgeService()),
+        accountsProvider.overrideWith(
+          (ref) async => [badgeAccount('a', 'idle')],
+        ),
+        mailApiClientProvider.overrideWithValue(
+          _SlowMessagesApi(() {
+            fetches++;
+            return pending.future;
+          }),
+        ),
+      ],
+    );
+    addTearDown(container.dispose);
+    container.listen(badgeSyncProvider, (_, __) {});
+    await tester.pump(const Duration(milliseconds: 1));
+    await tester.pump(const Duration(milliseconds: 1));
+    expect(fetches, 1);
+
+    await tester.pump(badgeRefreshInterval);
+    await tester.pump(badgeRefreshInterval);
+    expect(fetches, 1);
+
+    pending.complete(const []);
+    await tester.pump(const Duration(milliseconds: 1));
+    await tester.pump(badgeRefreshInterval);
+    await tester.pump(const Duration(milliseconds: 1));
+    expect(fetches, 2);
+    container.dispose();
+  });
+
   test('swaps the signature only when the user has not edited it', () {
     expect(swapSignature('', '', 'A'), '\n\n-- \nA');
     expect(swapSignature('hi', '', ''), 'hi');
@@ -2184,4 +2221,13 @@ class _CountingMessagesApi extends MailApiClient {
     onFetch(accountId);
     return const [];
   }
+}
+
+class _SlowMessagesApi extends MailApiClient {
+  _SlowMessagesApi(this.fetch) : super(baseUrl: 'http://127.0.0.1:1');
+
+  final Future<List<MailSummary>> Function() fetch;
+
+  @override
+  Future<List<MailSummary>> fetchAccountMessages(String accountId) => fetch();
 }
