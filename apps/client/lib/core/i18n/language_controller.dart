@@ -208,6 +208,9 @@ class AppStrings {
       : 'The new password is checked before saving. Stored mail and settings are kept.';
   String get reconnectSucceeded =>
       _ko ? '다시 연결했습니다. 메일을 가져오는 중입니다.' : 'Reconnected. Fetching mail now.';
+  String remoteImagesBlocked(int count) =>
+      _ko ? '원격 이미지 $count개 차단됨' : '$count remote images blocked';
+  String get showImagesOnce => _ko ? '이번만 보기' : 'Show this time';
   String get attachments => _ko ? '첨부파일' : 'Attachments';
   String get saveAttachment => _ko ? '저장' : 'Save';
   String attachmentSaved(String path) =>

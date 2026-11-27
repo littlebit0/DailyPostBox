@@ -1470,6 +1470,7 @@ class _FlagApi extends MailApiClient {
   Future<MessageDetail> fetchAccountMessage({
     required String accountId,
     required String messageId,
+    bool remoteImages = false,
   }) async {
     fetches++;
     return const MessageDetail(

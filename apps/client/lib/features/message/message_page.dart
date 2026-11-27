@@ -7,10 +7,15 @@ import '../../services/mail_api_client.dart';
 import '../accounts/account_providers.dart';
 import '../../widgets/app_shell.dart';
 import 'attachment_list.dart';
+import 'html_message_body.dart';
 import 'linked_message_body.dart';
 import 'reply_draft.dart';
 
-typedef MessageRequest = ({String messageId, String accountId});
+typedef MessageRequest = ({
+  String messageId,
+  String accountId,
+  bool remoteImages,
+});
 
 // Messages are looked up per account: IMAP UIDs repeat across accounts.
 final messageProvider =
@@ -18,6 +23,7 @@ final messageProvider =
   return ref.watch(mailApiClientProvider).fetchAccountMessage(
         accountId: request.accountId,
         messageId: request.messageId,
+        remoteImages: request.remoteImages,
       );
 });
 
@@ -36,6 +42,18 @@ class MessagePage extends ConsumerStatefulWidget {
 }
 
 class _MessagePageState extends ConsumerState<MessagePage> {
+  // Per-view only: remote images are never remembered across messages.
+  bool _showRemoteImages = false;
+
+  @override
+  void didUpdateWidget(MessagePage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.messageId != widget.messageId ||
+        oldWidget.accountId != widget.accountId) {
+      _showRemoteImages = false;
+    }
+  }
+
   // Local overrides until the server confirms; null means "as loaded".
   bool? _seen;
   bool? _flagged;
@@ -81,7 +99,11 @@ class _MessagePageState extends ConsumerState<MessagePage> {
       if (flagged != null) _confirmedFlagged = flagged;
       container.invalidate(accountMessagesProvider(id));
       container.invalidate(
-        messageProvider((messageId: messageId, accountId: id)),
+        messageProvider((
+          messageId: messageId,
+          accountId: id,
+          remoteImages: _showRemoteImages,
+        )),
       );
     } catch (_) {
       if (!mounted) return;
@@ -107,7 +129,11 @@ class _MessagePageState extends ConsumerState<MessagePage> {
 
   @override
   Widget build(BuildContext context) {
-    final request = (messageId: messageId, accountId: accountId);
+    final request = (
+      messageId: messageId,
+      accountId: accountId,
+      remoteImages: _showRemoteImages,
+    );
     final message = ref.watch(messageProvider(request));
     final detail = message.valueOrNull;
     if (!_autoMarked && detail != null) {
@@ -180,7 +206,15 @@ class _MessagePageState extends ConsumerState<MessagePage> {
                 Text('${strings.from}: ${item.sender}'),
                 Text(item.receivedAtLabel),
                 const Divider(height: 32),
-                LinkedMessageBody(body: item.body, links: item.links),
+                if (item.remoteImageCount > 0 && !_showRemoteImages)
+                  _RemoteImageBanner(
+                    count: item.remoteImageCount,
+                    onShow: () => setState(() => _showRemoteImages = true),
+                  ),
+                if (item.html.isNotEmpty)
+                  HtmlMessageBody(html: item.html)
+                else
+                  LinkedMessageBody(body: item.body, links: item.links),
                 if (item.attachments.isNotEmpty)
                   AttachmentList(
                     accountId: accountId,
@@ -212,6 +246,29 @@ class _MessagePageState extends ConsumerState<MessagePage> {
     context.go(
       '/accounts/${item.accountId ?? accountId}/compose',
       extra: ReplyDraft.from(item, strings, all: all),
+    );
+  }
+}
+
+class _RemoteImageBanner extends ConsumerWidget {
+  const _RemoteImageBanner({required this.count, required this.onShow});
+
+  final int count;
+  final VoidCallback onShow;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final strings = ref.watch(appStringsProvider);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Row(
+        children: [
+          const Icon(Icons.shield_outlined, size: 18),
+          const SizedBox(width: 8),
+          Expanded(child: Text(strings.remoteImagesBlocked(count))),
+          TextButton(onPressed: onShow, child: Text(strings.showImagesOnce)),
+        ],
+      ),
     );
   }
 }

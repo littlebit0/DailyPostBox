@@ -117,6 +117,8 @@ export interface IncomingMessageContent {
   text: string;
   truncated: boolean;
   links: IncomingMessageLink[];
+  /** Raw HTML alternative. Must go through sanitizeHtml before leaving the server. */
+  html?: string;
   attachments: IncomingMessageAttachment[];
   // Read from the server on each body fetch, so messages saved before reply
   // support still get a Message-ID without a stored-data migration.

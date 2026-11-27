@@ -234,6 +234,7 @@ export class ImapReceiver implements MailReceiver {
       const bodyParts = selectBodyParts(message.bodyStructure);
       let htmlFallback: IncomingMessageContent | null = null;
       let htmlLinks: IncomingMessageLink[] = [];
+      let rawHtml: string | undefined;
 
       for (const bodyPart of bodyParts) {
         const download = await client.download(
@@ -251,11 +252,14 @@ export class ImapReceiver implements MailReceiver {
         if (bodyPart.type.toLowerCase() !== "text/html") {
           const text = cleanMessageText(decoded);
           if (text) {
-            return { text, truncated, links: htmlLinks, attachments, thread };
+            return { text, truncated, links: htmlLinks, html: rawHtml, attachments, thread };
           }
           continue;
         }
 
+        // A truncated HTML part is incomplete: leave html empty so the client
+        // shows the complete plain-text body instead.
+        if (!truncated) rawHtml ??= decoded;
         htmlLinks = mergeMessageLinks(
           htmlLinks,
           extractMessageLinks(decoded)
@@ -279,13 +283,18 @@ export class ImapReceiver implements MailReceiver {
             text,
             truncated,
             links: htmlLinks,
+            html: rawHtml,
             attachments,
             thread
           };
         }
       }
 
-      if (htmlFallback) return { ...htmlFallback, links: htmlLinks };
+      if (htmlFallback) return { ...htmlFallback, links: htmlLinks, html: rawHtml };
+      // Image-only HTML has no extractable text but still needs html returned.
+      if (rawHtml) {
+        return { text: "", truncated: false, links: htmlLinks, html: rawHtml, attachments, thread };
+      }
       return { text: "", truncated: false, links: [], attachments, thread };
     } finally {
       await client.logout().catch(() => undefined);
