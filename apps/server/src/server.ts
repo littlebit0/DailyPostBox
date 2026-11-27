@@ -7,12 +7,14 @@ import { ImapReceiver } from "./mail/ImapReceiver.js";
 import { Pop3Receiver } from "./mail/Pop3Receiver.js";
 import { SmtpSender } from "./mail/SmtpSender.js";
 import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { ApnsPushNotifier } from "./notifications/ApnsPushNotifier.js";
 import { NoopPushNotifier } from "./notifications/PushNotifier.js";
 import type { PushNotifier } from "./notifications/PushNotifier.js";
 import { InMemoryAccountRepository } from "./workers/AccountRepository.js";
 import type { AccountRepository } from "./workers/AccountRepository.js";
 import { LocalFileAccountRepository } from "./workers/LocalFileAccountRepository.js";
+import { SnoozeStore } from "./workers/SnoozeStore.js";
 import { MailSyncWorker } from "./workers/MailSyncWorker.js";
 import { SendQueue } from "./mail/SendQueue.js";
 import { registerRoutes } from "./api/routes.js";
@@ -48,6 +50,23 @@ const worker = new MailSyncWorker(accounts, imap, pop3, push, {
   imapReconnectMaxDelayMs: 60_000
 });
 
+const snoozes = new SnoozeStore(
+  localDataPath ? join(dirname(localDataPath), "snoozes.json") : undefined,
+  async (entry) => {
+    const message = (await accounts.listInbox("demo-user")).find(
+      (item) => item.accountId === entry.accountId &&
+        item.providerMessageId === entry.messageKey
+    );
+    // The message may have been removed since it was snoozed.
+    if (!message) return;
+    // Respects the per-account notification switch (#63).
+    const account = await accounts.getAccount(entry.accountId);
+    if (!account || account.notificationsEnabled === false) return;
+    await push.notifyNewMessage(await accounts.listPushTargets("demo-user"), message);
+  }
+);
+await snoozes.load();
+
 const sendQueue = new SendQueue(sender, (error) =>
   app.log.error({ err: error }, "mail send failed")
 );
@@ -57,6 +76,7 @@ await registerRoutes(app, {
   sender,
   sendQueue,
   accounts,
+  snoozes,
   validateAccount: async (account) => {
     if (account.incomingProtocol === "imap") {
       await imap.testConnection(account);
@@ -139,6 +159,7 @@ app.addHook("onReady", () => {
 
 app.addHook("onClose", async () => {
   await worker.stop();
+  snoozes.stop();
 });
 
 await app.listen({

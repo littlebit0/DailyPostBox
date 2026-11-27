@@ -4,6 +4,7 @@ import Fastify from "fastify";
 import type { MessageFlagChange } from "../src/domain/types.js";
 import { registerRoutes } from "../src/api/routes.js";
 import { InMemoryAccountRepository } from "../src/workers/AccountRepository.js";
+import { SnoozeStore } from "../src/workers/SnoozeStore.js";
 
 async function setup(failServer = false) {
   const now = new Date();
@@ -34,6 +35,7 @@ async function setup(failServer = false) {
   const app = Fastify();
   await registerRoutes(app, {
     accounts,
+    snoozes: new SnoozeStore(undefined, () => undefined),
     sender: {} as never,
     validateAccount: async () => undefined,
     fetchMessageContent: async () => {

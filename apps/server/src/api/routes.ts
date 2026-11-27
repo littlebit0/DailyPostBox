@@ -22,6 +22,7 @@ import type {
   ProviderId
 } from "../domain/types.js";
 import type { AccountRepository } from "../workers/AccountRepository.js";
+import type { SnoozeStore } from "../workers/SnoozeStore.js";
 import { sanitizeHtml } from "../mail/safeHtml.js";
 import { replyFields } from "../mail/replyRecipients.js";
 import { providerRegistry } from "../providers/providerRegistry.js";
@@ -136,6 +137,7 @@ export async function registerRoutes(
     sender: MailSender;
     sendQueue?: SendQueue;
     accounts: AccountRepository;
+    snoozes: SnoozeStore;
     validateAccount: (account: MailAccount) => Promise<void>;
     fetchMessageContent: (
       account: MailAccount,
@@ -164,6 +166,13 @@ export async function registerRoutes(
     stopAccountSync: (accountId: string) => Promise<void>;
   }
 ): Promise<void> {
+  // Hides pending snoozes and floats woken messages to the top.
+  const visibleMessages = (messages: IncomingMessageSummary[]) => messages
+    .filter((message) => !deps.snoozes.isHidden(message.accountId, message.providerMessageId))
+    .sort((a, b) =>
+      deps.snoozes.sortTime(b.accountId, b.providerMessageId, b.receivedAt) -
+      deps.snoozes.sortTime(a.accountId, a.providerMessageId, a.receivedAt)
+    );
   const sendQueue =
     deps.sendQueue ??
     new SendQueue(deps.sender, (error) => app.log.error({ err: error }, "mail send failed"));
@@ -247,6 +256,7 @@ export async function registerRoutes(
     }
     await deps.stopAccountSync(params.id);
     await deps.accounts.deleteAccount(params.id);
+    await deps.snoozes.removeAccount(params.id);
     return reply.code(204).send();
   });
 
@@ -385,7 +395,7 @@ export async function registerRoutes(
 
     const messages = await deps.accounts.listInbox(demoUserId);
     return withThreadInfo(
-      messages.filter((message) => message.accountId === params.id)
+      visibleMessages(messages.filter((message) => message.accountId === params.id))
     ).map((message) => ({
         ...message,
         id: message.providerMessageId,
@@ -405,7 +415,7 @@ export async function registerRoutes(
 
     const messages = await deps.accounts.listInbox(demoUserId);
     return withThreadInfo(
-      messages.filter((message) => message.accountId === params.id)
+      visibleMessages(messages.filter((message) => message.accountId === params.id))
     )
       .filter((message) => message.threadId === params.threadId)
       .sort((a, b) => a.receivedAt.getTime() - b.receivedAt.getTime())
@@ -443,7 +453,9 @@ export async function registerRoutes(
     }
 
     const messages = await deps.searchMessages(account, query);
-    return messages.map((message) => ({
+    return messages
+      .filter((message) => !deps.snoozes.isHidden(message.accountId, message.providerMessageId))
+      .map((message) => ({
       ...message,
       id: message.providerMessageId,
       receivedAt: message.receivedAt.toISOString()
@@ -579,12 +591,44 @@ export async function registerRoutes(
 
   app.get("/mail/inbox", async () => {
     const messages = await deps.accounts.listInbox(demoUserId);
-    return messages.map((message) => ({
+    return visibleMessages(messages).map((message) => ({
       ...message,
       id: message.providerMessageId,
       receivedAt: message.receivedAt.toISOString(),
       ...flagState(message)
     }));
+  });
+
+  // Snooze only hides the message inside DailyPostBox; the mail server is untouched.
+  app.post("/accounts/:accountId/messages/:messageId/snooze", async (request, reply) => {
+    const params = z.object({
+      accountId: z.string(),
+      messageId: z.string()
+    }).parse(request.params);
+    const body = z.object({ wakeAt: z.string().datetime({ offset: true }) }).parse(request.body);
+    const wakeAt = new Date(body.wakeAt);
+    if (wakeAt.getTime() <= Date.now()) {
+      return reply.code(400).send({ error: "다시 알림 시각은 현재보다 이후여야 합니다." });
+    }
+    const messages = await deps.accounts.listInbox(demoUserId);
+    const exists = messages.some(
+      (item) => item.accountId === params.accountId &&
+        item.providerMessageId === params.messageId
+    );
+    if (!exists) {
+      return reply.code(404).send({ error: "Message not found" });
+    }
+    const entry = await deps.snoozes.snooze(params.accountId, params.messageId, wakeAt);
+    return reply.code(200).send({ wakeAt: entry.wakeAt });
+  });
+
+  app.delete("/accounts/:accountId/messages/:messageId/snooze", async (request, reply) => {
+    const params = z.object({
+      accountId: z.string(),
+      messageId: z.string()
+    }).parse(request.params);
+    await deps.snoozes.cancel(params.accountId, params.messageId);
+    return reply.code(204).send();
   });
 
   // 10 MiB: explicit cap on the send body (Fastify default is 1 MiB).

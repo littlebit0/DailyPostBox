@@ -10,6 +10,7 @@ import 'attachment_list.dart';
 import 'html_message_body.dart';
 import 'linked_message_body.dart';
 import 'reply_draft.dart';
+import 'snooze_options.dart';
 
 typedef MessageRequest = ({
   String messageId,
@@ -191,6 +192,34 @@ class _MessagePageState extends ConsumerState<MessagePage> {
                 icon: const Icon(Icons.reply_all),
               ),
             ],
+            PopupMenuButton<String>(
+              tooltip: strings.snooze,
+              icon: const Icon(Icons.snooze),
+              onSelected: (choice) =>
+                  widget._snooze(context, ref, strings, choice, accountId),
+              itemBuilder: (context) {
+                final now = DateTime.now();
+                return [
+                  if (snoozeTonight(now).isAfter(now))
+                    PopupMenuItem(
+                      value: 'tonight',
+                      child: Text(strings.snoozeTonight),
+                    ),
+                  PopupMenuItem(
+                    value: 'tomorrow',
+                    child: Text(strings.snoozeTomorrow),
+                  ),
+                  PopupMenuItem(
+                    value: 'nextWeek',
+                    child: Text(strings.snoozeNextWeek),
+                  ),
+                  PopupMenuItem(
+                    value: 'custom',
+                    child: Text(strings.snoozeCustom),
+                  ),
+                ];
+              },
+            ),
           ],
         ),
         Expanded(
@@ -270,5 +299,76 @@ class _RemoteImageBanner extends ConsumerWidget {
         ],
       ),
     );
+  }
+}
+
+extension on MessagePage {
+  Future<void> _snooze(
+    BuildContext context,
+    WidgetRef ref,
+    AppStrings strings,
+    String choice,
+    String accountId,
+  ) async {
+    final now = DateTime.now();
+    DateTime? wakeAt = switch (choice) {
+      'tonight' => snoozeTonight(now),
+      'tomorrow' => snoozeTomorrowMorning(now),
+      'nextWeek' => snoozeNextWeek(now),
+      _ => null,
+    };
+    if (choice == 'custom') {
+      final date = await showDatePicker(
+        context: context,
+        initialDate: now.add(const Duration(days: 1)),
+        firstDate: now,
+        lastDate: now.add(const Duration(days: 365)),
+      );
+      if (date == null || !context.mounted) return;
+      final time = await showTimePicker(
+        context: context,
+        initialTime: const TimeOfDay(hour: 9, minute: 0),
+      );
+      if (time == null) return;
+      wakeAt = DateTime(
+        date.year,
+        date.month,
+        date.day,
+        time.hour,
+        time.minute,
+      );
+    }
+    if (wakeAt == null || !context.mounted) return;
+
+    final messenger = ScaffoldMessenger.of(context);
+    final router = GoRouter.of(context);
+    // The container outlives this page, so it is safe to use after the await.
+    final container = ProviderScope.containerOf(context);
+    try {
+      await container
+          .read(mailApiClientProvider)
+          .snoozeMessage(
+            accountId: accountId,
+            messageId: messageId,
+            wakeAt: wakeAt,
+          );
+    } catch (_) {
+      messenger.showSnackBar(SnackBar(content: Text(strings.snoozeFailed)));
+      return;
+    }
+    container.invalidate(accountMessagesProvider(accountId));
+    scheduleSnoozeWakeRefresh(
+      wakeAt,
+      () => container.invalidate(accountMessagesProvider(accountId)),
+    );
+    if (context.mounted) {
+      router.go(
+        '/accounts/$accountId/mail',
+        extra: const {'disableTransition': true},
+      );
+    }
+    final label =
+        '${wakeAt.month}/${wakeAt.day} ${wakeAt.hour.toString().padLeft(2, '0')}:${wakeAt.minute.toString().padLeft(2, '0')}';
+    messenger.showSnackBar(SnackBar(content: Text(strings.snoozed(label))));
   }
 }
