@@ -1,9 +1,11 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/app_menu_bar.dart';
 import '../../core/i18n/language_controller.dart';
 import '../../services/mail_api_client.dart';
 import '../../widgets/app_shell.dart';
@@ -47,6 +49,47 @@ class AccountMailboxPage extends ConsumerWidget {
   }
 }
 
+class _MoveSelectionIntent extends Intent {
+  const _MoveSelectionIntent(this.delta);
+
+  final int delta;
+}
+
+class _OpenSelectedIntent extends Intent {
+  const _OpenSelectedIntent();
+}
+
+class _ComposeIntent extends Intent {
+  const _ComposeIntent();
+}
+
+class _FocusSearchIntent extends Intent {
+  const _FocusSearchIntent();
+}
+
+class _ShowHelpIntent extends Intent {
+  const _ShowHelpIntent();
+}
+
+/// Single-key shortcuts must not fire while the user types in a text field.
+bool _typingInTextField() =>
+    FocusManager.instance.primaryFocus?.context
+        ?.findAncestorWidgetOfExactType<EditableText>() !=
+    null;
+
+class _GuardedCallbackAction<T extends Intent> extends CallbackAction<T> {
+  _GuardedCallbackAction({required super.onInvoke, this.requiredFocus});
+
+  /// When set, the action runs only while this node itself has primary focus,
+  /// so focused buttons and rows keep their default activation.
+  final FocusNode? requiredFocus;
+
+  @override
+  bool isEnabled(T intent) =>
+      !_typingInTextField() &&
+      (requiredFocus == null || requiredFocus!.hasPrimaryFocus);
+}
+
 class _MailboxContent extends ConsumerStatefulWidget {
   const _MailboxContent({required this.account});
 
@@ -62,6 +105,14 @@ class _MailboxContentState extends ConsumerState<_MailboxContent> {
   final _searchController = TextEditingController();
   Future<List<MailSummary>>? _search;
   String? _category;
+  final _searchFocus = FocusNode(debugLabel: 'mailbox search');
+  String? _selectedId;
+  final _rowKeys = <String, GlobalKey>{};
+  final _mailboxFocus = FocusNode(debugLabel: 'mailbox');
+  // Rows currently shown (search results or the filtered/threaded list), so
+  // j/k/Enter follow exactly what the user sees.
+  List<MailSummary> _shownItems = const [];
+  bool _shownThreaded = false;
 
   static bool _busy(MailAccountSummary account) =>
       account.threadBackfilling ||
@@ -69,10 +120,24 @@ class _MailboxContentState extends ConsumerState<_MailboxContent> {
 
   bool get _isSyncing => _busy(widget.account);
 
+  late final _menuNotifier = ref.read(mailboxMenuCommandsProvider);
+  late final _menuCommands = MailboxMenuCommands(
+    compose: _compose,
+    openSelected: _openSelected,
+    next: () => _moveSelection(1),
+    previous: () => _moveSelection(-1),
+    showHelp: _showHelp,
+  );
+
   @override
   void initState() {
     super.initState();
     _configureRefreshTimer();
+    // The menu bar sits above this widget; update it after the frame so an
+    // ancestor is never marked dirty during build or tree finalization.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _menuNotifier.value = _menuCommands;
+    });
   }
 
   @override
@@ -102,8 +167,16 @@ class _MailboxContentState extends ConsumerState<_MailboxContent> {
 
   @override
   void dispose() {
+    final notifier = _menuNotifier;
+    final commands = _menuCommands;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      // Another mailbox may have registered meanwhile; only clear our own.
+      if (notifier.value == commands) notifier.value = null;
+    });
     _refreshTimer?.cancel();
     _searchController.dispose();
+    _searchFocus.dispose();
+    _mailboxFocus.dispose();
     super.dispose();
   }
 
@@ -159,15 +232,123 @@ class _MailboxContentState extends ConsumerState<_MailboxContent> {
     if (mounted && _refreshTimer == null) _scheduleRefresh();
   }
 
-  Widget _messageList(List<MailSummary> items, {bool threaded = false}) {
-    final account = widget.account;
+  void _moveSelection(int delta) {
+    final items = _shownItems;
+    if (items.isEmpty) return;
+    final current = items.indexWhere((item) => item.id == _selectedId);
+    final next = current == -1
+        ? (delta > 0 ? 0 : items.length - 1)
+        : (current + delta).clamp(0, items.length - 1);
+    final id = items[next].id;
+    setState(() => _selectedId = id);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final rowContext = _rowKeys[id]?.currentContext;
+      if (rowContext != null) Scrollable.ensureVisible(rowContext);
+    });
+  }
+
+  void _openMessage(MailSummary message, {bool threaded = false}) {
+    final accountId = widget.account.id;
+    context.go(
+      threaded && message.threadCount > 1
+          ? '/accounts/$accountId/threads/${Uri.encodeComponent(message.threadId!)}'
+          : '/accounts/$accountId/messages/${Uri.encodeComponent(message.id)}',
+      extra: const {'disableTransition': true},
+    );
+  }
+
+  void _openSelected() {
+    final selected =
+        _shownItems.where((item) => item.id == _selectedId).firstOrNull;
+    if (selected != null) _openMessage(selected, threaded: _shownThreaded);
+  }
+
+  void _compose() => context.go('/accounts/${widget.account.id}/compose');
+
+  void _showHelp() {
     final strings = ref.read(appStringsProvider);
+    final rows = [
+      ('j', strings.shortcutNextMessage),
+      ('k', strings.shortcutPreviousMessage),
+      ('Enter', strings.shortcutOpenMessage),
+      ('/', strings.shortcutFocusSearch),
+      ('c', strings.compose),
+      ('?', strings.shortcutHelp),
+    ];
+    showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(strings.shortcutHelp),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (final (key, label) in rows)
+              ListTile(
+                dense: true,
+                leading: Text(
+                  key,
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+                title: Text(label),
+              ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: Text(strings.close),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _withShortcuts(Widget child) {
+    return Shortcuts(
+      shortcuts: const {
+        CharacterActivator('j'): _MoveSelectionIntent(1),
+        CharacterActivator('k'): _MoveSelectionIntent(-1),
+        SingleActivator(LogicalKeyboardKey.enter): _OpenSelectedIntent(),
+        CharacterActivator('/'): _FocusSearchIntent(),
+        CharacterActivator('c'): _ComposeIntent(),
+        CharacterActivator('?'): _ShowHelpIntent(),
+      },
+      child: Actions(
+        actions: {
+          _MoveSelectionIntent: _GuardedCallbackAction<_MoveSelectionIntent>(
+            onInvoke: (intent) => _moveSelection(intent.delta),
+          ),
+          _OpenSelectedIntent: _GuardedCallbackAction<_OpenSelectedIntent>(
+            onInvoke: (_) => _openSelected(),
+            requiredFocus: _mailboxFocus,
+          ),
+          _FocusSearchIntent: _GuardedCallbackAction<_FocusSearchIntent>(
+            onInvoke: (_) => _searchFocus.requestFocus(),
+          ),
+          _ComposeIntent: _GuardedCallbackAction<_ComposeIntent>(
+            onInvoke: (_) => _compose(),
+          ),
+          _ShowHelpIntent: _GuardedCallbackAction<_ShowHelpIntent>(
+            onInvoke: (_) => _showHelp(),
+          ),
+        },
+        child: Focus(focusNode: _mailboxFocus, autofocus: true, child: child),
+      ),
+    );
+  }
+
+  Widget _messageList(List<MailSummary> items, {bool threaded = false}) {
+    final strings = ref.read(appStringsProvider);
+    _shownItems = items;
+    _shownThreaded = threaded;
     return ListView.separated(
       itemCount: items.length,
       separatorBuilder: (context, index) => const Divider(height: 1),
       itemBuilder: (context, index) {
         final message = items[index];
         return ListTile(
+          key: _rowKeys.putIfAbsent(message.id, GlobalKey.new),
+          selected: message.id == _selectedId,
           minLeadingWidth: 28,
           leading: Icon(
             message.unread
@@ -199,12 +380,7 @@ class _MailboxContentState extends ConsumerState<_MailboxContent> {
               ),
             ],
           ),
-          onTap: () => context.go(
-            threaded && message.threadCount > 1
-                ? '/accounts/${account.id}/threads/${Uri.encodeComponent(message.threadId!)}'
-                : '/accounts/${account.id}/messages/${Uri.encodeComponent(message.id)}',
-            extra: const {'disableTransition': true},
-          ),
+          onTap: () => _openMessage(message, threaded: threaded),
         );
       },
     );
@@ -216,8 +392,11 @@ class _MailboxContentState extends ConsumerState<_MailboxContent> {
     final messages = ref.watch(accountMessagesProvider(account.id));
     final threaded = ref.watch(threadViewProvider);
     final strings = ref.watch(appStringsProvider);
+    // _messageList refills this when rows are shown.
+    _shownItems = const [];
 
-    return Column(
+    return _withShortcuts(
+      Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         AppBar(
@@ -270,6 +449,7 @@ class _MailboxContentState extends ConsumerState<_MailboxContent> {
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
           child: TextField(
             controller: _searchController,
+            focusNode: _searchFocus,
             textInputAction: TextInputAction.search,
             onSubmitted: _runSearch,
             decoration: InputDecoration(
@@ -378,6 +558,7 @@ class _MailboxContentState extends ConsumerState<_MailboxContent> {
                 ),
         ),
       ],
+    ),
     );
   }
 }
