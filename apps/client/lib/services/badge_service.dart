@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/services.dart';
@@ -18,6 +19,8 @@ final unreadCountProvider = Provider<int>((ref) {
   return count;
 });
 
+const badgeRefreshInterval = Duration(seconds: 30);
+
 /// Pushes every change of the unread count to the Dock badge.
 final badgeSyncProvider = Provider<void>((ref) {
   ref.listen<int>(
@@ -25,6 +28,17 @@ final badgeSyncProvider = Provider<void>((ref) {
     (_, count) => ref.read(badgeServiceProvider).setUnreadCount(count),
     fireImmediately: true,
   );
+
+  // The mailbox page polls only the open account, and the server saves new
+  // mail at any time, so the badge refreshes every account on its own.
+  final timer = Timer.periodic(badgeRefreshInterval, (_) {
+    final accounts = ref.read(accountsProvider).valueOrNull ?? const [];
+    ref.invalidate(accountsProvider);
+    for (final account in accounts) {
+      ref.invalidate(accountMessagesProvider(account.id));
+    }
+  });
+  ref.onDispose(timer.cancel);
 });
 
 class BadgeService {

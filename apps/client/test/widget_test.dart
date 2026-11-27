@@ -431,10 +431,9 @@ void main() {
             return accountLoads == 1 ? const [syncing] : const [idle];
           }),
           providersProvider.overrideWith((ref) async => const []),
-          accountMessagesProvider.overrideWith((ref, accountId) async {
-            messageLoads += 1;
-            return const [];
-          }),
+          mailApiClientProvider.overrideWithValue(
+            _CountingMessagesApi((_) => messageLoads += 1),
+          ),
         ],
         child: const DailyPostBoxApp(),
       ),
@@ -598,6 +597,8 @@ void main() {
         overrides: [
           accountsProvider.overrideWith((ref) async => accounts),
           providersProvider.overrideWith((ref) async => providers),
+          // The Dock badge loads every account's list; keep it off the network.
+          mailApiClientProvider.overrideWithValue(_CountingMessagesApi((_) {})),
         ],
         child: const DailyPostBoxApp(),
       ),
@@ -771,6 +772,86 @@ void main() {
     await container.read(accountMessagesProvider('b').future);
 
     expect(container.read(unreadCountProvider), 2);
+  });
+
+  test('mail list JSON maps the synced seen flag to unread', () {
+    MailSummary parse(Object? seen) => MailSummary.fromJson({
+          'id': '1',
+          if (seen != null) 'seen': seen,
+        });
+    expect(parse(true).unread, isFalse);
+    expect(parse(false).unread, isTrue);
+    expect(parse(null).unread, isTrue);
+  });
+
+  MailAccountSummary badgeAccount(String id, String syncStatus) =>
+      MailAccountSummary(
+        id: id,
+        providerId: 'gmail',
+        emailAddress: '$id@example.com',
+        incomingProtocol: 'imap',
+        authMode: 'oauth2',
+        syncStatus: syncStatus,
+        syncError: null,
+        initialSync: InitialSyncOption.recommended,
+        lastSyncedAtLabel: 'now',
+      );
+
+  testWidgets('badge refetches a mailbox list once its sync finishes', (
+    tester,
+  ) async {
+    var status = 'syncing';
+    var fetches = 0;
+    final container = ProviderContainer(
+      overrides: [
+        badgeServiceProvider.overrideWithValue(_NoopBadgeService()),
+        accountsProvider.overrideWith(
+          (ref) async => [badgeAccount('a', status)],
+        ),
+        mailApiClientProvider.overrideWithValue(
+          _CountingMessagesApi((_) => fetches++),
+        ),
+      ],
+    );
+    addTearDown(container.dispose);
+    container.listen(badgeSyncProvider, (_, __) {});
+    await tester.pump(const Duration(milliseconds: 1));
+    await tester.pump(const Duration(milliseconds: 1));
+    expect(fetches, 1);
+
+    status = 'idle';
+    container.invalidate(accountsProvider);
+    await tester.pump(const Duration(milliseconds: 1));
+    await tester.pump(const Duration(milliseconds: 1));
+    expect(fetches, 2);
+    container.dispose();
+  });
+
+  testWidgets('badge periodically refreshes every account list', (
+    tester,
+  ) async {
+    final fetches = <String, int>{};
+    final container = ProviderContainer(
+      overrides: [
+        badgeServiceProvider.overrideWithValue(_NoopBadgeService()),
+        accountsProvider.overrideWith(
+          (ref) async => [badgeAccount('a', 'idle'), badgeAccount('b', 'idle')],
+        ),
+        mailApiClientProvider.overrideWithValue(
+          _CountingMessagesApi((id) => fetches[id] = (fetches[id] ?? 0) + 1),
+        ),
+      ],
+    );
+    addTearDown(container.dispose);
+    container.listen(badgeSyncProvider, (_, __) {});
+    await tester.pump(const Duration(milliseconds: 1));
+    await tester.pump(const Duration(milliseconds: 1));
+    expect(fetches, {'a': 1, 'b': 1});
+
+    await tester.pump(badgeRefreshInterval);
+    await tester.pump(const Duration(milliseconds: 1));
+    expect(fetches, {'a': 2, 'b': 2});
+    container.dispose();
   });
 
   test('merges word boxes into one continuous underline per line', () {
@@ -1179,5 +1260,22 @@ class _AccountRecordingApi extends MailApiClient {
     ConnectionOverride? connectionOverride,
   }) async {
     added.add(connectionOverride?.toJson());
+  }
+}
+
+class _NoopBadgeService extends BadgeService {
+  @override
+  Future<void> setUnreadCount(int count) async {}
+}
+
+class _CountingMessagesApi extends MailApiClient {
+  _CountingMessagesApi(this.onFetch) : super(baseUrl: 'http://127.0.0.1:1');
+
+  final void Function(String accountId) onFetch;
+
+  @override
+  Future<List<MailSummary>> fetchAccountMessages(String accountId) async {
+    onFetch(accountId);
+    return const [];
   }
 }
