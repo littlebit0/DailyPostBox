@@ -16,6 +16,7 @@ import type { AccountRepository } from "./workers/AccountRepository.js";
 import { LocalFileAccountRepository } from "./workers/LocalFileAccountRepository.js";
 import { SnoozeStore } from "./workers/SnoozeStore.js";
 import { MailSyncWorker } from "./workers/MailSyncWorker.js";
+import { SendQueue } from "./mail/SendQueue.js";
 import { registerRoutes } from "./api/routes.js";
 import { OAuthAccountFlow } from "./auth/OAuthAccountFlow.js";
 import { OAuthTokenManager } from "./auth/OAuthTokenManager.js";
@@ -58,13 +59,22 @@ const snoozes = new SnoozeStore(
     );
     // The message may have been removed since it was snoozed.
     if (!message) return;
+    // Respects the per-account notification switch (#63).
+    const account = await accounts.getAccount(entry.accountId);
+    if (!account || account.notificationsEnabled === false) return;
     await push.notifyNewMessage(await accounts.listPushTargets("demo-user"), message);
   }
 );
 await snoozes.load();
 
+const sendQueue = new SendQueue(sender, (error) =>
+  app.log.error({ err: error }, "mail send failed")
+);
+app.addHook("onClose", async () => sendQueue.flush());
+
 await registerRoutes(app, {
   sender,
+  sendQueue,
   accounts,
   snoozes,
   validateAccount: async (account) => {
@@ -83,6 +93,27 @@ await registerRoutes(app, {
       message.providerMessageId
     );
   },
+  setMessageFlags: async (account, message, change) => {
+    if (account.incomingProtocol !== "imap") {
+      throw Object.assign(
+        new Error("Flag sync is only supported for IMAP accounts."),
+        { statusCode: 501 }
+      );
+    }
+    await imap.setFlags(account, message.mailbox, message.providerMessageId, change);
+  },
+  downloadAttachment: async (account, message, part) => {
+    const receiver = account.incomingProtocol === "imap" ? imap : pop3;
+    return receiver.downloadAttachment(
+      account,
+      message.mailbox,
+      message.providerMessageId,
+      part
+    );
+  },
+  searchMessages: async (account, query) => imap.search(account, query),
+  fetchMessageSummary: async (account, providerMessageId) =>
+    imap.fetchSummary(account, "INBOX", providerMessageId),
   startAccountSync: async (account) => worker.startAccount(account),
   resumeAccountSync: async (account) => worker.resumeAccount(account),
   stopAccountSync: async (accountId) => worker.stopAccount(accountId)
@@ -135,6 +166,10 @@ await app.listen({
   port: env.PORT,
   host: env.HOST
 });
+
+for (const signal of ["SIGINT", "SIGTERM"] as const) {
+  process.once(signal, () => void app.close().finally(() => process.exit(0)));
+}
 
 function createPushNotifier(): PushNotifier {
   if (env.PUSH_PROVIDER !== "apns") return new NoopPushNotifier();

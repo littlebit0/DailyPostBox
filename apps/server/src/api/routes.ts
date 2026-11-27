@@ -1,23 +1,40 @@
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyRequest } from "fastify";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
+import type { SearchObject } from "imapflow";
 import type { MailSender } from "../mail/MailSender.js";
+import { withThreadInfo } from "../mail/threading.js";
+import {
+  SendQueue,
+  SendQueueFullError,
+  defaultUndoDelaySeconds,
+  undoDelaySeconds
+} from "../mail/SendQueue.js";
 import type {
+  AttachmentDownload,
   AuthMode,
   IncomingMessageContent,
   IncomingMessageSummary,
   MailAccount,
+  MessageFlagChange,
   MailProtocol,
   OutgoingMessageDraft,
   ProviderId
 } from "../domain/types.js";
 import type { AccountRepository } from "../workers/AccountRepository.js";
 import type { SnoozeStore } from "../workers/SnoozeStore.js";
+import { sanitizeHtml } from "../mail/safeHtml.js";
+import { replyFields } from "../mail/replyRecipients.js";
 import { providerRegistry } from "../providers/providerRegistry.js";
 import {
   applySyncFailure,
   isAuthenticationFailure
 } from "../mail/authenticationFailure.js";
+import {
+  SearchQueryError,
+  parseSearchQuery,
+  toImapSearch
+} from "../mail/searchQuery.js";
 
 const sendSchema = z.object({
   accountId: z.string(),
@@ -26,7 +43,15 @@ const sendSchema = z.object({
   bcc: z.array(z.string().email()).optional(),
   subject: z.string().default(""),
   html: z.string().optional(),
-  text: z.string().optional()
+  text: z.string().optional(),
+  delaySeconds: z
+    .number()
+    .refine((value) => (undoDelaySeconds as readonly number[]).includes(value), {
+      message: `delaySeconds must be one of ${undoDelaySeconds.join(", ")}`
+    })
+    .default(defaultUndoDelaySeconds),
+  inReplyTo: z.string().regex(/^<[^<>\s]+>$/).optional(),
+  references: z.array(z.string().regex(/^<[^<>\s]+>$/)).optional()
 });
 
 const pushTokenSchema = z.object({
@@ -70,14 +95,47 @@ const accountSchema = z.object({
       message: `${provider.displayName} does not support ${account.authMode} authentication.`
     });
   }
+  // The custom provider has no default host to fall back on.
+  if (account.providerId === "custom" &&
+    (!account.connectionOverride?.incoming || !account.connectionOverride.outgoing)) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["connectionOverride"],
+      message: "사용자 지정 메일 서버는 수신(IMAP)·발신(SMTP) 서버 주소와 포트가 필요합니다."
+    });
+  }
 });
 
 const demoUserId = "demo-user";
+
+// shortcut: no real auth yet (issue #20), so mail search, the IMAP fallback
+// and attachment downloads require a loopback peer, a loopback Host (blocks
+// DNS rebinding) and no Origin header (browsers send one, the native client
+// does not), unless their opt-out flag is "true".
+function isLocalMailRequest(
+  request: FastifyRequest,
+  optOutFlag: "ALLOW_REMOTE_MAIL_SEARCH" | "ALLOW_REMOTE_MAIL_ACCESS"
+): boolean {
+  if (process.env[optOutFlag] === "true") return true;
+  const host = (request.headers.host ?? "").replace(/:\d+$/, "").toLowerCase();
+  return ["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(request.ip) &&
+    ["127.0.0.1", "localhost", "[::1]"].includes(host) &&
+    request.headers.origin === undefined;
+}
+
+function canReadUnstoredMail(request: FastifyRequest): boolean {
+  return isLocalMailRequest(request, "ALLOW_REMOTE_MAIL_SEARCH");
+}
+
+function canReadAttachments(request: FastifyRequest): boolean {
+  return isLocalMailRequest(request, "ALLOW_REMOTE_MAIL_ACCESS");
+}
 
 export async function registerRoutes(
   app: FastifyInstance,
   deps: {
     sender: MailSender;
+    sendQueue?: SendQueue;
     accounts: AccountRepository;
     snoozes: SnoozeStore;
     validateAccount: (account: MailAccount) => Promise<void>;
@@ -85,6 +143,24 @@ export async function registerRoutes(
       account: MailAccount,
       message: IncomingMessageSummary
     ) => Promise<IncomingMessageContent>;
+    setMessageFlags: (
+      account: MailAccount,
+      message: IncomingMessageSummary,
+      change: MessageFlagChange
+    ) => Promise<void>;
+    downloadAttachment: (
+      account: MailAccount,
+      message: IncomingMessageSummary,
+      part: string
+    ) => Promise<AttachmentDownload | null>;
+    searchMessages: (
+      account: MailAccount,
+      query: SearchObject
+    ) => Promise<IncomingMessageSummary[]>;
+    fetchMessageSummary: (
+      account: MailAccount,
+      providerMessageId: string
+    ) => Promise<IncomingMessageSummary | null>;
     startAccountSync: (account: MailAccount) => Promise<void>;
     resumeAccountSync: (account: MailAccount) => Promise<void>;
     stopAccountSync: (accountId: string) => Promise<void>;
@@ -97,6 +173,9 @@ export async function registerRoutes(
       deps.snoozes.sortTime(b.accountId, b.providerMessageId, b.receivedAt) -
       deps.snoozes.sortTime(a.accountId, a.providerMessageId, a.receivedAt)
     );
+  const sendQueue =
+    deps.sendQueue ??
+    new SendQueue(deps.sender, (error) => app.log.error({ err: error }, "mail send failed"));
 
   app.get("/health", async () => ({ ok: true }));
 
@@ -179,6 +258,41 @@ export async function registerRoutes(
     await deps.accounts.deleteAccount(params.id);
     await deps.snoozes.removeAccount(params.id);
     return reply.code(204).send();
+  });
+
+  app.put("/accounts/:id/signature", async (request, reply) => {
+    const params = z.object({ id: z.string() }).parse(request.params);
+    const body = z.object({ signature: z.string().max(2000) }).parse(request.body);
+    const account = await deps.accounts.getAccount(params.id);
+
+    if (!account || account.userId !== demoUserId) {
+      return reply.code(404).send({ error: "Account not found" });
+    }
+
+    const signature = body.signature.trim();
+    account.signature = signature || undefined;
+    account.updatedAt = new Date();
+    await deps.accounts.updateAccount(account);
+
+    const { encryptedSecretRef: _secret, ...publicAccount } = account;
+    return publicAccount;
+  });
+
+  app.patch("/accounts/:id/notifications", async (request, reply) => {
+    const params = z.object({ id: z.string() }).parse(request.params);
+    const body = z.object({ enabled: z.boolean() }).parse(request.body);
+    const account = await deps.accounts.getAccount(params.id);
+
+    if (!account || account.userId !== demoUserId) {
+      return reply.code(404).send({ error: "Account not found" });
+    }
+
+    account.notificationsEnabled = body.enabled;
+    account.updatedAt = new Date();
+    await deps.accounts.updateAccount(account);
+
+    const { encryptedSecretRef: _secret, ...publicAccount } = account;
+    return publicAccount;
   });
 
   app.post("/accounts/:id/validate", async (request, reply) => {
@@ -280,12 +394,72 @@ export async function registerRoutes(
     }
 
     const messages = await deps.accounts.listInbox(demoUserId);
-    return visibleMessages(messages.filter((message) => message.accountId === params.id))
+    return withThreadInfo(
+      visibleMessages(messages.filter((message) => message.accountId === params.id))
+    ).map((message) => ({
+        ...message,
+        id: message.providerMessageId,
+        receivedAt: message.receivedAt.toISOString(),
+        ...flagState(message)
+      }));
+  });
+
+  app.get("/accounts/:id/threads/:threadId", async (request, reply) => {
+    const params = z.object({ id: z.string(), threadId: z.string() })
+      .parse(request.params);
+    const account = await deps.accounts.getAccount(params.id);
+
+    if (!account || account.userId !== demoUserId) {
+      return reply.code(404).send({ error: "Account not found" });
+    }
+
+    const messages = await deps.accounts.listInbox(demoUserId);
+    return withThreadInfo(
+      visibleMessages(messages.filter((message) => message.accountId === params.id))
+    )
+      .filter((message) => message.threadId === params.threadId)
+      .sort((a, b) => a.receivedAt.getTime() - b.receivedAt.getTime())
       .map((message) => ({
         ...message,
         id: message.providerMessageId,
-        receivedAt: message.receivedAt.toISOString()
+        receivedAt: message.receivedAt.toISOString(),
+        ...flagState(message)
       }));
+  });
+
+  app.get("/accounts/:id/search", async (request, reply) => {
+    if (!canReadUnstoredMail(request)) {
+      return reply.code(403).send({ error: "Search is only available locally." });
+    }
+    const params = z.object({ id: z.string() }).parse(request.params);
+    const { q } = z.object({ q: z.string().max(500) }).parse(request.query);
+    const account = await deps.accounts.getAccount(params.id);
+
+    if (!account || account.userId !== demoUserId) {
+      return reply.code(404).send({ error: "Account not found" });
+    }
+    if (account.incomingProtocol !== "imap") {
+      return reply.code(400).send({ error: "Search needs an IMAP account." });
+    }
+
+    let query: SearchObject;
+    try {
+      query = toImapSearch(parseSearchQuery(q));
+    } catch (error) {
+      if (error instanceof SearchQueryError) {
+        return reply.code(400).send({ error: error.message });
+      }
+      throw error;
+    }
+
+    const messages = await deps.searchMessages(account, query);
+    return messages
+      .filter((message) => !deps.snoozes.isHidden(message.accountId, message.providerMessageId))
+      .map((message) => ({
+      ...message,
+      id: message.providerMessageId,
+      receivedAt: message.receivedAt.toISOString()
+    }));
   });
 
   app.get("/accounts/:accountId/messages/:messageId", async (request, reply) => {
@@ -300,6 +474,50 @@ export async function registerRoutes(
     }
 
     const messages = await deps.accounts.listInbox(demoUserId);
+    // Search results can point at mail that was never imported.
+    const message = messages.find(
+      (item) => item.accountId === params.accountId &&
+        item.providerMessageId === params.messageId
+    ) ?? (account.incomingProtocol === "imap" && canReadUnstoredMail(request)
+      ? await deps.fetchMessageSummary(account, params.messageId)
+      : null);
+    if (!message) {
+      return reply.code(404).send({ error: "Message not found" });
+    }
+
+    const content = await deps.fetchMessageContent(account, message);
+
+    return {
+      ...message,
+      id: message.providerMessageId,
+      receivedAt: message.receivedAt.toISOString(),
+      ...flagState(message),
+      body: content.text,
+      bodyTruncated: content.truncated,
+      bodyLinks: content.links,
+      attachments: content.attachments,
+      ...replyFields(message, content, account),
+      ...safeHtmlFields(content, request.query)
+    };
+  });
+
+  app.post("/accounts/:accountId/messages/:messageId/flags", async (request, reply) => {
+    const params = z.object({
+      accountId: z.string(),
+      messageId: z.string()
+    }).parse(request.params);
+    const change = z.object({
+      seen: z.boolean().optional(),
+      flagged: z.boolean().optional()
+    }).refine((value) => value.seen !== undefined || value.flagged !== undefined, {
+      message: "seen or flagged is required."
+    }).parse(request.body);
+    const account = await deps.accounts.getAccount(params.accountId);
+
+    if (!account || account.userId !== demoUserId) {
+      return reply.code(404).send({ error: "Account not found" });
+    }
+    const messages = await deps.accounts.listInbox(demoUserId);
     const message = messages.find(
       (item) => item.accountId === params.accountId &&
         item.providerMessageId === params.messageId
@@ -308,48 +526,77 @@ export async function registerRoutes(
       return reply.code(404).send({ error: "Message not found" });
     }
 
-    const content = await deps.fetchMessageContent(account, message);
-
-    return {
-      ...message,
-      id: message.providerMessageId,
-      receivedAt: message.receivedAt.toISOString(),
-      body: content.text,
-      bodyTruncated: content.truncated,
-      bodyLinks: content.links
-    };
+    // Server first: the local copy only changes once the mail server accepted it.
+    await deps.setMessageFlags(account, message, change);
+    await deps.accounts.updateMessageFlags(
+      params.accountId,
+      params.messageId,
+      change
+    );
+    return flagState({ ...message, ...change });
   });
+
+  app.get(
+    "/accounts/:accountId/messages/:messageId/attachments/:part",
+    async (request, reply) => {
+      if (!canReadAttachments(request)) {
+        return reply.code(403).send({ error: "Attachments are only available locally." });
+      }
+      const params = z.object({
+        accountId: z.string(),
+        messageId: z.string(),
+        part: z.string().regex(/^\d+(\.\d+)*$/)
+      }).parse(request.params);
+      const account = await deps.accounts.getAccount(params.accountId);
+
+      if (!account || account.userId !== demoUserId) {
+        return reply.code(404).send({ error: "Account not found" });
+      }
+
+      const messages = await deps.accounts.listInbox(demoUserId);
+      // Search results can point at mail that was never imported; this route
+      // is already local-only, and canReadUnstoredMail keeps the search gate.
+      const message = messages.find(
+        (item) => item.accountId === params.accountId &&
+          item.providerMessageId === params.messageId
+      ) ?? (account.incomingProtocol === "imap" && canReadUnstoredMail(request)
+        ? await deps.fetchMessageSummary(account, params.messageId)
+        : null);
+      if (!message) {
+        return reply.code(404).send({ error: "Message not found" });
+      }
+
+      const download = await deps.downloadAttachment(
+        account,
+        message,
+        params.part
+      );
+      if (!download) {
+        return reply.code(404).send({ error: "Attachment not found" });
+      }
+
+      const closeOnce = () => void download.close();
+      reply.raw.once("close", closeOnce);
+      download.stream.once("error", closeOnce);
+      download.stream.once("end", closeOnce);
+      return reply
+        .header("Content-Type", download.contentType)
+        .header(
+          "Content-Disposition",
+          `attachment; filename*=UTF-8''${encodeURIComponent(download.filename)}`
+        )
+        .send(download.stream);
+    }
+  );
 
   app.get("/mail/inbox", async () => {
     const messages = await deps.accounts.listInbox(demoUserId);
     return visibleMessages(messages).map((message) => ({
       ...message,
       id: message.providerMessageId,
-      receivedAt: message.receivedAt.toISOString()
-    }));
-  });
-
-  app.get("/mail/messages/:id", async (request, reply) => {
-    const params = z.object({ id: z.string() }).parse(request.params);
-    const message = await deps.accounts.getMessage(demoUserId, params.id);
-
-    if (!message) {
-      return reply.code(404).send({ error: "Message not found" });
-    }
-    const account = await deps.accounts.getAccount(message.accountId);
-    if (!account || account.userId !== demoUserId) {
-      return reply.code(404).send({ error: "Account not found" });
-    }
-    const content = await deps.fetchMessageContent(account, message);
-
-    return {
-      ...message,
-      id: message.providerMessageId,
       receivedAt: message.receivedAt.toISOString(),
-      body: content.text,
-      bodyTruncated: content.truncated,
-      bodyLinks: content.links
-    };
+      ...flagState(message)
+    }));
   });
 
   // Snooze only hides the message inside DailyPostBox; the mail server is untouched.
@@ -384,16 +631,48 @@ export async function registerRoutes(
     return reply.code(204).send();
   });
 
-  app.post("/mail/send", async (request, reply) => {
-    const draft = sendSchema.parse(request.body) as OutgoingMessageDraft;
+  // 10 MiB: explicit cap on the send body (Fastify default is 1 MiB).
+  app.post("/mail/send", { bodyLimit: 10 * 1024 * 1024 }, async (request, reply) => {
+    const { delaySeconds, ...parsed } = sendSchema.parse(request.body);
+    const draft = parsed as OutgoingMessageDraft;
     const account = await deps.accounts.getAccount(draft.accountId);
 
     if (!account) {
       return reply.code(404).send({ error: "Account not found" });
     }
 
-    const result = await deps.sender.send(account, draft);
-    return reply.code(202).send(result);
+    let queued: { id: string; sendAt: Date };
+    try {
+      queued = sendQueue.enqueue(account, draft, delaySeconds);
+    } catch (error) {
+      if (error instanceof SendQueueFullError) {
+        return reply.code(429).send({ error: "Too many pending sends" });
+      }
+      throw error;
+    }
+    return reply
+      .code(202)
+      .send({ id: queued.id, delaySeconds, sendAt: queued.sendAt.toISOString(), now: new Date().toISOString() });
+  });
+
+  app.get("/mail/send/:id", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const info = sendQueue.status(id);
+    if (!info) return reply.code(404).send({ error: "Send request not found" });
+    return info;
+  });
+
+  app.post("/mail/send/:id/cancel", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const status = sendQueue.cancel(id);
+
+    if (!status) {
+      return reply.code(404).send({ error: "Send request not found" });
+    }
+    if (status !== "cancelled") {
+      return reply.code(409).send({ error: "Message already sent", status });
+    }
+    return reply.code(200).send({ id, status });
   });
 
   app.post("/devices/push-token", async (request, reply) => {
@@ -411,6 +690,15 @@ export async function registerRoutes(
 
 // The mail server's own reply (never the secret) tells IMAP from SMTP
 // rejections apart; Naver also needs IMAP enabled and an app password.
+// Remote images stay blocked unless the client asks with ?remoteImages=allow.
+function safeHtmlFields(content: IncomingMessageContent, query: unknown) {
+  if (!content.html) return { html: "", remoteImageCount: 0 };
+  const allowRemoteImages =
+    (query as { remoteImages?: unknown } | null)?.remoteImages === "allow";
+  const { html, remoteImageCount } = sanitizeHtml(content.html, { allowRemoteImages });
+  return { html: html.trim() ? html : "", remoteImageCount };
+}
+
 function credentialFailureMessage(account: MailAccount, error: unknown): string {
   const detail = error as { responseText?: unknown; response?: unknown };
   const serverReply = typeof detail.responseText === "string"
@@ -426,4 +714,8 @@ function credentialFailureMessage(account: MailAccount, error: unknown): string 
   }
   if (serverReply) parts.push(`(${serverReply})`);
   return parts.join(" ");
+}
+
+function flagState(message: IncomingMessageSummary) {
+  return { seen: message.seen ?? false, flagged: message.flagged ?? false };
 }

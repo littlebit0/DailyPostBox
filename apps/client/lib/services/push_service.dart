@@ -11,7 +11,7 @@ class PushService {
   Future<void> initialize() async {}
 
   /// Whether this platform can register for remote push yet.
-  bool get isSupported => Platform.isMacOS;
+  bool get isSupported => Platform.isMacOS || Platform.isIOS;
 
   /// Asks for notification permission and returns the APNs device token.
   /// Throws a [PlatformException] when permission or registration fails.
