@@ -10,3 +10,21 @@ final accountMessagesProvider =
     FutureProvider.family<List<MailSummary>, String>((ref, accountId) {
   return ref.watch(mailApiClientProvider).fetchAccountMessages(accountId);
 });
+
+final threadMessagesProvider = FutureProvider.autoDispose
+    .family<List<MailSummary>, ({String accountId, String threadId})>(
+        (ref, key) {
+  return ref
+      .watch(mailApiClientProvider)
+      .fetchThread(key.accountId, key.threadId);
+});
+
+class ThreadViewController extends Notifier<bool> {
+  @override
+  bool build() => true;
+
+  void set(bool value) => state = value;
+}
+
+final threadViewProvider =
+    NotifierProvider<ThreadViewController, bool>(ThreadViewController.new);

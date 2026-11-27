@@ -11,10 +11,7 @@ import 'account_providers.dart';
 import 'accounts_page.dart' show reconnectAccount;
 
 class AccountMailboxPage extends ConsumerWidget {
-  const AccountMailboxPage({
-    super.key,
-    required this.accountId,
-  });
+  const AccountMailboxPage({super.key, required this.accountId});
 
   final String accountId;
 
@@ -43,9 +40,8 @@ class AccountMailboxPage extends ConsumerWidget {
           return _MailboxContent(account: account);
         },
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (error, stackTrace) => Center(
-          child: Text(strings.accountLoadFailedTitle),
-        ),
+        error: (error, stackTrace) =>
+            Center(child: Text(strings.accountLoadFailedTitle)),
       ),
     );
   }
@@ -63,9 +59,15 @@ class _MailboxContent extends ConsumerStatefulWidget {
 class _MailboxContentState extends ConsumerState<_MailboxContent> {
   Timer? _refreshTimer;
   bool _refreshing = false;
+  final _searchController = TextEditingController();
+  Future<List<MailSummary>>? _search;
+  String? _category;
 
-  bool get _isSyncing =>
-      const {'syncing', 'validating'}.contains(widget.account.syncStatus);
+  static bool _busy(MailAccountSummary account) =>
+      account.threadBackfilling ||
+      const {'syncing', 'validating'}.contains(account.syncStatus);
+
+  bool get _isSyncing => _busy(widget.account);
 
   @override
   void initState() {
@@ -76,8 +78,13 @@ class _MailboxContentState extends ConsumerState<_MailboxContent> {
   @override
   void didUpdateWidget(covariant _MailboxContent oldWidget) {
     super.didUpdateWidget(oldWidget);
-    final wasSyncing =
-        const {'syncing', 'validating'}.contains(oldWidget.account.syncStatus);
+    if (oldWidget.account.id != widget.account.id) {
+      // Search results belong to the previous account; their UIDs are not
+      // valid for the newly selected one.
+      _searchController.clear();
+      _search = null;
+    }
+    final wasSyncing = _busy(oldWidget.account);
     if (oldWidget.account.id == widget.account.id &&
         wasSyncing &&
         !_isSyncing) {
@@ -88,7 +95,7 @@ class _MailboxContentState extends ConsumerState<_MailboxContent> {
       });
     }
     if (oldWidget.account.id != widget.account.id ||
-        oldWidget.account.syncStatus != widget.account.syncStatus) {
+        _busy(oldWidget.account) != _isSyncing) {
       _configureRefreshTimer();
     }
   }
@@ -96,21 +103,39 @@ class _MailboxContentState extends ConsumerState<_MailboxContent> {
   @override
   void dispose() {
     _refreshTimer?.cancel();
+    _searchController.dispose();
     super.dispose();
   }
 
-  void _configureRefreshTimer() {
-    if (_isSyncing) {
-      if (_refreshTimer == null && !_refreshing) _scheduleRefresh();
-      return;
-    }
+  void _runSearch(String value) {
+    final query = value.trim();
+    setState(() {
+      _search = query.isEmpty
+          ? null
+          : ref
+              .read(mailApiClientProvider)
+              .searchAccountMessages(widget.account.id, query);
+    });
+  }
 
+  void _clearSearch() {
+    _searchController.clear();
+    setState(() => _search = null);
+  }
+
+  // The server saves IDLE mail at any time, so the list keeps polling after
+  // sync too, just less often.
+  Duration get _refreshInterval =>
+      _isSyncing ? const Duration(seconds: 3) : const Duration(seconds: 30);
+
+  void _configureRefreshTimer() {
     _refreshTimer?.cancel();
     _refreshTimer = null;
+    if (!_refreshing) _scheduleRefresh();
   }
 
   void _scheduleRefresh() {
-    _refreshTimer = Timer(const Duration(seconds: 3), () {
+    _refreshTimer = Timer(_refreshInterval, () {
       _refreshTimer = null;
       unawaited(_refresh());
     });
@@ -131,13 +156,65 @@ class _MailboxContentState extends ConsumerState<_MailboxContent> {
     } finally {
       _refreshing = false;
     }
-    if (mounted && _isSyncing && _refreshTimer == null) _scheduleRefresh();
+    if (mounted && _refreshTimer == null) _scheduleRefresh();
+  }
+
+  Widget _messageList(List<MailSummary> items, {bool threaded = false}) {
+    final account = widget.account;
+    final strings = ref.read(appStringsProvider);
+    return ListView.separated(
+      itemCount: items.length,
+      separatorBuilder: (context, index) => const Divider(height: 1),
+      itemBuilder: (context, index) {
+        final message = items[index];
+        return ListTile(
+          minLeadingWidth: 28,
+          leading: Icon(
+            message.unread
+                ? Icons.mark_email_unread_outlined
+                : Icons.mail_outline,
+          ),
+          title: Text(
+            message.subject,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          subtitle: Text(
+            '${message.sender}\n${message.snippet}',
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+          ),
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (message.flagged) ...[
+                const Icon(Icons.star, size: 18, color: Colors.amber),
+                const SizedBox(width: 6),
+              ],
+              Text(
+                threaded && message.threadCount > 1
+                    ? '${strings.threadMessageCount(message.threadCount)}\n${message.receivedAtLabel}'
+                    : message.receivedAtLabel,
+                textAlign: TextAlign.end,
+              ),
+            ],
+          ),
+          onTap: () => context.go(
+            threaded && message.threadCount > 1
+                ? '/accounts/${account.id}/threads/${Uri.encodeComponent(message.threadId!)}'
+                : '/accounts/${account.id}/messages/${Uri.encodeComponent(message.id)}',
+            extra: const {'disableTransition': true},
+          ),
+        );
+      },
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     final account = widget.account;
     final messages = ref.watch(accountMessagesProvider(account.id));
+    final threaded = ref.watch(threadViewProvider);
     final strings = ref.watch(appStringsProvider);
 
     return Column(
@@ -189,81 +266,116 @@ class _MailboxContentState extends ConsumerState<_MailboxContent> {
               ),
             ],
           ),
-        Expanded(
-          child: messages.when(
-            data: (items) {
-              if (items.isEmpty) {
-                return Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      if (_isSyncing)
-                        const SizedBox.square(
-                          dimension: 44,
-                          child: CircularProgressIndicator(strokeWidth: 3),
-                        )
-                      else
-                        Icon(
-                          Icons.inbox_outlined,
-                          size: 56,
-                          color: Theme.of(context).colorScheme.secondary,
-                        ),
-                      const SizedBox(height: 16),
-                      Text(
-                        _isSyncing
-                            ? strings.loadingAccountMail
-                            : strings.noMessagesForAccount,
-                        style: Theme.of(context).textTheme.titleLarge,
-                        textAlign: TextAlign.center,
-                      ),
-                      if (_isSyncing) ...[
-                        const SizedBox(height: 8),
-                        Text(
-                          strings.loadingAccountMailDescription,
-                          textAlign: TextAlign.center,
-                        ),
-                      ],
-                    ],
-                  ),
-                );
-              }
-
-              return ListView.separated(
-                itemCount: items.length,
-                separatorBuilder: (context, index) => const Divider(height: 1),
-                itemBuilder: (context, index) {
-                  final message = items[index];
-                  return ListTile(
-                    minLeadingWidth: 28,
-                    leading: Icon(
-                      message.unread
-                          ? Icons.mark_email_unread_outlined
-                          : Icons.mail_outline,
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+          child: TextField(
+            controller: _searchController,
+            textInputAction: TextInputAction.search,
+            onSubmitted: _runSearch,
+            decoration: InputDecoration(
+              isDense: true,
+              border: const OutlineInputBorder(),
+              prefixIcon: const Icon(Icons.search),
+              hintText: strings.searchHint,
+              suffixIcon: _search == null
+                  ? null
+                  : IconButton(
+                      tooltip: strings.clearSearch,
+                      onPressed: _clearSearch,
+                      icon: const Icon(Icons.close),
                     ),
-                    title: Text(
-                      message.subject,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    subtitle: Text(
-                      '${message.sender}\n${message.snippet}',
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    trailing: Text(message.receivedAtLabel),
-                    onTap: () => context.go(
-                      '/accounts/${account.id}/messages/${Uri.encodeComponent(message.id)}',
-                      extra: const {'disableTransition': true},
-                    ),
-                  );
-                },
-              );
-            },
-            loading: () => const Center(child: CircularProgressIndicator()),
-            error: (error, stackTrace) => Center(
-              child: Text(strings.mailLoadFailedTitle),
             ),
           ),
+        ),
+        Wrap(
+          spacing: 8,
+          children: [
+            for (final (value, label) in [
+              (null, strings.categoryAll),
+              ('person', strings.categoryPerson),
+              ('notification', strings.categoryNotification),
+              ('newsletter', strings.categoryNewsletter),
+            ])
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+                child: ChoiceChip(
+                  label: Text(label),
+                  selected: _category == value,
+                  onSelected: (_) => setState(() => _category = value),
+                ),
+              ),
+          ],
+        ),
+        Expanded(
+          child: _search != null
+              ? FutureBuilder<List<MailSummary>>(
+                  future: _search,
+                  builder: (context, snapshot) {
+                    // A new future keeps the previous snapshot's data/error
+                    // while waiting, so check the state before rendering it.
+                    if (snapshot.connectionState != ConnectionState.done) {
+                      return const Center(child: CircularProgressIndicator());
+                    }
+                    if (snapshot.hasError) {
+                      return Center(child: Text(strings.searchFailedTitle));
+                    }
+                    final results = filterByCategory(snapshot.data!, _category);
+                    if (results.isEmpty) {
+                      return Center(child: Text(strings.noSearchResults));
+                    }
+                    return _messageList(results);
+                  },
+                )
+              : messages.when(
+                  data: (all) {
+                    // Filter first so a thread row shows its newest mail in the category.
+                    final filtered = filterByCategory(all, _category);
+                    final items = threaded ? groupByThread(filtered) : filtered;
+                    if (items.isEmpty) {
+                      return Center(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (_isSyncing)
+                              const SizedBox.square(
+                                dimension: 44,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 3,
+                                ),
+                              )
+                            else
+                              Icon(
+                                Icons.inbox_outlined,
+                                size: 56,
+                                color: Theme.of(context).colorScheme.secondary,
+                              ),
+                            const SizedBox(height: 16),
+                            Text(
+                              _isSyncing
+                                  ? strings.loadingAccountMail
+                                  : strings.noMessagesForAccount,
+                              style: Theme.of(context).textTheme.titleLarge,
+                              textAlign: TextAlign.center,
+                            ),
+                            if (_isSyncing) ...[
+                              const SizedBox(height: 8),
+                              Text(
+                                strings.loadingAccountMailDescription,
+                                textAlign: TextAlign.center,
+                              ),
+                            ],
+                          ],
+                        ),
+                      );
+                    }
+
+                    return _messageList(items, threaded: threaded);
+                  },
+                  loading: () =>
+                      const Center(child: CircularProgressIndicator()),
+                  error: (error, stackTrace) =>
+                      Center(child: Text(strings.mailLoadFailedTitle)),
+                ),
         ),
       ],
     );

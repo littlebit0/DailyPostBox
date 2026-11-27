@@ -17,6 +17,8 @@ MessageDetail _detail({required String html, int blocked = 0}) {
     receivedAtLabel: '',
     html: html,
     remoteImageCount: blocked,
+    // Already read, so opening the page makes no flag request.
+    seen: true,
   );
 }
 
@@ -86,7 +88,8 @@ void main() {
                 : _detail(html: '<p>Hi</p>', blocked: 2);
           }),
         ],
-        child: const MaterialApp(home: MessagePage(messageId: 'm1')),
+        child: const MaterialApp(
+            home: MessagePage(messageId: 'm1', accountId: 'a1')),
       ),
     );
     await tester.pumpAndSettle();
@@ -115,7 +118,7 @@ void main() {
                   : _detail(html: '<p>Hi</p>', blocked: 2);
             }),
           ],
-          child: MaterialApp(home: MessagePage(messageId: id)),
+          child: MaterialApp(home: MessagePage(messageId: id, accountId: 'a1')),
         );
     await tester.pumpWidget(page('m1'));
     await tester.pumpAndSettle();
@@ -140,7 +143,8 @@ void main() {
             (ref, request) async => _detail(html: ''),
           ),
         ],
-        child: const MaterialApp(home: MessagePage(messageId: 'm1')),
+        child: const MaterialApp(
+            home: MessagePage(messageId: 'm1', accountId: 'a1')),
       ),
     );
     await tester.pumpAndSettle();

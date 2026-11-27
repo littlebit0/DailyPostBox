@@ -1,12 +1,20 @@
 import { ImapFlow } from "imapflow";
-import type { FetchMessageObject, MessageStructureObject } from "imapflow";
+import type {
+  FetchMessageObject,
+  MessageStructureObject,
+  SearchObject
+} from "imapflow";
 import { simpleParser } from "mailparser";
 import type { OAuthTokenManager } from "../auth/OAuthTokenManager.js";
 import type {
+  AttachmentDownload,
+  IncomingMessageAttachment,
   IncomingMessageContent,
   IncomingMessageLink,
   IncomingMessageSummary,
-  MailAccount
+  MailAccount,
+  MessageFlagChange,
+  MessageThreadHeaders
 } from "../domain/types.js";
 import { getProvider } from "../providers/providerRegistry.js";
 import {
@@ -22,7 +30,20 @@ import {
   newestFirstUidBatches
 } from "./imapSequenceRanges.js";
 import { isAuthenticationFailure } from "./authenticationFailure.js";
+import {
+  classificationHeaderNames,
+  classifyMessage,
+  parseRawHeaders
+} from "./classifyMessage.js";
+import { Readable } from "node:stream";
+import {
+  decodeTransferEncoding,
+  extractAttachments,
+  rawAttachmentFetch
+} from "./attachments.js";
 import { extractMessageLinks } from "./messageLinks.js";
+import { MAX_HEADER_BYTES, boundMessageId, parseMessageIds } from "./threading.js";
+import { detectImapCapabilities } from "./imapCapabilities.js";
 import { createExistsQueue } from "./existsQueue.js";
 
 export type { ImapSyncCursor } from "./imapSequenceRanges.js";
@@ -46,6 +67,7 @@ export class ImapReceiver implements MailReceiver {
     const client = await this.createClient(account);
     try {
       await client.connect();
+      this.recordCapabilities(account, client);
     } finally {
       await client.logout().catch(() => undefined);
     }
@@ -138,6 +160,56 @@ export class ImapReceiver implements MailReceiver {
     return initial.result;
   }
 
+  /** Re-reads headers of already stored messages (one connection, one mailbox). */
+  async fetchSummariesByUid(
+    account: MailAccount,
+    mailbox: string,
+    uids: number[]
+  ): Promise<{ uidValidity: string; messages: IncomingMessageSummary[] }> {
+    return this.withConnectionRetry(() =>
+      this.withConnectedClient(account, async (client) => {
+        const openedMailbox = await client.mailboxOpen(mailbox, { readOnly: true });
+        return {
+          // Callers compare this across batches: a changed UIDVALIDITY means the UIDs name other messages.
+          uidValidity: String(openedMailbox.uidValidity),
+          messages: uids.length === 0 ? [] : await this.fetchUids(client, account, mailbox, uids)
+        };
+      })
+    );
+  }
+
+  // Searches the server, so messages that were never imported are found too.
+  async search(
+    account: MailAccount,
+    query: SearchObject,
+    limit = 50
+  ): Promise<IncomingMessageSummary[]> {
+    return this.withConnectedClient(account, async (client) => {
+      await client.mailboxOpen("INBOX", { readOnly: true });
+      const found = (await client.search(query, { uid: true })) || [];
+      const newest = found.sort((a, b) => b - a).slice(0, limit);
+      if (newest.length === 0) return [];
+      const summaries = await this.fetchUids(client, account, "INBOX", newest);
+      return summaries.sort(
+        (a, b) => b.receivedAt.getTime() - a.receivedAt.getTime()
+      );
+    });
+  }
+
+  async fetchSummary(
+    account: MailAccount,
+    mailbox: string,
+    providerMessageId: string
+  ): Promise<IncomingMessageSummary | null> {
+    const uid = Number(providerMessageId);
+    if (!Number.isInteger(uid) || uid <= 0) return null;
+    return this.withConnectedClient(account, async (client) => {
+      await client.mailboxOpen(mailbox, { readOnly: true });
+      const [summary] = await this.fetchUids(client, account, mailbox, [uid]);
+      return summary ?? null;
+    });
+  }
+
   async fetchMessageContent(
     account: MailAccount,
     mailbox: string,
@@ -150,13 +222,15 @@ export class ImapReceiver implements MailReceiver {
       await client.mailboxOpen(mailbox, { readOnly: true });
       const message = await client.fetchOne(
         providerMessageId,
-        { bodyStructure: true },
+        { bodyStructure: true, envelope: true, headers: ["references"] },
         { uid: true }
       );
       if (!message || !message.bodyStructure) {
         throw new Error("Message body was not found on the IMAP server.");
       }
 
+      const attachments = extractAttachments(message.bodyStructure);
+      const thread = toThreadHeaders(message);
       const bodyParts = selectBodyParts(message.bodyStructure);
       let htmlFallback: IncomingMessageContent | null = null;
       let htmlLinks: IncomingMessageLink[] = [];
@@ -177,7 +251,9 @@ export class ImapReceiver implements MailReceiver {
 
         if (bodyPart.type.toLowerCase() !== "text/html") {
           const text = cleanMessageText(decoded);
-          if (text) return { text, truncated, links: htmlLinks, html: rawHtml };
+          if (text) {
+            return { text, truncated, links: htmlLinks, html: rawHtml, attachments, thread };
+          }
           continue;
         }
 
@@ -207,7 +283,9 @@ export class ImapReceiver implements MailReceiver {
             text,
             truncated,
             links: htmlLinks,
-            html: rawHtml
+            html: rawHtml,
+            attachments,
+            thread
           };
         }
       }
@@ -215,11 +293,100 @@ export class ImapReceiver implements MailReceiver {
       if (htmlFallback) return { ...htmlFallback, links: htmlLinks, html: rawHtml };
       // Image-only HTML has no extractable text but still needs html returned.
       if (rawHtml) {
-        return { text: "", truncated: false, links: htmlLinks, html: rawHtml };
+        return { text: "", truncated: false, links: htmlLinks, html: rawHtml, attachments, thread };
       }
-      return { text: "", truncated: false, links: [] };
+      return { text: "", truncated: false, links: [], attachments, thread };
     } finally {
       await client.logout().catch(() => undefined);
+    }
+  }
+
+  async setFlags(
+    account: MailAccount,
+    mailbox: string,
+    providerMessageId: string,
+    change: MessageFlagChange
+  ): Promise<void> {
+    await this.withConnectedClient(account, async (client) => {
+      await client.mailboxOpen(mailbox);
+      const options = { uid: true };
+      for (const [flag, value] of [
+        ["\\Seen", change.seen],
+        ["\\Flagged", change.flagged]
+      ] as const) {
+        if (value === undefined) continue;
+        const apply = value ? client.messageFlagsAdd : client.messageFlagsRemove;
+        await apply.call(client, providerMessageId, [flag], options);
+      }
+    });
+  }
+
+  async downloadAttachment(
+    account: MailAccount,
+    mailbox: string,
+    providerMessageId: string,
+    part: string
+  ): Promise<AttachmentDownload | null> {
+    const client = await this.createClient(account);
+    await client.connect();
+    const close = async () => {
+      await client.logout().catch(() => undefined);
+    };
+
+    try {
+      await client.mailboxOpen(mailbox, { readOnly: true });
+      const message = await client.fetchOne(
+        providerMessageId,
+        { bodyStructure: true },
+        { uid: true }
+      );
+      const attachment: IncomingMessageAttachment | undefined = message &&
+        message.bodyStructure
+        ? extractAttachments(message.bodyStructure).find(
+            (item) => item.part === part
+          )
+        : undefined;
+      if (!attachment) {
+        await close();
+        return null;
+      }
+
+      const raw = rawAttachmentFetch(
+        (message as FetchMessageObject).bodyStructure!,
+        part
+      );
+      if (raw) {
+        // shortcut: buffers the whole text part in memory; stream it if large text attachments matter.
+        const fetched = await client.fetchOne(
+          providerMessageId,
+          { bodyParts: [raw.key] },
+          { uid: true }
+        );
+        const bytes = fetched ? fetched.bodyParts?.get(raw.key) : undefined;
+        if (!bytes) {
+          await close();
+          return null;
+        }
+        return {
+          filename: attachment.filename,
+          contentType: attachment.contentType,
+          stream: Readable.from([decodeTransferEncoding(bytes, raw.encoding)]),
+          close
+        };
+      }
+
+      const download = await client.download(providerMessageId, part, {
+        uid: true
+      });
+      return {
+        filename: attachment.filename,
+        contentType: attachment.contentType,
+        stream: download.content,
+        close
+      };
+    } catch (error) {
+      await close();
+      throw error;
     }
   }
 
@@ -251,6 +418,7 @@ export class ImapReceiver implements MailReceiver {
 
     try {
       await client.connect();
+      this.recordCapabilities(account, client);
       await client.mailboxOpen(mailbox);
     } catch (error) {
       stopped = true;
@@ -304,6 +472,14 @@ export class ImapReceiver implements MailReceiver {
     return client;
   }
 
+  // Callers persist the account, so the result survives restarts.
+  private recordCapabilities(account: MailAccount, client: ImapFlow): void {
+    const detected = detectImapCapabilities(client.capabilities);
+    // watch() refuses accounts without supportsImapIdle, so "idle" means IDLE is actually used.
+    detected.idle &&= supportsImapIdle(account);
+    account.incomingCapabilities = detected;
+  }
+
   private async withConnectedClient<T>(
     account: MailAccount,
     operation: (client: ImapFlow) => Promise<T>
@@ -311,6 +487,7 @@ export class ImapReceiver implements MailReceiver {
     const client = await this.createClient(account);
     try {
       await client.connect();
+      this.recordCapabilities(account, client);
       return await operation(client);
     } finally {
       await client.logout().catch(() => undefined);
@@ -347,7 +524,9 @@ export class ImapReceiver implements MailReceiver {
       envelope: true,
       flags: true,
       internalDate: true,
-      uid: true
+      uid: true,
+      threadId: true,
+      headers: [...classificationHeaderNames, "references"]
     }, { uid: true })) {
       const summary = toIncomingMessage(account, mailbox, message);
       if (summary) batch.push(summary);
@@ -381,15 +560,41 @@ function toIncomingMessage(
   const envelope = message.envelope;
   if (!envelope) return null;
 
+  const from = envelope.from?.map((item) => item.address).filter(Boolean).join(", ") ?? "";
+  const headers = parseRawHeaders(message.headers?.subarray(0, MAX_HEADER_BYTES));
   return {
     accountId: account.id,
     providerMessageId: String(message.uid),
     mailbox,
-    from: envelope.from?.map((item) => item.address).filter(Boolean).join(", ") ?? "",
+    from,
     subject: envelope.subject ?? "",
     receivedAt: envelope.date instanceof Date ? envelope.date : new Date(),
     arrivedAt: message.internalDate instanceof Date ? message.internalDate : undefined,
-    hasAttachments: false
+    hasAttachments: false,
+    messageId: boundMessageId(envelope.messageId),
+    inReplyTo: boundMessageId(envelope.inReplyTo),
+    // Only the References value: List-Id/List-Unsubscribe also carry <...> tokens.
+    references: parseMessageIds(headers["references"]),
+    gmailThreadId: message.threadId,
+    seen: message.flags?.has("\\Seen") ?? false,
+    flagged: message.flags?.has("\\Flagged") ?? false,
+    category: classifyMessage(headers, from)
+  };
+}
+
+function toThreadHeaders(message: FetchMessageObject): MessageThreadHeaders {
+  const envelope = message.envelope;
+  const addresses = (list?: Array<{ address?: string }>) =>
+    list?.map((item) => item.address).filter((a): a is string => Boolean(a)) ?? [];
+  // Same bounded parsing as the stored summary fields (threading.ts).
+  return {
+    messageId: boundMessageId(envelope?.messageId),
+    references: parseMessageIds(
+      message.headers?.subarray(0, MAX_HEADER_BYTES).toString("utf8")
+    ),
+    replyTo: addresses(envelope?.replyTo),
+    to: addresses(envelope?.to),
+    cc: addresses(envelope?.cc)
   };
 }
 
