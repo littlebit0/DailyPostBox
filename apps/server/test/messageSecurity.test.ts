@@ -115,3 +115,28 @@ test("detects root S/MIME parts sent with attachment disposition", () => {
   });
   assert.equal(attached.encrypted, null);
 });
+
+test("ignores signatures that do not enclose the displayed body", () => {
+  const signedPart = {
+    type: "multipart/signed",
+    parameters: { protocol: "application/pgp-signature" },
+    childNodes: [text, { type: "application/pgp-signature" }]
+  };
+  const partial = detectMessageSecurity({ type: "multipart/mixed", childNodes: [text, signedPart] });
+  assert.deepEqual(partial, { signed: null, encrypted: null, verified: false });
+  const encryptedPart = {
+    type: "multipart/encrypted",
+    parameters: { protocol: "application/pgp-encrypted" },
+    childNodes: [{ type: "application/pgp-encrypted" }, { type: "application/octet-stream" }]
+  };
+  assert.equal(detectMessageSecurity({ type: "multipart/mixed", childNodes: [text, encryptedPart] }).encrypted, null);
+  const whole = detectMessageSecurity({
+    type: "multipart/signed",
+    parameters: { protocol: "application/pgp-signature" },
+    childNodes: [
+      { type: "multipart/mixed", childNodes: [{ type: "multipart/alternative", childNodes: [text, { type: "text/html" }] }] },
+      { type: "application/pgp-signature" }
+    ]
+  });
+  assert.equal(whole.signed, "openpgp");
+});
