@@ -300,8 +300,11 @@ class MailApiClient {
     );
   }
 
-  Future<void> deleteAccount(String accountId) async {
-    await _dio.delete('/accounts/$accountId');
+  /// Returns the OAuth revoke outcome: revoked, skipped, unsupported or failed.
+  Future<String> deleteAccount(String accountId) async {
+    final response = await _dio.delete('/accounts/$accountId');
+    final data = response.data;
+    return data is Map ? '${data['revoke'] ?? 'skipped'}' : 'skipped';
   }
 
   Future<void> snoozeMessage({

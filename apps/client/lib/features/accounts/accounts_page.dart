@@ -1702,9 +1702,14 @@ Future<void> _confirmDelete(
 
   if (confirmed != true) return;
 
-  await ref.read(mailApiClientProvider).deleteAccount(accountId);
+  final revoke = await ref.read(mailApiClientProvider).deleteAccount(accountId);
   onDeleted();
   ref.invalidate(accountsProvider);
+  if ((revoke == 'failed' || revoke == 'unsupported') && context.mounted) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(strings.revokeNotCompleted)),
+    );
+  }
 }
 
 String _providerName(List<MailProviderSummary> providers, String providerId) {

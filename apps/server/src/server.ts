@@ -19,6 +19,7 @@ import { MailSyncWorker } from "./workers/MailSyncWorker.js";
 import { SendQueue } from "./mail/SendQueue.js";
 import { registerRoutes } from "./api/routes.js";
 import { OAuthAccountFlow } from "./auth/OAuthAccountFlow.js";
+import { OAuthTokenRevoker } from "./auth/OAuthTokenRevoker.js";
 import { OAuthTokenManager } from "./auth/OAuthTokenManager.js";
 
 const app = Fastify({
@@ -38,6 +39,7 @@ const accounts: AccountRepository = localDataPath
   ? new LocalFileAccountRepository(localDataPath)
   : new InMemoryAccountRepository();
 const oauthTokens = new OAuthTokenManager(secrets, accounts);
+const tokenRevoker = new OAuthTokenRevoker(secrets);
 const imap = new ImapReceiver(secrets, oauthTokens);
 const pop3 = new Pop3Receiver();
 const sender = new SmtpSender(secrets, oauthTokens);
@@ -77,6 +79,7 @@ await registerRoutes(app, {
   sendQueue,
   accounts,
   snoozes,
+  revokeOAuthTokens: (account) => tokenRevoker.revoke(account),
   validateAccount: async (account) => {
     if (account.incomingProtocol === "imap") {
       await imap.testConnection(account);

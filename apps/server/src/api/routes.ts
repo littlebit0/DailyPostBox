@@ -22,6 +22,7 @@ import type {
   ProviderId
 } from "../domain/types.js";
 import type { AccountRepository } from "../workers/AccountRepository.js";
+import type { RevokeResult } from "../auth/OAuthTokenRevoker.js";
 import type { SnoozeStore } from "../workers/SnoozeStore.js";
 import { sanitizeHtml } from "../mail/safeHtml.js";
 import { replyFields } from "../mail/replyRecipients.js";
@@ -134,6 +135,7 @@ function canReadAttachments(request: FastifyRequest): boolean {
 export async function registerRoutes(
   app: FastifyInstance,
   deps: {
+    revokeOAuthTokens?: (account: MailAccount) => Promise<RevokeResult>;
     sender: MailSender;
     sendQueue?: SendQueue;
     accounts: AccountRepository;
@@ -268,9 +270,12 @@ export async function registerRoutes(
       return reply.code(404).send({ error: "Account not found" });
     }
     await deps.stopAccountSync(params.id);
+    const revoke = deps.revokeOAuthTokens
+      ? await deps.revokeOAuthTokens(account)
+      : "skipped";
     await deps.accounts.deleteAccount(params.id);
     await deps.snoozes.removeAccount(params.id);
-    return reply.code(204).send();
+    return { revoke };
   });
 
   app.put("/accounts/:id/signature", async (request, reply) => {
