@@ -18,43 +18,56 @@ import 'package:daily_postbox/main.dart';
 import 'package:daily_postbox/services/mail_api_client.dart';
 
 void main() {
-  test('failed attachment download keeps the existing destination file',
-      () async {
-    final dir = Directory.systemTemp.createTempSync('dl');
-    addTearDown(() => dir.deleteSync(recursive: true));
-    final target = File('${dir.path}/a.txt')..writeAsStringSync('keep');
-    final client = MailApiClient(baseUrl: 'http://127.0.0.1:1');
-    await expectLater(
-      client.downloadAttachment(
-          accountId: 'a', messageId: 'm', part: '1', savePath: target.path),
-      throwsA(isA<DioException>()),
-    );
-    expect(target.readAsStringSync(), 'keep');
-    expect(File('${target.path}.part').existsSync(), isFalse);
-  });
+  test(
+    'failed attachment download keeps the existing destination file',
+    () async {
+      final dir = Directory.systemTemp.createTempSync('dl');
+      addTearDown(() => dir.deleteSync(recursive: true));
+      final target = File('${dir.path}/a.txt')..writeAsStringSync('keep');
+      final client = MailApiClient(baseUrl: 'http://127.0.0.1:1');
+      await expectLater(
+        client.downloadAttachment(
+          accountId: 'a',
+          messageId: 'm',
+          part: '1',
+          savePath: target.path,
+        ),
+        throwsA(isA<DioException>()),
+      );
+      expect(target.readAsStringSync(), 'keep');
+      expect(File('${target.path}.part').existsSync(), isFalse);
+    },
+  );
 
-  test('successful attachment download writes destination, leaves no temp',
-      () async {
-    final httpOverrides = HttpOverrides.current;
-    HttpOverrides.global = null; // test binding stubs HTTP with 400
-    addTearDown(() => HttpOverrides.global = httpOverrides);
-    final server = await HttpServer.bind('127.0.0.1', 0);
-    addTearDown(() => server.close(force: true));
-    server.listen((req) {
-      req.response.add([1, 2, 3]);
-      req.response.close();
-    });
-    final dir = Directory.systemTemp.createTempSync('dl');
-    addTearDown(() => dir.deleteSync(recursive: true));
-    final target = File('${dir.path}/a.bin')..writeAsStringSync('old');
-    final sibling = File('${dir.path}/a.bin.part')..writeAsStringSync('other');
-    final client = MailApiClient(baseUrl: 'http://127.0.0.1:${server.port}');
-    await client.downloadAttachment(
-        accountId: 'a', messageId: 'm', part: '1', savePath: target.path);
-    expect(target.readAsBytesSync(), [1, 2, 3]);
-    expect(sibling.readAsStringSync(), 'other');
-    expect(dir.listSync().length, 2);
-  });
+  test(
+    'successful attachment download writes destination, leaves no temp',
+    () async {
+      final httpOverrides = HttpOverrides.current;
+      HttpOverrides.global = null; // test binding stubs HTTP with 400
+      addTearDown(() => HttpOverrides.global = httpOverrides);
+      final server = await HttpServer.bind('127.0.0.1', 0);
+      addTearDown(() => server.close(force: true));
+      server.listen((req) {
+        req.response.add([1, 2, 3]);
+        req.response.close();
+      });
+      final dir = Directory.systemTemp.createTempSync('dl');
+      addTearDown(() => dir.deleteSync(recursive: true));
+      final target = File('${dir.path}/a.bin')..writeAsStringSync('old');
+      final sibling = File('${dir.path}/a.bin.part')
+        ..writeAsStringSync('other');
+      final client = MailApiClient(baseUrl: 'http://127.0.0.1:${server.port}');
+      await client.downloadAttachment(
+        accountId: 'a',
+        messageId: 'm',
+        part: '1',
+        savePath: target.path,
+      );
+      expect(target.readAsBytesSync(), [1, 2, 3]);
+      expect(sibling.readAsStringSync(), 'other');
+      expect(dir.listSync().length, 2);
+    },
+  );
 
   test('replySubject adds Re: once', () {
     expect(replySubject('Hello'), 'Re: Hello');
@@ -76,8 +89,11 @@ void main() {
       contains('2026-11-20 (금) 17:12 a@x.com 님이 작성:'),
     );
     expect(
-      ReplyDraft.from(message, AppStrings(AppLanguage.english), all: false)
-          .body,
+      ReplyDraft.from(
+        message,
+        AppStrings(AppLanguage.english),
+        all: false,
+      ).body,
       contains('On Fri, Nov 20, 2026 at 17:12, a@x.com wrote:'),
     );
   });
@@ -193,8 +209,9 @@ void main() {
     expect(find.text(account.emailAddress), findsWidgets);
   });
 
-  testWidgets('clears search results when switching to another account',
-      (WidgetTester tester) async {
+  testWidgets('clears search results when switching to another account', (
+    WidgetTester tester,
+  ) async {
     const first = MailAccountSummary(
       id: 'account-a',
       providerId: 'gmail',
@@ -227,7 +244,9 @@ void main() {
           mailApiClientProvider.overrideWithValue(api),
           accountsProvider.overrideWith((ref) async => const [first, second]),
           providersProvider.overrideWith((ref) async => const []),
-          accountMessagesProvider.overrideWith((ref, accountId) async => const []),
+          accountMessagesProvider.overrideWith(
+            (ref, accountId) async => const [],
+          ),
         ],
         child: const DailyPostBoxApp(),
       ),
@@ -252,8 +271,9 @@ void main() {
     expect(find.text('invoice'), findsNothing);
   });
 
-  testWidgets('category chips also filter search results',
-      (WidgetTester tester) async {
+  testWidgets('category chips also filter search results', (
+    WidgetTester tester,
+  ) async {
     const account = MailAccountSummary(
       id: 'account-a',
       providerId: 'gmail',
@@ -274,7 +294,9 @@ void main() {
           mailApiClientProvider.overrideWithValue(_SearchApi()),
           accountsProvider.overrideWith((ref) async => const [account]),
           providersProvider.overrideWith((ref) async => const []),
-          accountMessagesProvider.overrideWith((ref, accountId) async => const []),
+          accountMessagesProvider.overrideWith(
+            (ref, accountId) async => const [],
+          ),
         ],
         child: const DailyPostBoxApp(),
       ),
@@ -283,10 +305,12 @@ void main() {
     await tester.tap(find.text(account.emailAddress).first);
     await tester.pumpAndSettle();
     await tester.enterText(
-      find.descendant(
-        of: find.byType(Scaffold).last,
-        matching: find.byType(TextField),
-      ).first,
+      find
+          .descendant(
+            of: find.byType(Scaffold).last,
+            matching: find.byType(TextField),
+          )
+          .first,
       'invoice',
     );
     await tester.testTextInput.receiveAction(TextInputAction.search);
@@ -299,8 +323,9 @@ void main() {
     expect(find.text(_SearchApi.resultSubject), findsNothing);
   });
 
-  testWidgets('shows loading instead of previous results for a new search',
-      (WidgetTester tester) async {
+  testWidgets('shows loading instead of previous results for a new search', (
+    WidgetTester tester,
+  ) async {
     const account = MailAccountSummary(
       id: 'account-a',
       providerId: 'gmail',
@@ -322,7 +347,9 @@ void main() {
           mailApiClientProvider.overrideWithValue(api),
           accountsProvider.overrideWith((ref) async => const [account]),
           providersProvider.overrideWith((ref) async => const []),
-          accountMessagesProvider.overrideWith((ref, accountId) async => const []),
+          accountMessagesProvider.overrideWith(
+            (ref, accountId) async => const [],
+          ),
         ],
         child: const DailyPostBoxApp(),
       ),
@@ -331,10 +358,12 @@ void main() {
 
     await tester.tap(find.text(account.emailAddress).first);
     await tester.pumpAndSettle();
-    final searchField = find.descendant(
-      of: find.byType(Scaffold).last,
-      matching: find.byType(TextField),
-    ).first;
+    final searchField = find
+        .descendant(
+          of: find.byType(Scaffold).last,
+          matching: find.byType(TextField),
+        )
+        .first;
     await tester.enterText(searchField, 'invoice');
     await tester.testTextInput.receiveAction(TextInputAction.search);
     await tester.pump();
@@ -353,8 +382,9 @@ void main() {
     await tester.pumpAndSettle();
   });
 
-  testWidgets('shows a progressive loading state during account sync',
-      (WidgetTester tester) async {
+  testWidgets('shows a progressive loading state during account sync', (
+    WidgetTester tester,
+  ) async {
     const account = MailAccountSummary(
       id: 'syncing-account',
       providerId: 'naver',
@@ -394,8 +424,9 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
-  testWidgets('shows the receive mode from IMAP capabilities',
-      (WidgetTester tester) async {
+  testWidgets('shows the receive mode from IMAP capabilities', (
+    WidgetTester tester,
+  ) async {
     final json = {
       'id': 'a',
       'providerId': 'naver',
@@ -406,7 +437,7 @@ void main() {
       ...json,
       'incomingCapabilities': {
         'idle': false,
-        'checkedAt': '2020-01-01T00:00:00Z'
+        'checkedAt': '2020-01-01T00:00:00Z',
       },
     });
     final unknown = MailAccountSummary.fromJson(json);
@@ -545,8 +576,9 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
-  testWidgets('keeps polling and reloads mail when thread backfill finishes',
-      (WidgetTester tester) async {
+  testWidgets('keeps polling and reloads mail when thread backfill finishes', (
+    WidgetTester tester,
+  ) async {
     const syncing = MailAccountSummary(
       id: 'syncing-account',
       providerId: 'naver',
@@ -693,9 +725,12 @@ void main() {
     await tester.tap(find.widgetWithText(TextButton, '다시 연결'));
     await tester.pumpAndSettle();
     await tester.enterText(
-        find.descendant(
-            of: find.byType(AlertDialog), matching: find.byType(TextField)),
-        'new-app-password');
+      find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.byType(TextField),
+      ),
+      'new-app-password',
+    );
     await tester.tap(find.widgetWithText(FilledButton, '다시 연결'));
     await tester.pumpAndSettle();
 
@@ -1076,8 +1111,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    final controller =
-        tester.widget<TextField>(find.byType(TextField).last).controller!;
+    final controller = tester
+        .widget<TextField>(find.byType(TextField).last)
+        .controller!;
     await tester.showKeyboard(find.byType(TextField).last);
     await tester.pump();
     // Type at the caret the way the platform IME does.
@@ -1100,16 +1136,16 @@ void main() {
     WidgetTester tester,
   ) async {
     MailAccountSummary account(String id) => MailAccountSummary(
-          id: id,
-          providerId: 'gmail',
-          emailAddress: '$id@example.com',
-          incomingProtocol: 'imap',
-          authMode: 'oauth2',
-          syncStatus: 'idle',
-          syncError: null,
-          initialSync: InitialSyncOption.recommended,
-          lastSyncedAtLabel: 'now',
-        );
+      id: id,
+      providerId: 'gmail',
+      emailAddress: '$id@example.com',
+      incomingProtocol: 'imap',
+      authMode: 'oauth2',
+      syncStatus: 'idle',
+      syncError: null,
+      initialSync: InitialSyncOption.recommended,
+      lastSyncedAtLabel: 'now',
+    );
     final api = _SlowSignatureApi();
     var accountLoads = 0;
     await tester.binding.setSurfaceSize(const Size(1200, 1000));
@@ -1161,17 +1197,63 @@ void main() {
     ]);
   });
 
+  testWidgets('shows unsubscribe only for messages with the header', (
+    WidgetTester tester,
+  ) async {
+    MessageDetail detail(Map<String, dynamic> extra) => MessageDetail.fromJson({
+      'id': 'm1',
+      'accountId': 'a1',
+      'from': 'news@example.test',
+      'subject': 'news',
+      'body': 'hi',
+      // Already read, so opening it does not call the flag API.
+      'seen': true,
+      ...extra,
+    });
+    final withHeader = detail({
+      'unsubscribe': {'url': 'https://example.test/u', 'oneClick': false},
+    });
+    expect(withHeader.canUnsubscribe, isTrue);
+    expect(detail({}).canUnsubscribe, isFalse);
+
+    Future<void> pump(MessageDetail item) async {
+      await tester.binding.setSurfaceSize(const Size(1200, 800));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await tester.pumpWidget(const SizedBox());
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            messageProvider.overrideWith((ref, request) async => item),
+          ],
+          child: const MaterialApp(
+            home: MessagePage(messageId: 'm1', accountId: 'a1'),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+    }
+
+    await pump(withHeader);
+    expect(find.text('수신 거부'), findsOneWidget);
+    await pump(detail({}));
+    expect(find.text('수신 거부'), findsNothing);
+  });
+
   test('unclassified mail appears only under All', () {
     MailSummary mail(String id, String? category) => MailSummary(
-          id: id,
-          sender: '',
-          subject: '',
-          snippet: '',
-          receivedAtLabel: '',
-          unread: true,
-          category: category,
-        );
-    final items = [mail('1', null), mail('2', 'person'), mail('3', 'newsletter')];
+      id: id,
+      sender: '',
+      subject: '',
+      snippet: '',
+      receivedAtLabel: '',
+      unread: true,
+      category: category,
+    );
+    final items = [
+      mail('1', null),
+      mail('2', 'person'),
+      mail('3', 'newsletter'),
+    ];
 
     expect(filterByCategory(items, null).map((m) => m.id), ['1', '2', '3']);
     expect(filterByCategory(items, 'person').map((m) => m.id), ['2']);
@@ -1179,24 +1261,28 @@ void main() {
 
   test('groups mail by thread id and keeps unthreaded mail', () {
     MailSummary mail(String id, String? thread) => MailSummary(
-          id: id,
-          sender: '',
-          subject: '',
-          snippet: '',
-          receivedAtLabel: '',
-          unread: true,
-          threadId: thread,
-        );
-
-    final grouped = groupByThread(
-      [mail('1', 'a'), mail('2', 'b'), mail('3', 'a'), mail('4', null)],
+      id: id,
+      sender: '',
+      subject: '',
+      snippet: '',
+      receivedAtLabel: '',
+      unread: true,
+      threadId: thread,
     );
+
+    final grouped = groupByThread([
+      mail('1', 'a'),
+      mail('2', 'b'),
+      mail('3', 'a'),
+      mail('4', null),
+    ]);
 
     expect(grouped.map((item) => item.id), ['1', '2', '4']);
   });
 
-  testWidgets('does not offer the unimplemented POP3 protocol',
-      (WidgetTester tester) async {
+  testWidgets('does not offer the unimplemented POP3 protocol', (
+    WidgetTester tester,
+  ) async {
     const daum = MailProviderSummary(
       id: 'daum',
       displayName: 'Daum / Kakao Mail',
@@ -1227,8 +1313,9 @@ void main() {
     expect(find.byType(TextField), findsWidgets);
     expect(find.text('POP3'), findsNothing);
   });
-  testWidgets('adds a custom mail server account with its server settings',
-      (WidgetTester tester) async {
+  testWidgets('adds a custom mail server account with its server settings', (
+    WidgetTester tester,
+  ) async {
     const custom = MailProviderSummary(
       id: 'custom',
       displayName: 'Custom Mail Server',
@@ -1281,8 +1368,9 @@ void main() {
     });
   });
 
-  testWidgets('shows mail that arrives after sync without a manual refresh',
-      (WidgetTester tester) async {
+  testWidgets('shows mail that arrives after sync without a manual refresh', (
+    WidgetTester tester,
+  ) async {
     const idle = MailAccountSummary(
       id: 'idle-account',
       providerId: 'naver',
@@ -1343,7 +1431,9 @@ void main() {
                 const MessagePage(messageId: 'm1', accountId: 'a1'),
           ),
           GoRoute(
-              path: '/other', builder: (context, state) => const SizedBox()),
+            path: '/other',
+            builder: (context, state) => const SizedBox(),
+          ),
         ],
       );
       await tester.pumpWidget(

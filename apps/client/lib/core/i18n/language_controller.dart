@@ -103,6 +103,16 @@ class AppStrings {
   String quoteHeader(String date, String sender) =>
       _ko ? '$date $sender 님이 작성:' : 'On $date, $sender wrote:';
   String get back => _ko ? '뒤로' : 'Back';
+  String get unsubscribe => _ko ? '수신 거부' : 'Unsubscribe';
+  String get unsubscribeConfirmTitle =>
+      _ko ? '수신 거부 메일을 보낼까요?' : 'Send an unsubscribe email?';
+  String unsubscribeConfirmBody(String address) => _ko
+      ? '$address 로 수신 거부 메일을 보냅니다.'
+      : 'An unsubscribe email will be sent to $address.';
+  String get unsubscribeSent =>
+      _ko ? '수신 거부 메일을 보냈습니다' : 'Unsubscribe email sent';
+  String get unsubscribeFailed =>
+      _ko ? '수신 거부를 처리하지 못했습니다' : 'Could not unsubscribe';
   String get from => _ko ? '보낸 사람' : 'From';
   String get to => _ko ? '받는 사람' : 'To';
   String get recipientRequired =>

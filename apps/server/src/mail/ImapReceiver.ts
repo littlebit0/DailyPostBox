@@ -12,6 +12,7 @@ import type {
   IncomingMessageContent,
   IncomingMessageLink,
   IncomingMessageSummary,
+  ListUnsubscribe,
   MailAccount,
   MessageFlagChange,
   MessageThreadHeaders
@@ -42,6 +43,7 @@ import {
   rawAttachmentFetch
 } from "./attachments.js";
 import { extractMessageLinks } from "./messageLinks.js";
+import { parseListUnsubscribe, readHeader } from "./listUnsubscribe.js";
 import { MAX_HEADER_BYTES, boundMessageId, parseMessageIds } from "./threading.js";
 import { detectImapCapabilities } from "./imapCapabilities.js";
 import { createExistsQueue } from "./existsQueue.js";
@@ -222,12 +224,17 @@ export class ImapReceiver implements MailReceiver {
       await client.mailboxOpen(mailbox, { readOnly: true });
       const message = await client.fetchOne(
         providerMessageId,
-        { bodyStructure: true, envelope: true, headers: ["references"] },
+        {
+          bodyStructure: true,
+          envelope: true,
+          headers: ["references", "list-unsubscribe", "list-unsubscribe-post"]
+        },
         { uid: true }
       );
       if (!message || !message.bodyStructure) {
         throw new Error("Message body was not found on the IMAP server.");
       }
+      const unsubscribe = unsubscribeFromHeaders(message.headers);
 
       const attachments = extractAttachments(message.bodyStructure);
       const thread = toThreadHeaders(message);
@@ -252,7 +259,15 @@ export class ImapReceiver implements MailReceiver {
         if (bodyPart.type.toLowerCase() !== "text/html") {
           const text = cleanMessageText(decoded);
           if (text) {
-            return { text, truncated, links: htmlLinks, html: rawHtml, attachments, thread };
+            return {
+              text,
+              truncated,
+              links: htmlLinks,
+              html: rawHtml,
+              attachments,
+              thread,
+              unsubscribe
+            };
           }
           continue;
         }
@@ -290,12 +305,22 @@ export class ImapReceiver implements MailReceiver {
         }
       }
 
-      if (htmlFallback) return { ...htmlFallback, links: htmlLinks, html: rawHtml };
+      if (htmlFallback) {
+        return { ...htmlFallback, links: htmlLinks, html: rawHtml, unsubscribe };
+      }
       // Image-only HTML has no extractable text but still needs html returned.
       if (rawHtml) {
-        return { text: "", truncated: false, links: htmlLinks, html: rawHtml, attachments, thread };
+        return {
+          text: "",
+          truncated: false,
+          links: htmlLinks,
+          html: rawHtml,
+          attachments,
+          thread,
+          unsubscribe
+        };
       }
-      return { text: "", truncated: false, links: [], attachments, thread };
+      return { text: "", truncated: false, links: [], attachments, thread, unsubscribe };
     } finally {
       await client.logout().catch(() => undefined);
     }
@@ -526,7 +551,8 @@ export class ImapReceiver implements MailReceiver {
       internalDate: true,
       uid: true,
       threadId: true,
-      headers: [...classificationHeaderNames, "references"]
+      // classificationHeaderNames already includes list-unsubscribe.
+      headers: [...classificationHeaderNames, "list-unsubscribe-post", "references"]
     }, { uid: true })) {
       const summary = toIncomingMessage(account, mailbox, message);
       if (summary) batch.push(summary);
@@ -571,6 +597,7 @@ function toIncomingMessage(
     receivedAt: envelope.date instanceof Date ? envelope.date : new Date(),
     arrivedAt: message.internalDate instanceof Date ? message.internalDate : undefined,
     hasAttachments: false,
+    unsubscribe: unsubscribeFromHeaders(message.headers),
     messageId: boundMessageId(envelope.messageId),
     inReplyTo: boundMessageId(envelope.inReplyTo),
     // Only the References value: List-Id/List-Unsubscribe also carry <...> tokens.
@@ -589,13 +616,22 @@ function toThreadHeaders(message: FetchMessageObject): MessageThreadHeaders {
   // Same bounded parsing as the stored summary fields (threading.ts).
   return {
     messageId: boundMessageId(envelope?.messageId),
+    // Only the References value: List-Unsubscribe is fetched too and carries <...> tokens.
     references: parseMessageIds(
-      message.headers?.subarray(0, MAX_HEADER_BYTES).toString("utf8")
+      parseRawHeaders(message.headers?.subarray(0, MAX_HEADER_BYTES))["references"]
     ),
     replyTo: addresses(envelope?.replyTo),
     to: addresses(envelope?.to),
     cc: addresses(envelope?.cc)
   };
+}
+
+function unsubscribeFromHeaders(headers: Buffer | undefined): ListUnsubscribe | null {
+  const raw = headers?.toString("utf8") ?? "";
+  return parseListUnsubscribe(
+    readHeader(raw, "List-Unsubscribe"),
+    readHeader(raw, "List-Unsubscribe-Post")
+  ) ?? null;
 }
 
 function toError(error: unknown): Error {

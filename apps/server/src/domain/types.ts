@@ -99,6 +99,8 @@ export interface IncomingMessageSummary {
   // receivedAt, which is the sender-set Date header.
   arrivedAt?: Date;
   hasAttachments: boolean;
+  // undefined: not checked yet (synced before this field existed); null: no header.
+  unsubscribe?: ListUnsubscribe | null;
   category?: "person" | "notification" | "newsletter";
   messageId?: string;
   inReplyTo?: string;
@@ -106,6 +108,13 @@ export interface IncomingMessageSummary {
   gmailThreadId?: string;
   seen?: boolean;
   flagged?: boolean;
+}
+
+export interface ListUnsubscribe {
+  url?: string;
+  mailto?: { address: string; subject?: string; body?: string };
+  // RFC 8058 one-click is only recorded here; handling it is a later stage.
+  oneClick: boolean;
 }
 
 export interface MessageFlagChange {
@@ -117,6 +126,7 @@ export interface IncomingMessageContent {
   text: string;
   truncated: boolean;
   links: IncomingMessageLink[];
+  unsubscribe?: ListUnsubscribe | null;
   /** Raw HTML alternative. Must go through sanitizeHtml before leaving the server. */
   html?: string;
   attachments: IncomingMessageAttachment[];

@@ -166,6 +166,19 @@ export async function registerRoutes(
     stopAccountSync: (accountId: string) => Promise<void>;
   }
 ): Promise<void> {
+  // Messages synced before unsubscribe parsing have no value yet; the UID
+  // cursor never refetches them, so fill it from the detail fetch once.
+  async function backfillUnsubscribe(
+    message: IncomingMessageSummary,
+    content: IncomingMessageContent
+  ): Promise<IncomingMessageSummary> {
+    if (message.unsubscribe !== undefined || content.unsubscribe === undefined) {
+      return message;
+    }
+    const updated = { ...message, unsubscribe: content.unsubscribe };
+    await deps.accounts.saveIncomingMessage(updated);
+    return updated;
+  }
   // Hides pending snoozes and floats woken messages to the top.
   const visibleMessages = (messages: IncomingMessageSummary[]) => messages
     .filter((message) => !deps.snoozes.isHidden(message.accountId, message.providerMessageId))
@@ -474,18 +487,21 @@ export async function registerRoutes(
     }
 
     const messages = await deps.accounts.listInbox(demoUserId);
-    // Search results can point at mail that was never imported.
-    const message = messages.find(
+    const stored = messages.find(
       (item) => item.accountId === params.accountId &&
         item.providerMessageId === params.messageId
-    ) ?? (account.incomingProtocol === "imap" && canReadUnstoredMail(request)
+    );
+    // Search results can point at mail that was never imported.
+    const fetched = stored ?? (account.incomingProtocol === "imap" && canReadUnstoredMail(request)
       ? await deps.fetchMessageSummary(account, params.messageId)
       : null);
-    if (!message) {
+    if (!fetched) {
       return reply.code(404).send({ error: "Message not found" });
     }
 
-    const content = await deps.fetchMessageContent(account, message);
+    const content = await deps.fetchMessageContent(account, fetched);
+    // Only stored mail is backfilled; saving a search-only result would import it.
+    const message = stored ? await backfillUnsubscribe(stored, content) : fetched;
 
     return {
       ...message,
@@ -674,6 +690,42 @@ export async function registerRoutes(
     }
     return reply.code(200).send({ id, status });
   });
+
+  // Sends the mailto: unsubscribe request stored from the message's own
+  // List-Unsubscribe header; the client never supplies the recipient.
+  app.post(
+    "/accounts/:accountId/messages/:messageId/unsubscribe",
+    async (request, reply) => {
+      const params = z.object({
+        accountId: z.string(),
+        messageId: z.string()
+      }).parse(request.params);
+      const account = await deps.accounts.getAccount(params.accountId);
+      if (!account || account.userId !== demoUserId) {
+        return reply.code(404).send({ error: "Account not found" });
+      }
+
+      const message = (await deps.accounts.listInbox(demoUserId)).find(
+        (item) => item.accountId === params.accountId &&
+          item.providerMessageId === params.messageId
+      );
+      if (!message) {
+        return reply.code(404).send({ error: "Message not found" });
+      }
+      const mailto = message.unsubscribe?.mailto;
+      if (!mailto) {
+        return reply.code(400).send({ error: "No mailto unsubscribe address" });
+      }
+
+      await deps.sender.send(account, {
+        accountId: account.id,
+        to: [mailto.address],
+        subject: mailto.subject ?? "unsubscribe",
+        text: mailto.body ?? "unsubscribe"
+      });
+      return reply.code(202).send({ ok: true });
+    }
+  );
 
   app.post("/devices/push-token", async (request, reply) => {
     const body = pushTokenSchema.parse(request.body);

@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/i18n/language_controller.dart';
+import '../../services/browser_launcher.dart';
 import '../../services/mail_api_client.dart';
 import '../accounts/account_providers.dart';
 import '../../widgets/app_shell.dart';
@@ -19,9 +20,13 @@ typedef MessageRequest = ({
 });
 
 // Messages are looked up per account: IMAP UIDs repeat across accounts.
-final messageProvider =
-    FutureProvider.family<MessageDetail, MessageRequest>((ref, request) {
-  return ref.watch(mailApiClientProvider).fetchAccountMessage(
+final messageProvider = FutureProvider.family<MessageDetail, MessageRequest>((
+  ref,
+  request,
+) {
+  return ref
+      .watch(mailApiClientProvider)
+      .fetchAccountMessage(
         accountId: request.accountId,
         messageId: request.messageId,
         remoteImages: request.remoteImages,
@@ -79,15 +84,18 @@ class _MessagePageState extends ConsumerState<MessagePage> {
     // The container outlives this widget, so invalidation still works after dispose.
     final container = ProviderScope.containerOf(context, listen: false);
     final seenVersion = seen != null ? ++_seenVersion : _seenVersion;
-    final flaggedVersion =
-        flagged != null ? ++_flaggedVersion : _flaggedVersion;
+    final flaggedVersion = flagged != null
+        ? ++_flaggedVersion
+        : _flaggedVersion;
     setState(() {
       if (seen != null) _seen = seen;
       if (flagged != null) _flagged = flagged;
     });
     try {
       final run = _queue.then(
-        (_) => container.read(mailApiClientProvider).setMessageFlags(
+        (_) => container
+            .read(mailApiClientProvider)
+            .setMessageFlags(
               accountId: id,
               messageId: messageId,
               seen: seen,
@@ -161,6 +169,11 @@ class _MessagePageState extends ConsumerState<MessagePage> {
           ),
           title: Text(strings.message),
           actions: [
+            if (detail?.canUnsubscribe ?? false)
+              TextButton(
+                onPressed: () => _unsubscribe(context, ref, strings, detail!),
+                child: Text(strings.unsubscribe),
+              ),
             if (detail != null) ...[
               IconButton(
                 tooltip: flagged ? strings.removeStar : strings.addStar,
@@ -370,5 +383,50 @@ extension on MessagePage {
     final label =
         '${wakeAt.month}/${wakeAt.day} ${wakeAt.hour.toString().padLeft(2, '0')}:${wakeAt.minute.toString().padLeft(2, '0')}';
     messenger.showSnackBar(SnackBar(content: Text(strings.snoozed(label))));
+  }
+}
+
+Future<void> _unsubscribe(
+  BuildContext context,
+  WidgetRef ref,
+  AppStrings strings,
+  MessageDetail item,
+) async {
+  final messenger = ScaffoldMessenger.maybeOf(context);
+  final url = item.unsubscribeUrl;
+  var ok = true;
+  if (url != null) {
+    ok = await openExternalBrowser(url);
+  } else {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(strings.unsubscribeConfirmTitle),
+        content: Text(strings.unsubscribeConfirmBody(item.unsubscribeMailto!)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: Text(strings.cancel),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: Text(strings.unsubscribe),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      await ref
+          .read(mailApiClientProvider)
+          .unsubscribeByMail(accountId: item.accountId!, messageId: item.id);
+      messenger?.showSnackBar(SnackBar(content: Text(strings.unsubscribeSent)));
+      return;
+    } catch (_) {
+      ok = false;
+    }
+  }
+  if (!ok) {
+    messenger?.showSnackBar(SnackBar(content: Text(strings.unsubscribeFailed)));
   }
 }
