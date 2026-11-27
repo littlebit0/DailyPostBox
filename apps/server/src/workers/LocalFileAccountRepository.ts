@@ -1,6 +1,6 @@
 import { dirname } from "node:path";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import type { IncomingMessageSummary, MailAccount } from "../domain/types.js";
+import type { IncomingMessageSummary, MailAccount, MessageFlagChange } from "../domain/types.js";
 import type { PushTarget } from "../notifications/PushNotifier.js";
 import type { AccountRepository } from "./AccountRepository.js";
 
@@ -116,14 +116,6 @@ export class LocalFileAccountRepository implements AccountRepository {
       .sort((a, b) => b.receivedAt.getTime() - a.receivedAt.getTime());
   }
 
-  async getMessage(
-    userId: string,
-    messageId: string
-  ): Promise<IncomingMessageSummary | undefined> {
-    const inbox = await this.listInbox(userId);
-    return inbox.find((message) => message.providerMessageId === messageId);
-  }
-
   async saveIncomingMessage(message: IncomingMessageSummary): Promise<boolean> {
     await this.ensureLoaded();
     // A sync still running for a deleted account must not leave mail behind.
@@ -135,6 +127,19 @@ export class LocalFileAccountRepository implements AccountRepository {
     this.messages.set(key, message);
     await this.persist();
     return isNew;
+  }
+
+  async updateMessageFlags(
+    accountId: string,
+    providerMessageId: string,
+    change: MessageFlagChange
+  ): Promise<void> {
+    await this.ensureLoaded();
+    const key = `${accountId}:${providerMessageId}`;
+    const message = this.messages.get(key);
+    if (!message) return;
+    this.messages.set(key, { ...message, ...change });
+    await this.persist();
   }
 
   private async ensureLoaded(): Promise<void> {

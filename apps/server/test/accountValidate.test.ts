@@ -30,6 +30,8 @@ async function validate(syncErrorCode: MailAccount["syncErrorCode"]) {
     fetchMessageContent: async () => {
       throw new Error("unused");
     },
+    setMessageFlags: async () => undefined,
+    downloadAttachment: async () => null,
     startAccountSync: async () => undefined,
     resumeAccountSync: async () => {
       starts += 1;
