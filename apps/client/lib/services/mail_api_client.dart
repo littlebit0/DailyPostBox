@@ -4,10 +4,45 @@ import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+const undoSendDelayOptions = [0, 5, 10, 20, 30];
+
+/// Seconds the server holds a sent mail so it can still be cancelled.
+final undoSendDelayProvider = StateProvider<int>((ref) => 5);
+
+class SendReceipt {
+  const SendReceipt(this.id, this.remaining);
+  final String id;
+  final Duration remaining;
+}
+
+class ComposeDraft {
+  const ComposeDraft({
+    required this.accountId,
+    required this.to,
+    required this.subject,
+    required this.body,
+    this.cc = '',
+    this.inReplyTo,
+    this.references = const [],
+  });
+  final String accountId;
+  final String to;
+  final String cc;
+  final String subject;
+  final String body;
+  final String? inReplyTo;
+  final List<String> references;
+}
+
+class SendOutcome {
+  const SendOutcome({required this.status, this.error, this.draft});
+  final String status;
+  final String? error;
+  final ComposeDraft? draft;
+}
+
 final mailApiClientProvider = Provider<MailApiClient>((ref) {
-  return MailApiClient(
-    baseUrl: resolveMailApiBaseUrl(),
-  );
+  return MailApiClient(baseUrl: resolveMailApiBaseUrl());
 });
 
 String resolveMailApiBaseUrl({
@@ -25,8 +60,7 @@ bool isMailApiConnectionError(Object error) {
     DioExceptionType.connectionTimeout ||
     DioExceptionType.sendTimeout ||
     DioExceptionType.receiveTimeout ||
-    DioExceptionType.badCertificate =>
-      true,
+    DioExceptionType.badCertificate => true,
     DioExceptionType.unknown => error.response == null,
     _ => false,
   };
@@ -34,19 +68,33 @@ bool isMailApiConnectionError(Object error) {
 
 class MailApiClient {
   MailApiClient({required String baseUrl})
-      : _dio = Dio(
-          BaseOptions(
-            baseUrl: baseUrl,
-            connectTimeout: const Duration(seconds: 10),
-            receiveTimeout: const Duration(seconds: 30),
-          ),
-        );
+    : _dio = Dio(
+        BaseOptions(
+          baseUrl: baseUrl,
+          connectTimeout: const Duration(seconds: 10),
+          receiveTimeout: const Duration(seconds: 30),
+        ),
+      );
 
   final Dio _dio;
 
   Future<List<MailSummary>> fetchAccountMessages(String accountId) async {
-    final response =
-        await _dio.get<List<dynamic>>('/accounts/$accountId/messages');
+    final response = await _dio.get<List<dynamic>>(
+      '/accounts/$accountId/messages',
+    );
+    final data = response.data ?? [];
+    return data
+        .map((item) => MailSummary.fromJson(item as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<List<MailSummary>> fetchThread(
+    String accountId,
+    String threadId,
+  ) async {
+    final response = await _dio.get<List<dynamic>>(
+      '/accounts/$accountId/threads/${Uri.encodeComponent(threadId)}',
+    );
     final data = response.data ?? [];
     return data
         .map((item) => MailSummary.fromJson(item as Map<String, dynamic>))
@@ -73,7 +121,8 @@ class MailApiClient {
     final data = response.data ?? [];
     return data
         .map(
-            (item) => MailAccountSummary.fromJson(item as Map<String, dynamic>))
+          (item) => MailAccountSummary.fromJson(item as Map<String, dynamic>),
+        )
         .toList();
   }
 
@@ -81,17 +130,20 @@ class MailApiClient {
     final response = await _dio.get<List<dynamic>>('/providers');
     final data = response.data ?? [];
     return data
-        .map((item) =>
-            MailProviderSummary.fromJson(item as Map<String, dynamic>))
+        .map(
+          (item) => MailProviderSummary.fromJson(item as Map<String, dynamic>),
+        )
         .toList();
   }
 
   Future<MessageDetail> fetchAccountMessage({
     required String accountId,
     required String messageId,
+    bool remoteImages = false,
   }) async {
     final response = await _dio.get<Map<String, dynamic>>(
       '/accounts/$accountId/messages/$messageId',
+      queryParameters: remoteImages ? {'remoteImages': 'allow'} : null,
     );
     return MessageDetail.fromJson(response.data ?? {});
   }
@@ -142,16 +194,19 @@ class MailApiClient {
     required InitialSyncOption initialSync,
     ConnectionOverride? connectionOverride,
   }) async {
-    await _dio.post('/accounts', data: {
-      'providerId': providerId,
-      'emailAddress': emailAddress,
-      'authMode': authMode,
-      'incomingProtocol': incomingProtocol,
-      'secret': secret,
-      'initialSync': initialSync.toJson(),
-      if (connectionOverride != null)
-        'connectionOverride': connectionOverride.toJson(),
-    });
+    await _dio.post(
+      '/accounts',
+      data: {
+        'providerId': providerId,
+        'emailAddress': emailAddress,
+        'authMode': authMode,
+        'incomingProtocol': incomingProtocol,
+        'secret': secret,
+        'initialSync': initialSync.toJson(),
+        if (connectionOverride != null)
+          'connectionOverride': connectionOverride.toJson(),
+      },
+    );
   }
 
   Future<void> validateAccount({
@@ -163,16 +218,19 @@ class MailApiClient {
     required InitialSyncOption initialSync,
     ConnectionOverride? connectionOverride,
   }) async {
-    await _dio.post('/accounts/validate', data: {
-      'providerId': providerId,
-      'emailAddress': emailAddress,
-      'authMode': authMode,
-      'incomingProtocol': incomingProtocol,
-      'secret': secret,
-      'initialSync': initialSync.toJson(),
-      if (connectionOverride != null)
-        'connectionOverride': connectionOverride.toJson(),
-    });
+    await _dio.post(
+      '/accounts/validate',
+      data: {
+        'providerId': providerId,
+        'emailAddress': emailAddress,
+        'authMode': authMode,
+        'incomingProtocol': incomingProtocol,
+        'secret': secret,
+        'initialSync': initialSync.toJson(),
+        if (connectionOverride != null)
+          'connectionOverride': connectionOverride.toJson(),
+      },
+    );
   }
 
   Future<OAuthStartResult> startOAuthLogin({
@@ -181,16 +239,15 @@ class MailApiClient {
   }) async {
     final response = await _dio.post<Map<String, dynamic>>(
       '/auth/$providerId/start',
-      data: {
-        if (reconnectAccountId != null) 'accountId': reconnectAccountId,
-      },
+      data: {if (reconnectAccountId != null) 'accountId': reconnectAccountId},
     );
     return OAuthStartResult.fromJson(response.data ?? {});
   }
 
   Future<OAuthSessionStatus> fetchOAuthSession(String state) async {
-    final response =
-        await _dio.get<Map<String, dynamic>>('/auth/sessions/$state');
+    final response = await _dio.get<Map<String, dynamic>>(
+      '/auth/sessions/$state',
+    );
     return OAuthSessionStatus.fromJson(response.data ?? {});
   }
 
@@ -199,19 +256,33 @@ class MailApiClient {
     required String incomingProtocol,
     required InitialSyncOption initialSync,
   }) async {
-    await _dio.post('/auth/sessions/$state/complete', data: {
-      'incomingProtocol': incomingProtocol,
-      'initialSync': initialSync.toJson(),
-    });
+    await _dio.post(
+      '/auth/sessions/$state/complete',
+      data: {
+        'incomingProtocol': incomingProtocol,
+        'initialSync': initialSync.toJson(),
+      },
+    );
   }
 
   Future<void> updateAccountCredentials({
     required String accountId,
     required String secret,
   }) async {
-    await _dio.put('/accounts/$accountId/credentials', data: {
-      'secret': secret,
-    });
+    await _dio.put(
+      '/accounts/$accountId/credentials',
+      data: {'secret': secret},
+    );
+  }
+
+  Future<void> updateAccountSignature({
+    required String accountId,
+    required String signature,
+  }) async {
+    await _dio.put(
+      '/accounts/$accountId/signature',
+      data: {'signature': signature},
+    );
   }
 
   Future<void> validateStoredAccount(String accountId) async {
@@ -223,43 +294,115 @@ class MailApiClient {
   }
 
   Future<void> setAccountNotifications(String accountId, bool enabled) async {
-    await _dio.patch('/accounts/$accountId/notifications', data: {
-      'enabled': enabled,
-    });
+    await _dio.patch(
+      '/accounts/$accountId/notifications',
+      data: {'enabled': enabled},
+    );
   }
 
-  Future<void> deleteAccount(String accountId) async {
-    await _dio.delete('/accounts/$accountId');
+  /// Returns the OAuth revoke outcome: revoked, skipped, unsupported or failed.
+  Future<String> deleteAccount(String accountId) async {
+    final response = await _dio.delete('/accounts/$accountId');
+    final data = response.data;
+    return data is Map ? '${data['revoke'] ?? 'skipped'}' : 'skipped';
+  }
+
+  Future<void> snoozeMessage({
+    required String accountId,
+    required String messageId,
+    required DateTime wakeAt,
+  }) async {
+    await _dio.post(
+      '/accounts/$accountId/messages/${Uri.encodeComponent(messageId)}/snooze',
+      data: {'wakeAt': wakeAt.toUtc().toIso8601String()},
+    );
   }
 
   Future<void> registerPushToken({
     required String platform,
     required String token,
   }) async {
-    await _dio.post('/devices/push-token', data: {
-      'platform': platform,
-      'token': token,
-    });
+    await _dio.post(
+      '/devices/push-token',
+      data: {'platform': platform, 'token': token},
+    );
   }
 
-  Future<void> sendMail({
+  Future<void> unsubscribeByMail({
+    required String accountId,
+    required String messageId,
+  }) async {
+    await _dio.post('/accounts/$accountId/messages/$messageId/unsubscribe');
+  }
+
+  /// Queues the mail on the server; the receipt carries the id and the server's send deadline.
+  Future<SendReceipt> sendMail({
     required String accountId,
     required List<String> to,
     required String subject,
     required String body,
+    int delaySeconds = 5,
     List<String> cc = const [],
     String? inReplyTo,
     List<String> references = const [],
   }) async {
-    await _dio.post('/mail/send', data: {
-      'accountId': accountId,
-      'to': to,
-      if (cc.isNotEmpty) 'cc': cc,
-      'subject': subject,
-      'text': body,
-      if (inReplyTo != null) 'inReplyTo': inReplyTo,
-      if (inReplyTo != null && references.isNotEmpty) 'references': references,
-    });
+    final elapsed = Stopwatch()..start();
+    final response = await _dio.post(
+      '/mail/send',
+      data: {
+        'accountId': accountId,
+        'to': to,
+        if (cc.isNotEmpty) 'cc': cc,
+        'subject': subject,
+        'text': body,
+        'delaySeconds': delaySeconds,
+        if (inReplyTo != null) 'inReplyTo': inReplyTo,
+        if (inReplyTo != null && references.isNotEmpty)
+          'references': references,
+      },
+    );
+    final data = response.data as Map<String, dynamic>;
+    // remaining = sendAt - server now, so client clock skew does not matter. The whole
+    // round trip is subtracted too: response transit is unknown, so err on the short side.
+    final remaining =
+        DateTime.parse(
+          data['sendAt'] as String,
+        ).difference(DateTime.parse(data['now'] as String)) -
+        elapsed.elapsed;
+    return SendReceipt(data['id'] as String, remaining);
+  }
+
+  /// Returns the resulting status: 'cancelled', or why it could not be cancelled.
+  Future<String> cancelSend(String id) async {
+    final response = await _dio.post(
+      '/mail/send/$id/cancel',
+      options: Options(validateStatus: (code) => code == 200 || code == 409),
+    );
+    return (response.data as Map<String, dynamic>)['status'] as String;
+  }
+
+  Future<SendOutcome> fetchSendOutcome(String id) async {
+    final response = await _dio.get('/mail/send/$id');
+    final data = response.data as Map<String, dynamic>;
+    final draft = data['draft'] as Map<String, dynamic>?;
+    return SendOutcome(
+      status: data['status'] as String,
+      error: data['error'] as String?,
+      draft: draft == null
+          ? null
+          : ComposeDraft(
+              accountId: draft['accountId'] as String,
+              to: (draft['to'] as List).cast<String>().join(', '),
+              cc: ((draft['cc'] as List?) ?? const []).cast<String>().join(
+                ', ',
+              ),
+              subject: draft['subject'] as String? ?? '',
+              body: draft['text'] as String? ?? '',
+              inReplyTo: draft['inReplyTo'] as String?,
+              references: ((draft['references'] as List?) ?? const [])
+                  .cast<String>(),
+            ),
+    );
   }
 }
 
@@ -317,15 +460,22 @@ class MailSummary {
     required this.snippet,
     required this.receivedAtLabel,
     required this.unread,
+    this.category,
+    this.threadId,
+    this.threadCount = 1,
     this.flagged = false,
   });
 
+  /// Null until the server has classified the message.
+  final String? category;
   final String id;
   final String sender;
   final String subject;
   final String snippet;
   final String receivedAtLabel;
   final bool unread;
+  final String? threadId;
+  final int threadCount;
   final bool flagged;
 
   factory MailSummary.fromJson(Map<String, dynamic> json) {
@@ -335,10 +485,29 @@ class MailSummary {
       subject: json['subject'] as String? ?? '',
       snippet: json['snippet'] as String? ?? '',
       receivedAtLabel: _formatReceivedAt(json['receivedAt'] as String?),
+      category: json['category'] as String?,
+      threadId: json['threadId'] as String?,
+      threadCount: json['threadCount'] as int? ?? 1,
       unread: !(json['seen'] as bool? ?? false),
       flagged: json['flagged'] as bool? ?? false,
     );
   }
+}
+
+/// Unclassified mail (null category) shows only under "All".
+List<MailSummary> filterByCategory(List<MailSummary> items, String? category) =>
+    category == null
+    ? items
+    : items.where((m) => m.category == category).toList();
+
+/// Keeps the first (newest) message of each thread. Mail without a thread id
+/// stays as its own row.
+List<MailSummary> groupByThread(List<MailSummary> items) {
+  final seen = <String>{};
+  return [
+    for (final item in items)
+      if (item.threadId == null || seen.add(item.threadId!)) item,
+  ];
 }
 
 class MessageDetail {
@@ -349,6 +518,11 @@ class MessageDetail {
     required this.body,
     required this.links,
     required this.receivedAtLabel,
+    this.authenticationFailures = const [],
+    this.unsubscribeUrl,
+    this.unsubscribeMailto,
+    this.html = '',
+    this.remoteImageCount = 0,
     this.seen = false,
     this.flagged = false,
     this.attachments = const [],
@@ -373,30 +547,50 @@ class MessageDetail {
   final String sender;
   final String subject;
   final String body;
+  final String html;
+  final int remoteImageCount;
   final List<MessageLink> links;
+  final List<String> authenticationFailures;
   final String receivedAtLabel;
+  final String? unsubscribeUrl;
+  final String? unsubscribeMailto;
+
+  bool get canUnsubscribe =>
+      unsubscribeUrl != null ||
+      (unsubscribeMailto != null && accountId != null);
   final List<MessageAttachment> attachments;
   final DateTime? receivedAt;
 
   factory MessageDetail.fromJson(Map<String, dynamic> json) {
+    final unsubscribe = json['unsubscribe'] as Map<String, dynamic>?;
+    final mailto = unsubscribe?['mailto'] as Map<String, dynamic>?;
     return MessageDetail(
+      unsubscribeUrl: unsubscribe?['url'] as String?,
+      unsubscribeMailto: mailto?['address'] as String?,
       id: json['id'] as String? ?? '',
       sender: json['from'] as String? ?? '',
       subject: json['subject'] as String? ?? '',
       body: json['body'] as String? ?? '',
+      html: json['html'] as String? ?? '',
+      remoteImageCount: json['remoteImageCount'] as int? ?? 0,
       links: (json['bodyLinks'] as List<dynamic>? ?? const [])
           .whereType<Map<String, dynamic>>()
           .map(MessageLink.fromJson)
           .toList(growable: false),
       receivedAtLabel: _formatReceivedAt(json['receivedAt'] as String?),
+      authenticationFailures:
+          (json['authenticationFailures'] as List<dynamic>? ?? const [])
+              .whereType<String>()
+              .toList(growable: false),
       seen: json['seen'] as bool? ?? false,
       flagged: json['flagged'] as bool? ?? false,
       attachments: (json['attachments'] as List<dynamic>? ?? const [])
           .whereType<Map<String, dynamic>>()
           .map(MessageAttachment.fromJson)
           .toList(growable: false),
-      receivedAt:
-          DateTime.tryParse(json['receivedAt'] as String? ?? '')?.toLocal(),
+      receivedAt: DateTime.tryParse(
+        json['receivedAt'] as String? ?? '',
+      )?.toLocal(),
       accountId: json['accountId'] as String?,
       messageId: json['messageId'] as String?,
       references: _strings(json['references']),
@@ -471,12 +665,17 @@ class MailAccountSummary {
     this.syncErrorCode,
     required this.initialSync,
     required this.lastSyncedAtLabel,
+    this.signature = '',
+    this.threadBackfilling = false,
+    this.idleSupported,
+    this.capabilitiesCheckedAtLabel = '',
     this.notificationsEnabled = true,
   });
 
   final String id;
   final String providerId;
   final String emailAddress;
+  final String signature;
   final String incomingProtocol;
   final String authMode;
   final String syncStatus;
@@ -484,9 +683,18 @@ class MailAccountSummary {
   final String? syncErrorCode;
   final InitialSyncOption? initialSync;
   final String lastSyncedAtLabel;
+  // Server is still filling thread metadata for older messages.
+  final bool threadBackfilling;
   final bool notificationsEnabled;
 
+  /// Null until the server has logged in and read the IMAP capabilities.
+  final bool? idleSupported;
+  final String capabilitiesCheckedAtLabel;
+
   factory MailAccountSummary.fromJson(Map<String, dynamic> json) {
+    final capabilities = json['incomingCapabilities'] is Map<String, dynamic>
+        ? json['incomingCapabilities'] as Map<String, dynamic>
+        : null;
     return MailAccountSummary(
       id: json['id'] as String,
       providerId: json['providerId'] as String,
@@ -498,9 +706,16 @@ class MailAccountSummary {
       syncErrorCode: json['syncErrorCode'] as String?,
       initialSync: json['initialSync'] is Map<String, dynamic>
           ? InitialSyncOption.fromJson(
-              json['initialSync'] as Map<String, dynamic>)
+              json['initialSync'] as Map<String, dynamic>,
+            )
           : null,
       lastSyncedAtLabel: _formatReceivedAt(json['lastSyncedAt'] as String?),
+      signature: json['signature'] as String? ?? '',
+      threadBackfilling: json['threadBackfill'] == 'running',
+      idleSupported: capabilities?['idle'] as bool?,
+      capabilitiesCheckedAtLabel: _formatReceivedAt(
+        capabilities?['checkedAt'] as String?,
+      ),
       notificationsEnabled: json['notificationsEnabled'] as bool? ?? true,
     );
   }
@@ -514,9 +729,9 @@ class ConnectionOverride {
   final ServerEndpoint outgoing;
 
   Map<String, Object> toJson() => {
-        'incoming': incoming.toJson(),
-        'outgoing': outgoing.toJson(),
-      };
+    'incoming': incoming.toJson(),
+    'outgoing': outgoing.toJson(),
+  };
 }
 
 class ServerEndpoint {
@@ -530,8 +745,11 @@ class ServerEndpoint {
   final int port;
   final bool secure;
 
-  Map<String, Object> toJson() =>
-      {'host': host, 'port': port, 'secure': secure};
+  Map<String, Object> toJson() => {
+    'host': host,
+    'port': port,
+    'secure': secure,
+  };
 }
 
 class InitialSyncOption {
@@ -549,10 +767,7 @@ class InitialSyncOption {
   );
 
   Map<String, Object> toJson() {
-    return {
-      'includePreviousMessages': includePreviousMessages,
-      'limit': limit,
-    };
+    return {'includePreviousMessages': includePreviousMessages, 'limit': limit};
   }
 
   factory InitialSyncOption.fromJson(Map<String, dynamic> json) {

@@ -3,6 +3,7 @@ import test from "node:test";
 import Fastify from "fastify";
 import { registerRoutes } from "../src/api/routes.js";
 import { InMemoryAccountRepository } from "../src/workers/AccountRepository.js";
+import { SnoozeStore } from "../src/workers/SnoozeStore.js";
 import type { IncomingMessageSummary, MailAccount } from "../src/domain/types.js";
 
 const account = {
@@ -27,13 +28,15 @@ async function build() {
   await accounts.addAccount(account);
   let fetched = 0;
   const app = Fastify();
+  const snoozes = new SnoozeStore(undefined, () => undefined);
   await registerRoutes(app, {
     accounts,
+    snoozes,
     searchMessages: async () => [summary],
     fetchMessageSummary: async () => { fetched++; return summary; },
     fetchMessageContent: async () => ({ text: "secret" })
   } as never);
-  return { app, fetched: () => fetched };
+  return { app, snoozes, fetched: () => fetched };
 }
 
 test("loopback may search and use the IMAP fallback", async () => {
@@ -42,6 +45,18 @@ test("loopback may search and use the IMAP fallback", async () => {
   assert.equal(search.statusCode, 200);
   const detail = await app.inject({ url: "/accounts/a1/messages/9", remoteAddress: "::1" });
   assert.equal(detail.statusCode, 200);
+});
+
+test("search results hide snoozed messages", async () => {
+  const { app, snoozes } = await build();
+  await snoozes.snooze("a1", "9", new Date(Date.now() + 60_000));
+  try {
+    const search = await app.inject({ url: "/accounts/a1/search?q=hi", remoteAddress: "127.0.0.1" });
+    assert.equal(search.statusCode, 200);
+    assert.deepEqual(search.json(), []);
+  } finally {
+    await snoozes.cancel("a1", "9");
+  }
 });
 
 test("remote callers get 403 on search and 404 without IMAP fallback", async () => {

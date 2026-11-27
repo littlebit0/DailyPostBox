@@ -3,6 +3,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/date_symbol_data_local.dart';
 
+import 'core/app_menu_bar.dart';
 import 'core/app_router.dart';
 import 'core/app_theme.dart';
 import 'core/i18n/language_controller.dart';
@@ -50,6 +51,7 @@ class DailyPostBoxApp extends ConsumerWidget {
       theme: buildAppTheme(Brightness.light),
       darkTheme: buildAppTheme(Brightness.dark),
       routerConfig: router,
+      builder: (context, child) => AppMenuBar(child: child!),
       debugShowCheckedModeBanner: false,
     );
   }

@@ -14,13 +14,17 @@ final accountMessagesProvider =
     previous,
     next,
   ) {
-    String? status(AsyncValue<List<MailAccountSummary>>? value) =>
-        value?.valueOrNull
-            ?.where((account) => account.id == accountId)
-            .firstOrNull
-            ?.syncStatus;
-    if (_syncingStatuses.contains(status(previous)) &&
-        !_syncingStatuses.contains(status(next))) {
+    // Thread backfill also rewrites the list (thread ids), so treat it as busy.
+    bool busy(AsyncValue<List<MailAccountSummary>>? value) {
+      final account = value?.valueOrNull
+          ?.where((account) => account.id == accountId)
+          .firstOrNull;
+      return account != null &&
+          (account.threadBackfilling ||
+              _syncingStatuses.contains(account.syncStatus));
+    }
+
+    if (busy(previous) && !busy(next)) {
       ref.invalidateSelf();
     }
   });
@@ -28,3 +32,21 @@ final accountMessagesProvider =
 });
 
 const _syncingStatuses = {'syncing', 'validating'};
+
+final threadMessagesProvider = FutureProvider.autoDispose
+    .family<List<MailSummary>, ({String accountId, String threadId})>(
+        (ref, key) {
+  return ref
+      .watch(mailApiClientProvider)
+      .fetchThread(key.accountId, key.threadId);
+});
+
+class ThreadViewController extends Notifier<bool> {
+  @override
+  bool build() => true;
+
+  void set(bool value) => state = value;
+}
+
+final threadViewProvider =
+    NotifierProvider<ThreadViewController, bool>(ThreadViewController.new);

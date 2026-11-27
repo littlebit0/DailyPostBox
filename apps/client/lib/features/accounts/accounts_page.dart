@@ -7,6 +7,7 @@ import '../../core/i18n/language_controller.dart';
 import '../../services/browser_launcher.dart';
 import '../../services/mail_api_client.dart';
 import '../../widgets/app_shell.dart';
+import '../message/compose_page.dart' show composeAccountsProvider;
 import 'account_providers.dart';
 
 export 'account_providers.dart' show accountsProvider, accountMessagesProvider;
@@ -465,6 +466,15 @@ class _AccountDetail extends ConsumerWidget {
               ? strings.neverSynced
               : account.lastSyncedAtLabel,
         ),
+        if (account.incomingProtocol == 'imap') ...[
+          const SizedBox(height: 8),
+          _InfoRow(
+            label: strings.receiveMode,
+            value: _receiveModeLabel(account, strings),
+          ),
+        ],
+        const SizedBox(height: 24),
+        _SignatureEditor(key: ValueKey(account.id), account: account),
         if (account.syncError != null) ...[
           const SizedBox(height: 12),
           Text(
@@ -475,6 +485,95 @@ class _AccountDetail extends ConsumerWidget {
       ],
     );
   }
+}
+
+/// Saves a signature and refreshes caches; lives in the provider scope so it
+/// completes even if the editor widget is disposed mid-request.
+final _saveSignatureProvider = Provider<
+    Future<void> Function(String accountId, String signature)>((ref) {
+  return (accountId, signature) async {
+    await ref.read(mailApiClientProvider).updateAccountSignature(
+          accountId: accountId,
+          signature: signature,
+        );
+    ref.invalidate(accountsProvider);
+    ref.invalidate(composeAccountsProvider);
+  };
+}, name: 'saveSignature');
+
+class _SignatureEditor extends ConsumerStatefulWidget {
+  const _SignatureEditor({super.key, required this.account});
+
+  final MailAccountSummary account;
+
+  @override
+  ConsumerState<_SignatureEditor> createState() => _SignatureEditorState();
+}
+
+class _SignatureEditorState extends ConsumerState<_SignatureEditor> {
+  late final _controller = TextEditingController(text: widget.account.signature);
+  bool _saving = false;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    final strings = ref.read(appStringsProvider);
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    final save = ref.read(_saveSignatureProvider);
+    setState(() => _saving = true);
+    try {
+      await save(widget.account.id, _controller.text);
+      if (!mounted) return;
+      messenger?.showSnackBar(SnackBar(content: Text(strings.signatureSaved)));
+    } catch (error) {
+      if (!mounted) return;
+      messenger?.showSnackBar(
+        SnackBar(content: Text(friendlyError(error, strings))),
+      );
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final strings = ref.watch(appStringsProvider);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        TextField(
+          controller: _controller,
+          minLines: 3,
+          maxLines: 8,
+          maxLength: 2000,
+          decoration: InputDecoration(
+            labelText: strings.signature,
+            helperText: strings.signatureHint,
+            border: const OutlineInputBorder(),
+          ),
+        ),
+        const SizedBox(height: 8),
+        FilledButton(
+          onPressed: _saving ? null : _save,
+          child: Text(strings.save),
+        ),
+      ],
+    );
+  }
+}
+
+String _receiveModeLabel(MailAccountSummary account, AppStrings strings) {
+  final idle = account.idleSupported;
+  if (idle == null) return strings.receiveUnknown;
+  final mode = idle ? strings.receiveRealtime : strings.receivePolling;
+  final checked = account.capabilitiesCheckedAtLabel;
+  return checked.isEmpty
+      ? mode
+      : '$mode · ${strings.capabilitiesChecked} $checked';
 }
 
 class _InfoRow extends StatelessWidget {
@@ -1603,9 +1702,14 @@ Future<void> _confirmDelete(
 
   if (confirmed != true) return;
 
-  await ref.read(mailApiClientProvider).deleteAccount(accountId);
+  final revoke = await ref.read(mailApiClientProvider).deleteAccount(accountId);
   onDeleted();
   ref.invalidate(accountsProvider);
+  if ((revoke == 'failed' || revoke == 'unsupported') && context.mounted) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(strings.revokeNotCompleted)),
+    );
+  }
 }
 
 String _providerName(List<MailProviderSummary> providers, String providerId) {
