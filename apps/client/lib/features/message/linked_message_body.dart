@@ -74,19 +74,17 @@ class _LinkedMessageBodyState extends State<LinkedMessageBody> {
   }
 
   Future<void> _openLink(Uri uri) async {
-    final launcher = widget.linkLauncher ?? _launchExternalLink;
+    final launcher = widget.linkLauncher ?? launchMessageLink;
     await launcher(uri);
   }
 
   @override
   Widget build(BuildContext context) {
-    final baseStyle = Theme.of(context).textTheme.bodyLarge?.copyWith(
-          height: 1.55,
-        );
+    final baseStyle = Theme.of(
+      context,
+    ).textTheme.bodyLarge?.copyWith(height: 1.55);
     final linkColor = Theme.of(context).colorScheme.primary;
-    final linkStyle = baseStyle?.copyWith(
-      color: linkColor,
-    );
+    final linkStyle = baseStyle?.copyWith(color: linkColor);
     final spans = <InlineSpan>[];
     final linkRanges = <TextRange>[];
     var linkIndex = 0;
@@ -97,10 +95,7 @@ class _LinkedMessageBodyState extends State<LinkedMessageBody> {
         spans.add(TextSpan(text: segment.text));
       } else {
         linkRanges.add(
-          TextRange(
-            start: textOffset,
-            end: textOffset + segment.text.length,
-          ),
+          TextRange(start: textOffset, end: textOffset + segment.text.length),
         );
         spans.add(
           TextSpan(
@@ -178,7 +173,10 @@ class _ContinuousLinkUnderlinePainter extends CustomPainter {
       for (final rect in mergeLinkUnderlineBoxes(boxes)) {
         final y = rect.bottom - 1;
         canvas.drawLine(
-            Offset(rect.left, y), Offset(rect.right, y), underlinePaint);
+          Offset(rect.left, y),
+          Offset(rect.right, y),
+          underlinePaint,
+        );
       }
     }
     textPainter.dispose();
@@ -222,7 +220,6 @@ List<Rect> mergeLinkUnderlineBoxes(List<TextBox> boxes) {
   return lines;
 }
 
-@visibleForTesting
 List<MessageBodySegment> parseMessageBody({
   required String body,
   required List<MessageLink> links,
@@ -258,10 +255,7 @@ List<MessageBodySegment> parseMessageBody({
 
     _addPlainText(segments, precedingText);
     segments.add(
-      MessageBodySegment(
-        text: label ?? _readableUriLabel(uri),
-        uri: uri,
-      ),
+      MessageBodySegment(text: label ?? _readableUriLabel(uri), uri: uri),
     );
     _addPlainText(segments, trailingPunctuation);
     cursor = match.end;
@@ -269,6 +263,21 @@ List<MessageBodySegment> parseMessageBody({
 
   _addPlainText(segments, body.substring(cursor));
   return segments;
+}
+
+/// Bare URL ranges in [body] (trailing punctuation excluded), same rules as
+/// [parseMessageBody].
+List<({int start, int end, Uri uri})> findMessageUrls(String body) {
+  final out = <({int start, int end, Uri uri})>[];
+  for (final match in _linkPattern.allMatches(body)) {
+    final enclosed = match.group(1);
+    final url = enclosed ?? _stripTrailingPunctuation(match.group(2)!).url;
+    final uri = _safeUri(url);
+    if (uri == null) continue;
+    final start = match.start + (enclosed != null ? 1 : 0);
+    out.add((start: start, end: start + url.length, uri: uri));
+  }
+  return out;
 }
 
 final _linkPattern = RegExp(
@@ -292,9 +301,7 @@ String? _findLinkLabel({
   required String precedingText,
   required List<MessageLink> links,
 }) {
-  final readableLinks = links.where(
-    (link) => _isReadableLabel(link.label),
-  );
+  final readableLinks = links.where((link) => _isReadableLabel(link.label));
 
   // Some providers generate different tracking URLs for the HTML and plain
   // alternatives. An adjacent anchor label is therefore stronger evidence
@@ -357,6 +364,6 @@ void _addPlainText(List<MessageBodySegment> segments, String text) {
   segments.add(MessageBodySegment(text: text));
 }
 
-Future<bool> _launchExternalLink(Uri uri) {
+Future<bool> launchMessageLink(Uri uri) {
   return launchUrl(uri, mode: LaunchMode.externalApplication);
 }
