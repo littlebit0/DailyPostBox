@@ -65,7 +65,7 @@ export function parseCalendarInvite(ics: string): CalendarInvite | null {
     allDay: start.allDay,
     location: unescapeText(find("LOCATION")?.value ?? "") || null,
     organizer: organizerName || organizerAddress || null,
-    recurring: find("RRULE") !== undefined
+    recurring: find("RRULE") !== undefined || find("RDATE") !== undefined
   };
 }
 

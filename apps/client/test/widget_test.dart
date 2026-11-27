@@ -45,6 +45,40 @@ void main() {
     expect(find.textContaining('Room 1'), findsOneWidget);
   });
 
+  testWidgets('marks a cancelled calendar invite on the message page',
+      (WidgetTester tester) async {
+    await tester.binding.setSurfaceSize(const Size(1200, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final invite = CalendarInvite.fromJson({
+      'method': 'CANCEL',
+      'summary': 'Design review',
+      'start': '2026-12-01T09:00:00',
+    });
+    expect(invite.cancelled, isTrue);
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          messageProvider.overrideWith(
+            (ref, request) async => MessageDetail(
+              id: '1',
+              sender: 'a@example.test',
+              subject: 'Cancelled',
+              body: '',
+              links: const [],
+              receivedAtLabel: 'now',
+              invite: invite,
+            ),
+          ),
+        ],
+        child: const MaterialApp(home: MessagePage(messageId: '1')),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('취소된 일정'), findsOneWidget);
+    expect(find.byIcon(Icons.event_busy), findsOneWidget);
+  });
+
   test('formats calendar invite times', () {
     final invite = CalendarInvite.fromJson({
       'summary': 'Sync',

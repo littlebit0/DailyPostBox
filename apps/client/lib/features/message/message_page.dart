@@ -117,11 +117,15 @@ class _InviteCard extends ConsumerWidget {
     return Card(
       margin: const EdgeInsets.only(bottom: 24),
       child: ListTile(
-        leading: const Icon(Icons.event),
+        leading: Icon(invite.cancelled ? Icons.event_busy : Icons.event),
         title: Text(
           invite.summary.isEmpty ? strings.calendarInvite : invite.summary,
+          style: invite.cancelled
+              ? const TextStyle(decoration: TextDecoration.lineThrough)
+              : null,
         ),
         subtitle: Text([
+          if (invite.cancelled) strings.inviteCancelled,
           invite.timeLabel,
           if (invite.recurring) strings.inviteRecurring,
           if (location != null) location,

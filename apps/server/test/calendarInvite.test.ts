@@ -99,3 +99,10 @@ test("ignores properties of nested components such as VALARM", () => {
   assert.equal(invite?.location, null);
   assert.equal(invite?.method, "REQUEST");
 });
+
+test("RDATE-only event counts as recurring", () => {
+  const invite = parseCalendarInvite(
+    wrap("SUMMARY:Series\r\nDTSTART:20261201T090000Z\r\nRDATE:20261208T090000Z,20261215T090000Z")
+  );
+  assert.equal(invite?.recurring, true);
+});

@@ -326,6 +326,7 @@ class CalendarInvite {
     this.location,
     this.organizer,
     this.recurring = false,
+    this.method,
   });
 
   final String summary;
@@ -339,6 +340,11 @@ class CalendarInvite {
   final String? organizer;
   final bool recurring;
 
+  /// iTIP METHOD (REQUEST, CANCEL, ...), upper-cased by the server.
+  final String? method;
+
+  bool get cancelled => method == 'CANCEL';
+
   factory CalendarInvite.fromJson(Map<String, dynamic> json) {
     return CalendarInvite(
       summary: json['summary'] as String? ?? '',
@@ -348,6 +354,7 @@ class CalendarInvite {
       location: json['location'] as String?,
       organizer: json['organizer'] as String?,
       recurring: json['recurring'] as bool? ?? false,
+      method: json['method'] as String?,
     );
   }
 
