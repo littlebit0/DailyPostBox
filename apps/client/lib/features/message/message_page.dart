@@ -22,7 +22,8 @@ final messageProvider =
   return api.fetchMessage(request.messageId);
 });
 
-final aiSummaryEnabledProvider = FutureProvider<bool>((ref) async {
+// autoDispose: a failed /features check is retried the next time a message opens.
+final aiSummaryEnabledProvider = FutureProvider.autoDispose<bool>((ref) async {
   try {
     return await ref.watch(mailApiClientProvider).fetchAiSummaryEnabled();
   } catch (_) {

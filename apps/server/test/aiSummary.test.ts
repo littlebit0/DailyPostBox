@@ -66,6 +66,16 @@ test("enabled: calls Messages API and returns summary", async () => {
   const sent = JSON.parse(calls[0].init.body as string);
   assert.equal(sent.model, "test-model");
   assert.match(sent.messages[0].content, /본문 내용/);
+  // Default thinking shares max_tokens; keep room for thinking plus the summary.
+  assert.ok(sent.max_tokens >= 4096);
+  assert.deepEqual(sent.output_config, { effort: "low" });
+});
+
+test("thinking-only response (budget exhausted) returns 502", async () => {
+  const body = { content: [{ type: "thinking", thinking: "", signature: "s" }], stop_reason: "max_tokens" };
+  const app = await build(createAiSummarizer({ enabled: true, apiKey: "k", model: "m" }, mockFetch(200, body).fn));
+  const res = await app.inject({ method: "POST", url: "/accounts/a1/messages/m1/summary" });
+  assert.equal(res.statusCode, 502);
 });
 
 test("upstream failure returns 502 without leaking details", async () => {

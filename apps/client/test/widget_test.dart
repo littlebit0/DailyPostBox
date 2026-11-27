@@ -545,6 +545,24 @@ void main() {
     });
   }
 
+  test('AI feature discovery retries after a transient failure', () async {
+    final api = _FlakyFeaturesApi();
+    final container = ProviderContainer(
+      overrides: [mailApiClientProvider.overrideWithValue(api)],
+    );
+    addTearDown(container.dispose);
+
+    var sub = container.listen(aiSummaryEnabledProvider, (_, __) {});
+    expect(await container.read(aiSummaryEnabledProvider.future), isFalse);
+    sub.close();
+    await Future<void>.delayed(Duration.zero);
+
+    sub = container.listen(aiSummaryEnabledProvider, (_, __) {});
+    expect(await container.read(aiSummaryEnabledProvider.future), isTrue);
+    sub.close();
+    expect(api.calls, 2);
+  });
+
   testWidgets('does not offer the unimplemented POP3 protocol',
       (WidgetTester tester) async {
     const daum = MailProviderSummary(
@@ -590,6 +608,19 @@ class _CredentialRecordingApi extends MailApiClient {
     required String secret,
   }) async {
     updates.add((accountId, secret));
+  }
+}
+
+class _FlakyFeaturesApi extends MailApiClient {
+  _FlakyFeaturesApi() : super(baseUrl: 'http://127.0.0.1:1');
+
+  int calls = 0;
+
+  @override
+  Future<bool> fetchAiSummaryEnabled() async {
+    calls++;
+    if (calls == 1) throw Exception('offline');
+    return true;
   }
 }
 
