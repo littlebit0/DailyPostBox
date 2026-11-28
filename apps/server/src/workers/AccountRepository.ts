@@ -144,6 +144,8 @@ export class InMemoryAccountRepository implements AccountRepository {
   }
 
   async recordSentRecipients(accountId: string, addresses: string[], sentAt: Date): Promise<void> {
+    // A send finishing after its account was deleted must not keep its recipients.
+    if (!this.accounts.some((account) => account.id === accountId)) return;
     addSentRecipients(this.sentRecipients, accountId, addresses, sentAt);
   }
 
