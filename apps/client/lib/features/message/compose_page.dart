@@ -197,9 +197,11 @@ class _ComposePageState extends ConsumerState<ComposePage> {
                             avatar: const Icon(Icons.attach_file, size: 18),
                             label: Text(
                                 '${attachment.filename} (${formatAttachmentSize(attachment.size)})'),
+                            // Inside original.eml it reaches recipients anyway, so it can't be removed alone.
+                            isEnabled: !forward.includeOriginal,
                             deleteButtonTooltipMessage:
                                 strings.removeAttachment(attachment.filename),
-                            onDeleted: () => setState(() {
+                            onDeleted: forward.includeOriginal ? null : () => setState(() {
                               _forwardOf = ForwardOf(
                                 messageId: forward.messageId,
                                 attachments: [
@@ -225,6 +227,14 @@ class _ComposePageState extends ConsumerState<ComposePage> {
                           ),
                       ],
                     ),
+                    if (forward.includeOriginal && forward.attachments.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: Text(
+                          strings.includedInOriginal(originalMessageFilename),
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                      ),
                   ],
                   const SizedBox(height: 12),
                   TextField(
@@ -322,7 +332,12 @@ class _ComposePageState extends ConsumerState<ComposePage> {
         delaySeconds: delay,
         inReplyTo: inReplyTo,
         references: references,
-        forwardOf: _forwardOf,
+        // Parts already travel inside original.eml; listing them too would duplicate them.
+        forwardOf: switch (_forwardOf) {
+          final f? when f.includeOriginal =>
+            ForwardOf(messageId: f.messageId, attachments: const [], includeOriginal: true),
+          final f => f,
+        },
       );
     } catch (error) {
       // The draft stays on screen so the user can fix it and retry.

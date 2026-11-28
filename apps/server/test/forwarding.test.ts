@@ -201,6 +201,14 @@ test("includeOriginal attaches the raw original as message/rfc822", async () => 
   );
 });
 
+test("includeOriginal ignores separately listed parts so nothing goes out twice", async () => {
+  const { sent, downloaded, send, settle } = await setup();
+  assert.equal((await send({ messageId: "7", parts: ["2"], includeOriginal: true })).statusCode, 202);
+  await settle();
+  assert.deepEqual(downloaded, ["original"]);
+  assert.deepEqual(sent[0].forwardedAttachments?.map((a) => a.filename), ["original.eml"]);
+});
+
 test("forwardOf needs parts or includeOriginal", async () => {
   const { send } = await setup();
   assert.equal((await send({ messageId: "7", parts: [] })).statusCode >= 400, true);

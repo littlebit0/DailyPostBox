@@ -121,6 +121,9 @@ class AppStrings {
   String originalAttached(String name) => _ko
       ? '원본 메일은 첨부($name)로 포함했습니다.'
       : 'The original message is attached ($name).';
+  String includedInOriginal(String name) => _ko
+      ? '원본 메일($name)에 포함됨. 따로 빼려면 $name을 먼저 빼세요.'
+      : 'Included in $name. Remove $name first to drop it.';
   String removeAttachment(String name) =>
       _ko ? '$name 첨부 빼기' : 'Remove attachment $name';
 

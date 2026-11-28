@@ -9,6 +9,7 @@ import 'package:daily_postbox/core/app_router.dart';
 import 'package:daily_postbox/features/accounts/accounts_page.dart';
 import 'package:daily_postbox/features/message/compose_page.dart';
 import 'package:daily_postbox/features/message/recipient_field.dart';
+import 'package:daily_postbox/features/message/reply_draft.dart';
 import 'package:daily_postbox/main.dart';
 import 'package:daily_postbox/services/mail_api_client.dart';
 
@@ -28,6 +29,7 @@ class _SendingApi extends MailApiClient {
   _SendingApi() : super(baseUrl: 'http://127.0.0.1:1');
 
   final sent = <List<String>>[];
+  final forwarded = <ForwardOf?>[];
   Completer<SendReceipt> reply = Completer<SendReceipt>();
 
   @override
@@ -43,6 +45,7 @@ class _SendingApi extends MailApiClient {
     ForwardOf? forwardOf,
   }) {
     sent.add(to);
+    forwarded.add(forwardOf);
     return reply.future;
   }
 
@@ -51,7 +54,7 @@ class _SendingApi extends MailApiClient {
       const SendOutcome(status: 'sent');
 }
 
-Future<_SendingApi> _openComposer(WidgetTester tester) async {
+Future<_SendingApi> _openComposer(WidgetTester tester, {ReplyDraft? reply}) async {
   final api = _SendingApi();
   await tester.binding.setSurfaceSize(const Size(1200, 800));
   addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -70,7 +73,7 @@ Future<_SendingApi> _openComposer(WidgetTester tester) async {
   await tester.pumpAndSettle();
   ProviderScope.containerOf(tester.element(find.byType(MaterialApp)))
       .read(appRouterProvider)
-      .go('/accounts/account-1/compose');
+      .go('/accounts/account-1/compose', extra: reply);
   await tester.pumpAndSettle();
   return api;
 }
@@ -131,5 +134,55 @@ void main() {
 
     expect(find.text('받는 사람을 입력하세요.'), findsOneWidget);
     expect(api.sent, isEmpty);
+  });
+
+  group('forward with original.eml', () {
+    const attachments = [
+      MessageAttachment(part: '2', filename: 'a.pdf', contentType: 'application/pdf', size: 10),
+      MessageAttachment(part: '3', filename: 'b.pdf', contentType: 'application/pdf', size: 10),
+    ];
+    const reply = ReplyDraft(
+      to: ['a@example.com'],
+      cc: [],
+      subject: 'Fwd: hi',
+      body: '',
+      forwardOf: ForwardOf(messageId: '7', attachments: attachments, includeOriginal: true),
+    );
+    InputChip chip(WidgetTester tester, String label) =>
+        tester.widget<InputChip>(find.widgetWithText(InputChip, label));
+
+    Future<ForwardOf?> sendNow(WidgetTester tester, _SendingApi api) async {
+      api.reply.complete(const SendReceipt('id', Duration.zero));
+      await tester.tap(find.byTooltip('보내기'));
+      await tester.pumpAndSettle();
+      await tester.pump(const Duration(seconds: 3));
+      return api.forwarded.single;
+    }
+
+    testWidgets('attachments inside original.eml cannot be removed and are not sent twice',
+        (WidgetTester tester) async {
+      final api = await _openComposer(tester, reply: reply);
+      expect(chip(tester, 'a.pdf (10 B)').onDeleted, isNull);
+      expect(chip(tester, 'b.pdf (10 B)').onDeleted, isNull);
+      expect(find.textContaining('원본 메일(original.eml)에 포함됨'), findsOneWidget);
+
+      final sent = await sendNow(tester, api);
+      expect(sent!.includeOriginal, isTrue);
+      expect(sent.attachments, isEmpty);
+    });
+
+    testWidgets('after removing original.eml only the kept attachments are sent',
+        (WidgetTester tester) async {
+      final api = await _openComposer(tester, reply: reply);
+      await tester.tap(find.byTooltip('original.eml 첨부 빼기'));
+      await tester.pumpAndSettle();
+      expect(chip(tester, 'a.pdf (10 B)').onDeleted, isNotNull);
+      await tester.tap(find.byTooltip('a.pdf 첨부 빼기'));
+      await tester.pumpAndSettle();
+
+      final sent = await sendNow(tester, api);
+      expect(sent!.includeOriginal, isFalse);
+      expect(sent.attachments.map((a) => a.part), ['3']);
+    });
   });
 }

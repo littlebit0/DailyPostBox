@@ -748,7 +748,9 @@ export async function registerRoutes(
       if (account.userId !== demoUserId) {
         return reply.code(404).send({ error: "Account not found" });
       }
-      const { messageId, parts, includeOriginal } = draft.forwardOf;
+      const { messageId, includeOriginal } = draft.forwardOf;
+      // original.eml already carries every attachment; separate parts would duplicate them.
+      const parts = includeOriginal ? [] : draft.forwardOf.parts;
       const original = (await deps.accounts.listInbox(demoUserId)).find(
         (item) => item.accountId === account.id && item.providerMessageId === messageId
       ) ?? (account.incomingProtocol === "imap" && canReadUnstoredMail(request)
