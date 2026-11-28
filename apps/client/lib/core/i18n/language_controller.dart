@@ -248,6 +248,12 @@ class AppStrings {
       : 'The new password is checked before saving. Stored mail and settings are kept.';
   String get reconnectSucceeded =>
       _ko ? '다시 연결했습니다. 메일을 가져오는 중입니다.' : 'Reconnected. Fetching mail now.';
+  String get signedMailStatus => _ko
+      ? '서명된 메일 · 서명 검증은 아직 지원하지 않습니다'
+      : 'Signed message · signature verification is not supported yet';
+  String get encryptedMailStatus => _ko
+      ? '암호화된 메일 · 복호화는 아직 지원하지 않습니다'
+      : 'Encrypted message · decryption is not supported yet';
   String remoteImagesBlocked(int count) =>
       _ko ? '원격 이미지 $count개 차단됨' : '$count remote images blocked';
   String get showImagesOnce => _ko ? '이번만 보기' : 'Show this time';

@@ -518,6 +518,8 @@ class MessageDetail {
     required this.body,
     required this.links,
     required this.receivedAtLabel,
+    this.signed = false,
+    this.encrypted = false,
     this.invite,
     this.authenticationFailures = const [],
     this.unsubscribeUrl,
@@ -554,6 +556,8 @@ class MessageDetail {
   final List<MessageLink> links;
   final List<String> authenticationFailures;
   final String receivedAtLabel;
+  final bool signed;
+  final bool encrypted;
   final String? unsubscribeUrl;
   final String? unsubscribeMailto;
 
@@ -580,6 +584,8 @@ class MessageDetail {
           .map(MessageLink.fromJson)
           .toList(growable: false),
       receivedAtLabel: _formatReceivedAt(json['receivedAt'] as String?),
+      signed: (json['security'] as Map?)?['signed'] != null,
+      encrypted: (json['security'] as Map?)?['encrypted'] != null,
       invite: json['invite'] is Map<String, dynamic>
           ? CalendarInvite.fromJson(json['invite'] as Map<String, dynamic>)
           : null,

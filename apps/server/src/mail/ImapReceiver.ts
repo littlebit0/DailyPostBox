@@ -5,6 +5,7 @@ import type {
   SearchObject
 } from "imapflow";
 import { simpleParser } from "mailparser";
+import { detectMessageSecurity } from "./messageSecurity.js";
 import { parseAuthenticationFailures } from "./authenticationResults.js";
 import type { OAuthTokenManager } from "../auth/OAuthTokenManager.js";
 import type {
@@ -248,6 +249,7 @@ export class ImapReceiver implements MailReceiver {
         account.providerId
       );
 
+      const security = detectMessageSecurity(message.bodyStructure);
       const attachments = extractAttachments(message.bodyStructure);
       const thread = toThreadHeaders(message);
       const bodyParts = selectBodyParts(message.bodyStructure);
@@ -285,7 +287,8 @@ export class ImapReceiver implements MailReceiver {
               thread,
               unsubscribe,
               authenticationFailures,
-              invite
+              invite,
+              security
             };
           }
           continue;
@@ -321,7 +324,8 @@ export class ImapReceiver implements MailReceiver {
             attachments,
             thread,
             authenticationFailures,
-            invite
+            invite,
+            security
           };
         }
       }
@@ -340,7 +344,8 @@ export class ImapReceiver implements MailReceiver {
           thread,
           unsubscribe,
           authenticationFailures,
-          invite
+          invite,
+          security
         };
       }
       return {
@@ -351,7 +356,8 @@ export class ImapReceiver implements MailReceiver {
         thread,
         unsubscribe,
         authenticationFailures,
-        invite
+        invite,
+        security
       };
     } finally {
       await client.logout().catch(() => undefined);

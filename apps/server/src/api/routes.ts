@@ -517,6 +517,7 @@ export async function registerRoutes(
       bodyTruncated: content.truncated,
       bodyLinks: content.links,
       invite: content.invite ?? null,
+      security: content.security,
       authenticationFailures: content.authenticationFailures ?? [],
       attachments: content.attachments,
       ...replyFields(message, content, account),

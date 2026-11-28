@@ -128,6 +128,7 @@ export interface IncomingMessageContent {
   text: string;
   truncated: boolean;
   links: IncomingMessageLink[];
+  security: MessageSecurity;
   invite?: CalendarInvite;
   authenticationFailures?: AuthenticationFailure[];
   unsubscribe?: ListUnsubscribe | null;
@@ -137,6 +138,12 @@ export interface IncomingMessageContent {
   // Read from the server on each body fetch, so messages saved before reply
   // support still get a Message-ID without a stored-data migration.
   thread?: MessageThreadHeaders;
+}
+
+export interface MessageSecurity {
+  signed: "smime" | "openpgp" | null;
+  encrypted: "smime" | "openpgp" | null;
+  verified: boolean;
 }
 
 export interface IncomingMessageAttachment {

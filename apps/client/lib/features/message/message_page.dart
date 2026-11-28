@@ -250,6 +250,16 @@ class _MessagePageState extends ConsumerState<MessagePage> {
                 const SizedBox(height: 12),
                 Text('${strings.from}: ${item.sender}'),
                 Text(item.receivedAtLabel),
+                if (item.signed)
+                  _SecurityStatus(
+                    Icons.verified_outlined,
+                    strings.signedMailStatus,
+                  ),
+                if (item.encrypted)
+                  _SecurityStatus(
+                    Icons.lock_outline,
+                    strings.encryptedMailStatus,
+                  ),
                 if (item.authenticationFailures.isNotEmpty) ...[
                   const SizedBox(height: 12),
                   MaterialBanner(
@@ -475,6 +485,27 @@ class _InviteCard extends ConsumerWidget {
           if (organizer != null) strings.inviteOrganizer(organizer),
         ].join('\n')),
         isThreeLine: true,
+      ),
+    );
+  }
+}
+
+class _SecurityStatus extends StatelessWidget {
+  const _SecurityStatus(this.icon, this.label);
+
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Row(
+        children: [
+          Icon(icon, size: 18),
+          const SizedBox(width: 8),
+          Expanded(child: Text(label)),
+        ],
       ),
     );
   }

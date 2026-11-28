@@ -20,6 +20,34 @@ import 'package:daily_postbox/services/badge_service.dart';
 import 'package:daily_postbox/services/mail_api_client.dart';
 
 void main() {
+  testWidgets('shows signed and encrypted status on message page',
+      (WidgetTester tester) async {
+    await tester.binding.setSurfaceSize(const Size(1200, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final detail = MessageDetail.fromJson({
+      'id': '1',
+      'subject': 's',
+      'body': 'b',
+      'security': {
+        'signed': 'openpgp',
+        'encrypted': 'smime',
+        'verified': false
+      },
+    });
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          messageProvider.overrideWith((ref, request) async => detail),
+        ],
+        child: const MaterialApp(home: MessagePage(messageId: '1', accountId: 'a1')),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('서명된 메일'), findsOneWidget);
+    expect(find.textContaining('암호화된 메일'), findsOneWidget);
+  });
+
   testWidgets('shows a calendar invite card on the message page',
       (WidgetTester tester) async {
     await tester.binding.setSurfaceSize(const Size(1200, 800));
