@@ -118,6 +118,9 @@ class AppStrings {
   String get date => _ko ? '날짜' : 'Date';
   String get forwardedAttachments =>
       _ko ? '전달할 첨부파일' : 'Forwarded attachments';
+  String originalAttached(String name) => _ko
+      ? '원본 메일은 첨부($name)로 포함했습니다.'
+      : 'The original message is attached ($name).';
   String removeAttachment(String name) =>
       _ko ? '$name 첨부 빼기' : 'Remove attachment $name';
 

@@ -7,7 +7,7 @@ import type { MailAccount, OutgoingMessageDraft } from "../src/domain/types.js";
 import { registerRoutes } from "../src/api/routes.js";
 import { SendQueue } from "../src/mail/SendQueue.js";
 import { mailOptions } from "../src/mail/SmtpSender.js";
-import { selectForwardedAttachments } from "../src/mail/forwarding.js";
+import { resolveForwardedAttachments, selectForwardedAttachments } from "../src/mail/forwarding.js";
 import { InMemoryAccountRepository } from "../src/workers/AccountRepository.js";
 
 const attachments = [
@@ -15,7 +15,9 @@ const attachments = [
   { part: "3", filename: "b.txt", contentType: "text/plain", size: 3 }
 ];
 
-async function setup(options: { missingAtSend?: string } = {}) {
+const rawOriginal = "Subject: hi\r\nContent-Type: text/html\r\n\r\n<img src=\"cid:x\">";
+
+async function setup(options: { missingAtSend?: string; originalSource?: string | null } = {}) {
   const now = new Date();
   const accounts = new InMemoryAccountRepository();
   for (const id of ["a1", "a2"]) {
@@ -71,6 +73,17 @@ async function setup(options: { missingAtSend?: string } = {}) {
         filename: attachments.find((a) => a.part === part)!.filename,
         contentType: "application/octet-stream",
         stream: Readable.from([Buffer.from(`p${part}`)]),
+        close: async () => undefined
+      };
+    },
+    downloadMessageSource: async () => {
+      const source = options.originalSource === undefined ? rawOriginal : options.originalSource;
+      if (source === null) return null;
+      downloaded.push("original");
+      return {
+        filename: "original.eml",
+        contentType: "message/rfc822",
+        stream: Readable.from([Buffer.from(source)]),
         close: async () => undefined
       };
     }
@@ -175,4 +188,61 @@ test("forwarded mail carries attachments and no In-Reply-To header", async () =>
   assert.match(raw, /filename=a\.pdf/);
   assert.doesNotMatch(raw, /^In-Reply-To:/im);
   assert.doesNotMatch(raw, /^References:/im);
+});
+
+test("includeOriginal attaches the raw original as message/rfc822", async () => {
+  const { sent, downloaded, send, settle } = await setup();
+  assert.equal((await send({ messageId: "7", parts: [], includeOriginal: true })).statusCode, 202);
+  await settle();
+  assert.deepEqual(downloaded, ["original"]);
+  assert.deepEqual(
+    sent[0].forwardedAttachments?.map((a) => [a.filename, a.contentType, a.content.toString()]),
+    [["original.eml", "message/rfc822", rawOriginal]]
+  );
+});
+
+test("forwardOf needs parts or includeOriginal", async () => {
+  const { send } = await setup();
+  assert.equal((await send({ messageId: "7", parts: [] })).statusCode >= 400, true);
+});
+
+test("an original missing at send time fails the send", async () => {
+  const { app, sent, send, settle } = await setup({ originalSource: null });
+  const { id } = (await send({ messageId: "7", parts: [], includeOriginal: true })).json();
+  await settle();
+  assert.equal(sent.length, 0);
+  const status = (await app.inject({ url: `/mail/send/${id}` })).json();
+  assert.equal(status.status, "failed");
+  assert.equal(status.draft.forwardOf.includeOriginal, true);
+});
+
+test("the original counts toward the forwarded size cap", async () => {
+  const file = (text: string) => async () => ({
+    filename: "x",
+    contentType: "application/octet-stream",
+    stream: Readable.from([Buffer.from(text)]),
+    close: async () => undefined
+  });
+  const draft = { accountId: "a1", to: [], forwardOf: { messageId: "7", parts: ["2"], includeOriginal: true } };
+  await assert.rejects(
+    resolveForwardedAttachments(draft, file("12345"), 8, file("6789")),
+    /too large/
+  );
+  const ok = await resolveForwardedAttachments(draft, file("1234"), 8, file("5678"));
+  assert.deepEqual(ok.forwardedAttachments?.map((a) => a.contentType), ["application/octet-stream", "message/rfc822"]);
+});
+
+test("forwarded original goes out as a message/rfc822 part", async () => {
+  const transport = nodemailer.createTransport({ streamTransport: true, buffer: true } as never);
+  const info = await transport.sendMail(mailOptions(
+    { emailAddress: "a1@example.test" },
+    {
+      accountId: "a1",
+      to: ["x@example.test"],
+      forwardedAttachments: [{ filename: "original.eml", contentType: "message/rfc822", content: Buffer.from(rawOriginal) }]
+    }
+  )) as unknown as { message: Buffer };
+  const raw = info.message.toString();
+  assert.match(raw, /Content-Type: message\/rfc822/);
+  assert.match(raw, /filename=original\.eml/);
 });

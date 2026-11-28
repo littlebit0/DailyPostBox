@@ -61,7 +61,10 @@ const sendSchema = z.object({
   references: z.array(z.string().regex(/^<[^<>\s]+>$/)).optional(),
   forwardOf: z.object({
     messageId: z.string().min(1),
-    parts: z.array(z.string().regex(/^\d+(\.\d+)*$/)).min(1).max(50)
+    parts: z.array(z.string().regex(/^\d+(\.\d+)*$/)).max(50),
+    includeOriginal: z.boolean().optional()
+  }).refine((value) => value.parts.length > 0 || value.includeOriginal === true, {
+    message: "Nothing to forward"
   }).optional()
 });
 
@@ -164,6 +167,11 @@ export async function registerRoutes(
       account: MailAccount,
       message: IncomingMessageSummary,
       part: string
+    ) => Promise<AttachmentDownload | null>;
+    /** Whole raw message (RFC 822 source), for forwarding it as an attachment. */
+    downloadMessageSource: (
+      account: MailAccount,
+      message: IncomingMessageSummary
     ) => Promise<AttachmentDownload | null>;
     searchMessages: (
       account: MailAccount,
@@ -740,7 +748,7 @@ export async function registerRoutes(
       if (account.userId !== demoUserId) {
         return reply.code(404).send({ error: "Account not found" });
       }
-      const { messageId, parts } = draft.forwardOf;
+      const { messageId, parts, includeOriginal } = draft.forwardOf;
       const original = (await deps.accounts.listInbox(demoUserId)).find(
         (item) => item.accountId === account.id && item.providerMessageId === messageId
       ) ?? (account.incomingProtocol === "imap" && canReadUnstoredMail(request)
@@ -754,10 +762,12 @@ export async function registerRoutes(
       if ("error" in selected) {
         return reply.code(selected.status).send({ error: selected.error });
       }
-      draft.forwardOf = { messageId, parts, attachments: selected.attachments };
+      draft.forwardOf = { messageId, parts, includeOriginal, attachments: selected.attachments };
       prepare = (queued) => resolveForwardedAttachments(
         queued,
-        (part) => deps.downloadAttachment(account, original, part)
+        (part) => deps.downloadAttachment(account, original, part),
+        undefined,
+        () => deps.downloadMessageSource(account, original)
       );
     }
 

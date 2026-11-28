@@ -120,6 +120,10 @@ await registerRoutes(app, {
       part
     );
   },
+  downloadMessageSource: async (account, message) => {
+    if (account.incomingProtocol !== "imap") return null;
+    return imap.downloadMessageSource(account, message.mailbox, message.providerMessageId);
+  },
   searchMessages: async (account, query) => imap.search(account, query),
   fetchMessageSummary: async (account, providerMessageId) =>
     imap.fetchSummary(account, "INBOX", providerMessageId),

@@ -40,6 +40,7 @@ import {
   parseRawHeaders
 } from "./classifyMessage.js";
 import { Readable } from "node:stream";
+import { originalMessageFilename } from "./forwarding.js";
 import {
   decodeTransferEncoding,
   extractAttachments,
@@ -444,6 +445,36 @@ export class ImapReceiver implements MailReceiver {
       return {
         filename: attachment.filename,
         contentType: attachment.contentType,
+        stream: download.content,
+        close
+      };
+    } catch (error) {
+      await close();
+      throw error;
+    }
+  }
+
+  /** Whole RFC 822 source of one message, streamed (no part = full message). */
+  async downloadMessageSource(
+    account: MailAccount,
+    mailbox: string,
+    providerMessageId: string
+  ): Promise<AttachmentDownload | null> {
+    const client = await this.createClient(account);
+    await client.connect();
+    const close = async () => {
+      await client.logout().catch(() => undefined);
+    };
+    try {
+      await client.mailboxOpen(mailbox, { readOnly: true });
+      const download = await client.download(providerMessageId, undefined, { uid: true });
+      if (!download?.content) {
+        await close();
+        return null;
+      }
+      return {
+        filename: originalMessageFilename,
+        contentType: "message/rfc822",
         stream: download.content,
         close
       };

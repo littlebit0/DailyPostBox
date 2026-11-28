@@ -49,10 +49,21 @@ class ComposeDraft {
 
 /// Original attachments to forward; the server fetches the bytes itself.
 class ForwardOf {
-  const ForwardOf({required this.messageId, required this.attachments});
+  const ForwardOf({
+    required this.messageId,
+    required this.attachments,
+    this.includeOriginal = false,
+  });
   final String messageId;
   final List<MessageAttachment> attachments;
+
+  /// Attach the whole original as `original.eml` (HTML-only mail has no text to quote).
+  final bool includeOriginal;
+
+  bool get isEmpty => attachments.isEmpty && !includeOriginal;
 }
+
+const originalMessageFilename = 'original.eml';
 
 class SendOutcome {
   const SendOutcome({required this.status, this.error, this.draft});
@@ -479,10 +490,11 @@ class MailApiClient {
         if (inReplyTo != null) 'inReplyTo': inReplyTo,
         if (inReplyTo != null && references.isNotEmpty)
           'references': references,
-        if (forwardOf != null && forwardOf.attachments.isNotEmpty)
+        if (forwardOf != null && !forwardOf.isEmpty)
           'forwardOf': {
             'messageId': forwardOf.messageId,
             'parts': [for (final a in forwardOf.attachments) a.part],
+            if (forwardOf.includeOriginal) 'includeOriginal': true,
           },
       },
     );
@@ -856,6 +868,7 @@ ForwardOf? _forwardOf(Object? value) {
         .whereType<Map<String, dynamic>>()
         .map(MessageAttachment.fromJson)
         .toList(growable: false),
+    includeOriginal: value['includeOriginal'] == true,
   );
 }
 

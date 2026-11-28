@@ -200,6 +200,8 @@ export interface OutgoingMessageDraft {
   forwardOf?: {
     messageId: string;
     parts: string[];
+    /** Attach the whole original as message/rfc822 (e.g. image-only HTML mail with no text body). */
+    includeOriginal?: boolean;
     /** Filled by the server from the original message, for the failed-send draft. */
     attachments?: IncomingMessageAttachment[];
   };

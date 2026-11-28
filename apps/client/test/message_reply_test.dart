@@ -240,4 +240,67 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.widgetWithText(InputChip, 'b.txt (10 B)'), findsOneWidget);
   });
+
+  for (final removeOriginal in [false, true]) {
+    testWidgets(
+        'forwarding image-only HTML mail attaches the original '
+        '(removed: $removeOriginal)', (WidgetTester tester) async {
+      await tester.binding.setSurfaceSize(const Size(1200, 800));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final api = _ForwardApi();
+      const htmlOnly = MessageDetail(
+        id: '5',
+        sender: 'friend@example.com',
+        subject: 'Hi',
+        body: '',
+        html: '<img src="cid:x">',
+        links: [],
+        receivedAtLabel: 'now',
+      );
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            mailApiClientProvider.overrideWithValue(api),
+            accountsProvider.overrideWith((ref) async => const [_account]),
+            providersProvider.overrideWith((ref) async => const []),
+            composeAccountsProvider
+                .overrideWith((ref) async => const [_account]),
+            accountMessagesProvider.overrideWith((ref, id) async => const []),
+            messageProvider.overrideWith((ref, request) async => htmlOnly),
+          ],
+          child: const DailyPostBoxApp(),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final container =
+          ProviderScope.containerOf(tester.element(find.byType(MaterialApp)));
+      container.read(appRouterProvider).go('/accounts/account-1/messages/5');
+      await tester.pumpAndSettle();
+      final strings = container.read(appStringsProvider);
+      await tester.tap(find.byTooltip(strings.forward));
+      await tester.pumpAndSettle();
+
+      expect(find.widgetWithText(InputChip, 'original.eml'), findsOneWidget);
+      expect(find.textContaining(strings.originalAttached('original.eml')),
+          findsOneWidget);
+      if (removeOriginal) {
+        await tester
+            .tap(find.byTooltip(strings.removeAttachment('original.eml')));
+        await tester.pumpAndSettle();
+        expect(find.widgetWithText(InputChip, 'original.eml'), findsNothing);
+      }
+
+      await tester.enterText(
+          find.descendant(
+              of: find.byType(RecipientField),
+              matching: find.byType(TextField)),
+          'x@example.com, ');
+      await tester.tap(find.byTooltip(strings.send));
+      await tester.pumpAndSettle();
+
+      expect(api.forwardOf?.includeOriginal, !removeOriginal);
+      await tester.pump(const Duration(seconds: 3));
+    });
+  }
 }

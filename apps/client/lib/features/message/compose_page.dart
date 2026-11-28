@@ -155,7 +155,7 @@ class _ComposePageState extends ConsumerState<ComposePage> {
                         ),
                     ],
                     // Forwarded parts are read from the original account's mailbox.
-                    onChanged: _forwardOf?.attachments.isNotEmpty ?? false
+                    onChanged: !(_forwardOf?.isEmpty ?? true)
                         ? null
                         : (value) => setState(() {
                               _accountId = value;
@@ -183,7 +183,7 @@ class _ComposePageState extends ConsumerState<ComposePage> {
                     decoration: InputDecoration(labelText: strings.subject),
                   ),
                   if (_forwardOf case final forward?
-                      when forward.attachments.isNotEmpty) ...[
+                      when !forward.isEmpty) ...[
                     const SizedBox(height: 12),
                     Text(strings.forwardedAttachments,
                         style: Theme.of(context).textTheme.labelLarge),
@@ -206,6 +206,20 @@ class _ComposePageState extends ConsumerState<ComposePage> {
                                   for (final a in forward.attachments)
                                     if (a.part != attachment.part) a,
                                 ],
+                                includeOriginal: forward.includeOriginal,
+                              );
+                            }),
+                          ),
+                        if (forward.includeOriginal)
+                          InputChip(
+                            avatar: const Icon(Icons.mail_outline, size: 18),
+                            label: const Text(originalMessageFilename),
+                            deleteButtonTooltipMessage: strings
+                                .removeAttachment(originalMessageFilename),
+                            onDeleted: () => setState(() {
+                              _forwardOf = ForwardOf(
+                                messageId: forward.messageId,
+                                attachments: forward.attachments,
                               );
                             }),
                           ),
