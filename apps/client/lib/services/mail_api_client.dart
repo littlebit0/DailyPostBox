@@ -150,17 +150,35 @@ class MailApiClient {
         .toList();
   }
 
+  static String threadPath(String accountId, String threadId) =>
+      '/accounts/$accountId/threads/${Uri.encodeComponent(threadId)}';
+
   Future<List<MailSummary>> fetchThread(
     String accountId,
     String threadId,
   ) async {
-    final response = await _dio.get<List<dynamic>>(
-      '/accounts/$accountId/threads/${Uri.encodeComponent(threadId)}',
-    );
-    final data = response.data ?? [];
-    return data
+    List<MailSummary> parse(List<dynamic> data) => data
         .map((item) => MailSummary.fromJson(item as Map<String, dynamic>))
         .toList();
+    final path = threadPath(accountId, threadId);
+    try {
+      return parse(await _getCached<List<dynamic>>(path) ?? []);
+    } catch (error) {
+      if (!isMailApiConnectionError(error)) rethrow;
+      // A thread never opened online is rebuilt from the saved mailbox list,
+      // oldest first like the server's thread route.
+      final cached = await cache?.read(accountMessagesPath(accountId));
+      final data = cached?.data;
+      if (data is! List<dynamic>) rethrow;
+      final messages = parse(data)
+          .where((item) => item.threadId == threadId)
+          .toList()
+          .reversed
+          .toList();
+      if (messages.isEmpty) rethrow;
+      onCacheState?.call(path, cached!.savedAt);
+      return messages;
+    }
   }
 
   Future<List<MailSummary>> searchAccountMessages(
