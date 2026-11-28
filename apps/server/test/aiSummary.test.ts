@@ -84,3 +84,15 @@ test("upstream failure returns 502 without leaking details", async () => {
   assert.equal(res.statusCode, 502);
   assert.doesNotMatch(res.body, /본문 내용/);
 });
+
+test("remote callers get 403 and mail is not sent to the AI service", async () => {
+  const { fn, calls } = mockFetch();
+  const app = await build(createAiSummarizer({ enabled: true, apiKey: "k", model: "m" }, fn));
+  const res = await app.inject({
+    method: "POST",
+    url: "/accounts/a1/messages/m1/summary",
+    remoteAddress: "192.168.0.5"
+  });
+  assert.equal(res.statusCode, 403);
+  assert.equal(calls.length, 0);
+});

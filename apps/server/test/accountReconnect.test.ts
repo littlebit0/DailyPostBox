@@ -42,6 +42,7 @@ async function setup(account: MailAccount) {
         throw authenticationFailure("Authentication failed.");
       }
     },
+    setMessageFlags: async () => undefined,
     startAccountSync: async () => {
       calls.push("start");
     },
@@ -58,7 +59,8 @@ async function setup(account: MailAccount) {
     sender: {} as never,
     fetchMessageContent: async () => {
       throw new Error("unused");
-    }
+    },
+    downloadAttachment: async () => null
   });
   new OAuthAccountFlow(deps).register(app);
   return { app, accounts, calls };
