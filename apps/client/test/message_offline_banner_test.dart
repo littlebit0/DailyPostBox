@@ -7,7 +7,7 @@ import 'package:daily_postbox/services/mail_api_client.dart';
 import 'package:daily_postbox/services/mail_cache.dart';
 
 void main() {
-  testWidgets('account-less message route shows the offline banner', (
+  testWidgets('account message route shows the offline banner', (
     tester,
   ) async {
     await tester.pumpWidget(
@@ -21,18 +21,22 @@ void main() {
               body: 'text',
               links: [],
               receivedAtLabel: '',
+              seen: true,
             ),
           ),
           cachedPathsProvider.overrideWith(
             (ref) => {
-              MailApiClient.messagePath(messageId: 'm1'): DateTime(2026, 1, 2),
+              MailApiClient.messagePath(accountId: 'a1', messageId: 'm1'):
+                  DateTime(2026, 1, 2),
             },
           ),
         ],
-        child: const MaterialApp(home: MessagePage(messageId: 'm1')),
+        child: const MaterialApp(
+          home: MessagePage(messageId: 'm1', accountId: 'a1'),
+        ),
       ),
     );
-    await tester.pump();
+    await tester.pumpAndSettle();
 
     expect(find.text('cached subject'), findsOneWidget);
     expect(find.byIcon(Icons.cloud_off_outlined), findsOneWidget);

@@ -75,6 +75,20 @@ void main() {
     expect(states.skip(2).every((state) => state != null), isTrue);
   });
 
+  test('remote-image body is never cached', () async {
+    await api.fetchAccountMessage(
+      accountId: 'acc1',
+      messageId: 'm1',
+      remoteImages: true,
+    );
+    expect(
+      await cache.read(
+        MailApiClient.messagePath(accountId: 'acc1', messageId: 'm1'),
+      ),
+      isNull,
+    );
+  });
+
   test('rethrows offline when nothing is cached', () async {
     adapter.offline = true;
     expect(api.fetchAccountMessages('acc1'), throwsA(isA<DioException>()));

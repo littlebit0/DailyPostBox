@@ -4,6 +4,8 @@ import 'package:go_router/go_router.dart';
 
 import '../core/i18n/language_controller.dart';
 import '../features/accounts/account_providers.dart';
+import '../features/message/failed_sends.dart';
+import '../features/message/pending_sends.dart';
 import '../services/mail_cache.dart';
 
 class AppShell extends ConsumerWidget {
@@ -80,18 +82,25 @@ class AppShell extends ConsumerWidget {
       );
     }
 
-    final navigation = _SideNavigation(
-      selectedIndex: selectedIndex,
-      destinations: destinations,
-      onDestinationSelected: selectDestination,
+    final navigation = Semantics(
+      container: true,
+      explicitChildNodes: true,
+      label: strings.sidebarLabel,
+      child: _SideNavigation(
+        selectedIndex: selectedIndex,
+        destinations: destinations,
+        onDestinationSelected: selectDestination,
+      ),
     );
 
-    final content = Column(
-      children: [
-        Expanded(child: child),
-        OfflineBanner(cachePaths: cachePaths),
-      ],
-    );
+    final content = cachePaths.isEmpty
+        ? child
+        : Column(
+            children: [
+              Expanded(child: child),
+              OfflineBanner(cachePaths: cachePaths),
+            ],
+          );
 
     return Scaffold(
       drawer: compact
@@ -100,15 +109,23 @@ class AppShell extends ConsumerWidget {
               child: navigation,
             )
           : null,
-      body: compact
-          ? content
-          : Row(
-              children: [
-                SizedBox(width: 284, child: navigation),
-                const VerticalDivider(width: 1),
-                Expanded(child: content),
-              ],
-            ),
+      body: Column(
+        children: [
+          const PendingSendsBanner(),
+          const FailedSendsBanner(),
+          Expanded(
+            child: compact
+                ? content
+                : Row(
+                    children: [
+                      SizedBox(width: 284, child: navigation),
+                      const VerticalDivider(width: 1),
+                      Expanded(child: content),
+                    ],
+                  ),
+          ),
+        ],
+      ),
       floatingActionButton: floatingActionButton,
     );
   }
