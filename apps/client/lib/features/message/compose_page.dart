@@ -201,6 +201,7 @@ class _ComposePageState extends ConsumerState<ComposePage> {
     }
     return AppShell(
       selectedDestinationId: AppShell.accountDestinationId(initialAccountId),
+      cachePaths: const [MailApiClient.accountsPath],
       child: content,
     );
   }

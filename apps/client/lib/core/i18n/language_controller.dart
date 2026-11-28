@@ -345,6 +345,15 @@ class AppStrings {
   String get statusSyncing => _ko ? '동기화 중' : 'Syncing';
   String get statusError => _ko ? '오류' : 'Error';
   String get lastSynced => _ko ? '마지막 동기화' : 'Last synced';
+  String offlineBanner(DateTime savedAt) {
+    final time = '${savedAt.month}/${savedAt.day} '
+        '${savedAt.hour.toString().padLeft(2, '0')}:'
+        '${savedAt.minute.toString().padLeft(2, '0')}';
+    return _ko
+        ? '오프라인 · 저장된 메일을 보여주는 중 (마지막 동기화 $time)'
+        : 'Offline · showing saved mail (last synced $time)';
+  }
+
   String get neverSynced => _ko ? '아직 없음' : 'Never';
   String get receiveMode => _ko ? '수신 방식' : 'Receive mode';
   String get receiveRealtime => _ko ? '실시간(IDLE)' : 'Realtime (IDLE)';

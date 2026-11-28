@@ -24,6 +24,10 @@ class AccountMailboxPage extends ConsumerWidget {
 
     return AppShell(
       selectedDestinationId: AppShell.accountDestinationId(accountId),
+      cachePaths: [
+        MailApiClient.accountsPath,
+        MailApiClient.accountMessagesPath(accountId),
+      ],
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () => context.go('/accounts/$accountId/compose'),
         icon: const Icon(Icons.edit_outlined),

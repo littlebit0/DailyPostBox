@@ -6,6 +6,7 @@ import '../core/i18n/language_controller.dart';
 import '../features/accounts/account_providers.dart';
 import '../features/message/failed_sends.dart';
 import '../features/message/pending_sends.dart';
+import '../services/mail_cache.dart';
 
 class AppShell extends ConsumerWidget {
   const AppShell({
@@ -13,6 +14,7 @@ class AppShell extends ConsumerWidget {
     required this.selectedDestinationId,
     required this.child,
     this.floatingActionButton,
+    this.cachePaths = const [],
   });
 
   static const managementDestinationId = 'account-management';
@@ -24,6 +26,10 @@ class AppShell extends ConsumerWidget {
   final String selectedDestinationId;
   final Widget child;
   final Widget? floatingActionButton;
+
+  /// API paths of the resources [child] shows; the offline banner appears
+  /// when any of them was served from the cache.
+  final List<String> cachePaths;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -87,6 +93,15 @@ class AppShell extends ConsumerWidget {
       ),
     );
 
+    final content = cachePaths.isEmpty
+        ? child
+        : Column(
+            children: [
+              Expanded(child: child),
+              OfflineBanner(cachePaths: cachePaths),
+            ],
+          );
+
     return Scaffold(
       drawer: compact
           ? Drawer(
@@ -100,18 +115,55 @@ class AppShell extends ConsumerWidget {
           const FailedSendsBanner(),
           Expanded(
             child: compact
-                ? child
+                ? content
                 : Row(
                     children: [
                       SizedBox(width: 284, child: navigation),
                       const VerticalDivider(width: 1),
-                      Expanded(child: child),
+                      Expanded(child: content),
                     ],
                   ),
           ),
         ],
       ),
       floatingActionButton: floatingActionButton,
+    );
+  }
+}
+
+/// Offline warning with the cache time, shown while any of [cachePaths] was
+/// served from the cache.
+class OfflineBanner extends ConsumerWidget {
+  const OfflineBanner({super.key, required this.cachePaths});
+
+  final List<String> cachePaths;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final offlineSince = offlineSinceFor(
+      ref.watch(cachedPathsProvider),
+      cachePaths,
+    );
+    if (offlineSince == null) return const SizedBox.shrink();
+    return Material(
+      color: Theme.of(context).colorScheme.errorContainer,
+      child: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          child: Row(
+            children: [
+              const Icon(Icons.cloud_off_outlined, size: 18),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  ref.watch(appStringsProvider).offlineBanner(offlineSince),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

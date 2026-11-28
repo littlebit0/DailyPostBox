@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import '../../core/i18n/language_controller.dart';
 import '../../services/browser_launcher.dart';
 import '../../services/mail_api_client.dart';
+import '../../services/mail_cache.dart';
 import '../../widgets/app_shell.dart';
 import '../message/compose_page.dart' show composeAccountsProvider;
 import 'account_providers.dart';
@@ -30,9 +31,14 @@ class AccountsPage extends ConsumerWidget {
     final providers = ref.watch(providersProvider);
     final strings = ref.watch(appStringsProvider);
     final providerItems = providers.asData?.value;
+    const cachePaths = [MailApiClient.accountsPath, MailApiClient.providersPath];
+    // Add/validate/sync/delete need the server; they are disabled while offline.
+    final offline =
+        offlineSinceFor(ref.watch(cachedPathsProvider), cachePaths) != null;
 
     return AppShell(
       selectedDestinationId: AppShell.managementDestinationId,
+      cachePaths: cachePaths,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -48,7 +54,8 @@ class AccountsPage extends ConsumerWidget {
                 icon: const Icon(Icons.refresh),
               ),
               FilledButton.icon(
-                onPressed: providerItems == null || providerItems.isEmpty
+                onPressed:
+                    offline || providerItems == null || providerItems.isEmpty
                     ? null
                     : () => _showAddAccountDialog(context, providerItems),
                 icon: const Icon(Icons.add),
@@ -63,8 +70,10 @@ class AccountsPage extends ConsumerWidget {
                 data: (accountItems) => _AccountsContent(
                   providers: providerItems,
                   accounts: accountItems,
-                  onAddAccount: () =>
-                      _showAddAccountDialog(context, providerItems),
+                  offline: offline,
+                  onAddAccount: offline
+                      ? null
+                      : () => _showAddAccountDialog(context, providerItems),
                 ),
                 loading: () => const Center(child: CircularProgressIndicator()),
                 error: (error, stackTrace) => _AccountsLoadFailure(
@@ -92,10 +101,7 @@ class AccountsPage extends ConsumerWidget {
 }
 
 class _AccountsLoadFailure extends ConsumerWidget {
-  const _AccountsLoadFailure({
-    required this.error,
-    required this.onRetry,
-  });
+  const _AccountsLoadFailure({required this.error, required this.onRetry});
 
   final Object error;
   final VoidCallback onRetry;
@@ -114,11 +120,7 @@ class _AccountsLoadFailure extends ConsumerWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(
-                Icons.cloud_off_outlined,
-                size: 56,
-                color: scheme.error,
-              ),
+              Icon(Icons.cloud_off_outlined, size: 56, color: scheme.error),
               const SizedBox(height: 18),
               Text(
                 connectionError
@@ -152,12 +154,14 @@ class _AccountsContent extends ConsumerStatefulWidget {
   const _AccountsContent({
     required this.providers,
     required this.accounts,
+    required this.offline,
     required this.onAddAccount,
   });
 
   final List<MailProviderSummary> providers;
   final List<MailAccountSummary> accounts;
-  final VoidCallback onAddAccount;
+  final bool offline;
+  final VoidCallback? onAddAccount;
 
   @override
   ConsumerState<_AccountsContent> createState() => _AccountsContentState();
@@ -188,6 +192,7 @@ class _AccountsContentState extends ConsumerState<_AccountsContent> {
     );
     final accountDetail = _AccountDetail(
       account: selectedAccount,
+      offline: widget.offline,
       providerName: _providerName(widget.providers, selectedAccount.providerId),
       onDeleted: () {
         setState(() => _selectedAccountId = null);
@@ -228,7 +233,7 @@ class _AccountListPane extends ConsumerWidget {
 
   final List<MailAccountSummary> accounts;
   final String selectedAccountId;
-  final VoidCallback onAddAccount;
+  final VoidCallback? onAddAccount;
   final ValueChanged<String> onSelected;
 
   @override
@@ -268,7 +273,7 @@ class _AccountListPane extends ConsumerWidget {
 class _EmptyAccountsState extends ConsumerWidget {
   const _EmptyAccountsState({required this.onAddAccount});
 
-  final VoidCallback onAddAccount;
+  final VoidCallback? onAddAccount;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -292,10 +297,7 @@ class _EmptyAccountsState extends ConsumerWidget {
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 8),
-            Text(
-              strings.addRealtimeAccountHint,
-              textAlign: TextAlign.center,
-            ),
+            Text(strings.addRealtimeAccountHint, textAlign: TextAlign.center),
             const SizedBox(height: 24),
             FilledButton.icon(
               onPressed: onAddAccount,
@@ -336,7 +338,8 @@ class _AccountTile extends ConsumerWidget {
           overflow: TextOverflow.ellipsis,
         ),
         subtitle: Text(
-            '${account.providerId} · ${account.incomingProtocol.toUpperCase()}'),
+          '${account.providerId} · ${account.incomingProtocol.toUpperCase()}',
+        ),
         trailing: _SyncStatusChip(status: account.syncStatus),
         onTap: onTap,
       ),
@@ -347,11 +350,13 @@ class _AccountTile extends ConsumerWidget {
 class _AccountDetail extends ConsumerWidget {
   const _AccountDetail({
     required this.account,
+    required this.offline,
     required this.providerName,
     required this.onDeleted,
   });
 
   final MailAccountSummary account;
+  final bool offline;
   final String providerName;
   final VoidCallback onDeleted;
 
@@ -380,11 +385,13 @@ class _AccountDetail extends ConsumerWidget {
                     children: [
                       Chip(label: Text(providerName)),
                       Chip(
-                          label: Text(
-                              '${strings.protocol}: ${account.incomingProtocol.toUpperCase()}')),
+                        label: Text(
+                          '${strings.protocol}: ${account.incomingProtocol.toUpperCase()}',
+                        ),
+                      ),
                       Chip(
-                          label:
-                              Text('${strings.authMode}: ${account.authMode}')),
+                        label: Text('${strings.authMode}: ${account.authMode}'),
+                      ),
                       _SyncStatusChip(status: account.syncStatus),
                     ],
                   ),
@@ -402,19 +409,23 @@ class _AccountDetail extends ConsumerWidget {
             const SizedBox(width: 8),
             IconButton.filledTonal(
               tooltip: strings.validateConnection,
-              onPressed: () => _validateStoredAccount(context, ref, account.id),
+              onPressed: offline
+                  ? null
+                  : () => _validateStoredAccount(context, ref, account.id),
               icon: const Icon(Icons.verified_outlined),
             ),
             const SizedBox(width: 8),
             IconButton.filledTonal(
               tooltip: strings.reconnectAccount,
-              onPressed: () => reconnectAccount(context, ref, account),
+              onPressed: offline
+                  ? null
+                  : () => reconnectAccount(context, ref, account),
               icon: const Icon(Icons.key_outlined),
             ),
             const SizedBox(width: 8),
             IconButton.filledTonal(
               tooltip: strings.syncNow,
-              onPressed: () => _syncAccount(ref, account.id),
+              onPressed: offline ? null : () => _syncAccount(ref, account.id),
               icon: const Icon(Icons.sync),
             ),
             const SizedBox(width: 8),
@@ -429,8 +440,9 @@ class _AccountDetail extends ConsumerWidget {
                 PopupMenuItem(
                   value: 'server',
                   enabled: false,
-                  child:
-                      Text('${strings.serverSettings} · ${strings.comingSoon}'),
+                  child: Text(
+                    '${strings.serverSettings} · ${strings.comingSoon}',
+                  ),
                 ),
                 PopupMenuItem(
                   value: 'range',
@@ -442,6 +454,7 @@ class _AccountDetail extends ConsumerWidget {
                 const PopupMenuDivider(),
                 PopupMenuItem(
                   value: 'delete',
+                  enabled: !offline,
                   child: Text(strings.deleteAccount),
                 ),
               ],
@@ -577,10 +590,7 @@ String _receiveModeLabel(MailAccountSummary account, AppStrings strings) {
 }
 
 class _InfoRow extends StatelessWidget {
-  const _InfoRow({
-    required this.label,
-    required this.value,
-  });
+  const _InfoRow({required this.label, required this.value});
 
   final String label;
   final String value;
@@ -591,10 +601,7 @@ class _InfoRow extends StatelessWidget {
       children: [
         SizedBox(
           width: 130,
-          child: Text(
-            label,
-            style: Theme.of(context).textTheme.labelLarge,
-          ),
+          child: Text(label, style: Theme.of(context).textTheme.labelLarge),
         ),
         Expanded(child: Text(value)),
       ],
@@ -690,7 +697,7 @@ class _BrowserLoginDialog extends ConsumerStatefulWidget {
   final MailProviderSummary provider;
   final String? reconnectAccountId;
   final Future<void> Function(String state, String emailAddress)
-      onAuthenticated;
+  onAuthenticated;
 
   @override
   ConsumerState<_BrowserLoginDialog> createState() =>
@@ -808,8 +815,10 @@ class _BrowserLoginDialogState extends ConsumerState<_BrowserLoginDialog> {
               ),
             if (_error != null) ...[
               const SizedBox(height: 12),
-              Text(_error!,
-                  style: TextStyle(color: Theme.of(context).colorScheme.error)),
+              Text(
+                _error!,
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
             ],
             if (_loginUrl != null) ...[
               const SizedBox(height: 8),
@@ -868,7 +877,9 @@ class _OAuthSetupDialogState extends ConsumerState<_OAuthSetupDialog> {
       _error = null;
     });
     try {
-      await ref.read(mailApiClientProvider).completeOAuthLogin(
+      await ref
+          .read(mailApiClientProvider)
+          .completeOAuthLogin(
             state: widget.state,
             incomingProtocol: _protocol,
             initialSync: _initialSync,
@@ -901,8 +912,10 @@ class _OAuthSetupDialogState extends ConsumerState<_OAuthSetupDialog> {
               const SizedBox(height: 6),
               Text(strings.finishSetupDescription),
               const SizedBox(height: 16),
-              Text(strings.importPreviousMail,
-                  style: Theme.of(context).textTheme.titleMedium),
+              Text(
+                strings.importPreviousMail,
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
               const SizedBox(height: 8),
               LayoutBuilder(
                 builder: (context, constraints) {
@@ -928,9 +941,10 @@ class _OAuthSetupDialogState extends ConsumerState<_OAuthSetupDialog> {
               ),
               if (_error != null) ...[
                 const SizedBox(height: 12),
-                Text(_error!,
-                    style:
-                        TextStyle(color: Theme.of(context).colorScheme.error)),
+                Text(
+                  _error!,
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                ),
               ],
             ],
           ),
@@ -947,7 +961,8 @@ class _OAuthSetupDialogState extends ConsumerState<_OAuthSetupDialog> {
               ? const SizedBox(
                   width: 18,
                   height: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2))
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
               : const Icon(Icons.sync),
           label: Text(strings.startConnection),
         ),
@@ -1386,7 +1401,8 @@ class _AddAccountDialogState extends ConsumerState<_AddAccountDialog> {
     final opened = await openExternalBrowser(url);
     if (!mounted || opened) return;
     setState(
-        () => _error = ref.read(appStringsProvider).naverGuideCouldNotOpen);
+      () => _error = ref.read(appStringsProvider).naverGuideCouldNotOpen,
+    );
   }
 }
 
@@ -1524,8 +1540,9 @@ Future<void> reconnectAccount(
   }
 
   final providers = await ref.read(providersProvider.future);
-  final provider =
-      providers.where((item) => item.id == account.providerId).firstOrNull;
+  final provider = providers
+      .where((item) => item.id == account.providerId)
+      .firstOrNull;
   if (provider == null || !context.mounted) return;
 
   final api = ref.read(mailApiClientProvider);
@@ -1545,7 +1562,8 @@ Future<void> reconnectAccount(
           report(strings.reconnectSucceeded);
         } catch (error) {
           report(
-              '${strings.connectionFailed}: ${friendlyError(error, strings)}');
+            '${strings.connectionFailed}: ${friendlyError(error, strings)}',
+          );
         } finally {
           if (context.mounted) {
             ref.invalidate(accountsProvider);
@@ -1588,7 +1606,9 @@ class _ReconnectPasswordDialogState
       _error = null;
     });
     try {
-      await ref.read(mailApiClientProvider).updateAccountCredentials(
+      await ref
+          .read(mailApiClientProvider)
+          .updateAccountCredentials(
             accountId: widget.account.id,
             secret: secret,
           );

@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/i18n/language_controller.dart';
+import '../../services/mail_api_client.dart';
 import '../../widgets/app_shell.dart';
 import 'account_providers.dart';
 
@@ -25,6 +26,7 @@ class ThreadPage extends ConsumerWidget {
 
     return AppShell(
       selectedDestinationId: AppShell.accountDestinationId(accountId),
+      cachePaths: [MailApiClient.threadPath(accountId, threadId)],
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [

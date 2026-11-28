@@ -317,6 +317,9 @@ class _MessagePageState extends ConsumerState<MessagePage> {
 
     return AppShell(
       selectedDestinationId: AppShell.accountDestinationId(accountId),
+      cachePaths: [
+        MailApiClient.messagePath(accountId: accountId, messageId: messageId),
+      ],
       child: content,
     );
   }
