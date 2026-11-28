@@ -676,9 +676,12 @@ class MessageDetail {
     this.replyAllCc = const [],
     this.to = const [],
     this.cc = const [],
+    this.bodyTruncated = false,
   });
 
   final bool seen;
+  /// The server returned only the first part of a very large text body.
+  final bool bodyTruncated;
   /// Original To/Cc, for the forward header summary.
   final List<String> to;
   final List<String> cc;
@@ -753,6 +756,7 @@ class MessageDetail {
       replyAllCc: _strings(json['replyAllCc']),
       to: _strings(json['to']),
       cc: _strings(json['cc']),
+      bodyTruncated: json['bodyTruncated'] == true,
     );
   }
 }

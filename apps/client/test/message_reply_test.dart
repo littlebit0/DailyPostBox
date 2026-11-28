@@ -303,4 +303,107 @@ void main() {
       await tester.pump(const Duration(seconds: 3));
     });
   }
+
+  const htmlOnlyReply = MessageDetail(
+    id: '5',
+    sender: 'friend@example.com',
+    subject: 'Hi',
+    body: '',
+    html: '<img src="cid:x">',
+    links: [],
+    receivedAtLabel: 'now',
+    replyTo: ['friend@example.com'],
+    replyAllTo: ['friend@example.com'],
+  );
+
+  test('replies to HTML-only mail do not claim an attached original', () {
+    const strings = AppStrings(AppLanguage.english);
+    for (final all in [false, true]) {
+      final draft = ReplyDraft.from(htmlOnlyReply, strings, all: all);
+      expect(draft.body,
+          isNot(contains(strings.originalAttached(originalMessageFilename))));
+      expect(draft.forwardOf, isNull);
+    }
+  });
+
+  testWidgets('replying to HTML-only mail sends no forwardOf',
+      (WidgetTester tester) async {
+    final api = _ForwardApi();
+    final strings = await _openMessage(tester, api, htmlOnlyReply);
+    await tester.tap(find.byTooltip(strings.reply));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining(strings.originalAttached('original.eml')),
+        findsNothing);
+    expect(find.widgetWithText(InputChip, 'original.eml'), findsNothing);
+    await tester.tap(find.byTooltip(strings.send));
+    await tester.pumpAndSettle();
+
+    expect(api.subject, 'Re: Hi');
+    expect(api.forwardOf, isNull);
+    await tester.pump(const Duration(seconds: 3));
+  });
+
+  test('MessageDetail.fromJson reads bodyTruncated', () {
+    expect(MessageDetail.fromJson({'bodyTruncated': true}).bodyTruncated, true);
+    expect(MessageDetail.fromJson({}).bodyTruncated, false);
+  });
+
+  testWidgets('forwarding a truncated body attaches the full original',
+      (WidgetTester tester) async {
+    final api = _ForwardApi();
+    const truncated = MessageDetail(
+      id: '5',
+      sender: 'friend@example.com',
+      subject: 'Hi',
+      body: 'partial',
+      links: [],
+      receivedAtLabel: 'now',
+      bodyTruncated: true,
+    );
+    final strings = await _openMessage(tester, api, truncated);
+    await tester.tap(find.byTooltip(strings.forward));
+    await tester.pumpAndSettle();
+
+    expect(find.widgetWithText(InputChip, 'original.eml'), findsOneWidget);
+    expect(find.textContaining('> partial'), findsOneWidget);
+    expect(find.textContaining(strings.originalAttached('original.eml')),
+        findsOneWidget);
+
+    await tester.enterText(
+        find.descendant(
+            of: find.byType(RecipientField), matching: find.byType(TextField)),
+        'x@example.com, ');
+    await tester.tap(find.byTooltip(strings.send));
+    await tester.pumpAndSettle();
+
+    expect(api.forwardOf?.includeOriginal, true);
+    await tester.pump(const Duration(seconds: 3));
+  });
+}
+
+/// Opens [message] in the reader with [api] as the mail client.
+Future<AppStrings> _openMessage(
+    WidgetTester tester, _ForwardApi api, MessageDetail message) async {
+  await tester.binding.setSurfaceSize(const Size(1200, 800));
+  addTearDown(() => tester.binding.setSurfaceSize(null));
+  await tester.pumpWidget(
+    ProviderScope(
+      overrides: [
+        mailApiClientProvider.overrideWithValue(api),
+        accountsProvider.overrideWith((ref) async => const [_account]),
+        providersProvider.overrideWith((ref) async => const []),
+        composeAccountsProvider.overrideWith((ref) async => const [_account]),
+        accountMessagesProvider.overrideWith((ref, id) async => const []),
+        messageProvider.overrideWith((ref, request) async => message),
+      ],
+      child: const DailyPostBoxApp(),
+    ),
+  );
+  await tester.pumpAndSettle();
+  final container =
+      ProviderScope.containerOf(tester.element(find.byType(MaterialApp)));
+  container.read(appRouterProvider).go('/accounts/account-1/messages/5');
+  await tester.pumpAndSettle();
+  return container.read(appStringsProvider);
 }

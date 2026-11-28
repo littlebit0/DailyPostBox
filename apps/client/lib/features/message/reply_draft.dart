@@ -26,12 +26,7 @@ class ReplyDraft {
     AppStrings strings, {
     required bool all,
   }) {
-    // HTML-only mail (e.g. one big image) has no text to quote; send the original instead.
-    final includeOriginal =
-        message.body.trim().isEmpty && message.html.isNotEmpty;
-    final quoted = includeOriginal
-        ? strings.originalAttached(originalMessageFilename)
-        : message.body.split('\n').map((line) => '> $line').join('\n');
+    final quoted = message.body.split('\n').map((line) => '> $line').join('\n');
     final receivedAt = message.receivedAt;
     final quoteTime =
         receivedAt == null ? message.receivedAtLabel : strings.quoteDate(receivedAt);
@@ -58,12 +53,17 @@ class ReplyDraft {
       if (message.cc.isNotEmpty) '${strings.cc}: ${message.cc.join(', ')}',
       '${strings.subject}: ${message.subject}',
     ].join('\n');
-    // HTML-only mail (e.g. one big image) has no text to quote; send the original instead.
-    final includeOriginal =
-        message.body.trim().isEmpty && message.html.isNotEmpty;
-    final quoted = includeOriginal
-        ? strings.originalAttached(originalMessageFilename)
-        : message.body.split('\n').map((line) => '> $line').join('\n');
+    // HTML-only mail (e.g. one big image) has no text to quote, and a truncated
+    // body would drop the rest; attach the full original in both cases.
+    final htmlOnly = message.body.trim().isEmpty && message.html.isNotEmpty;
+    final includeOriginal = htmlOnly || message.bodyTruncated;
+    final notice = strings.originalAttached(originalMessageFilename);
+    final quoted = htmlOnly
+        ? notice
+        : [
+            message.body.split('\n').map((line) => '> $line').join('\n'),
+            if (includeOriginal) '\n$notice',
+          ].join('\n');
     return ReplyDraft(
       to: const [],
       cc: const [],
