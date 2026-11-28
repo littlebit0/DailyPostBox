@@ -56,6 +56,28 @@ test("the file repository ignores mail for a deleted account", async () => {
   }
 });
 
+test("the file repository ignores sent recipients for a deleted account", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "dailypostbox-"));
+  const filePath = join(directory, "state.json");
+  try {
+    const repository = new LocalFileAccountRepository(filePath);
+    await repository.addAccount(account());
+    await repository.deleteAccount("account-1");
+
+    // A queued send that finishes after deletion must not write addresses back.
+    await repository.recordSentRecipients("account-1", ["b@example.com"], new Date());
+    const stored = JSON.parse(await readFile(filePath, "utf8")) as { sentRecipients?: unknown[] };
+    assert.deepEqual(stored.sentRecipients ?? [], []);
+
+    const memory = new InMemoryAccountRepository();
+    await memory.recordSentRecipients("missing", ["b@example.com"], new Date());
+    await memory.addAccount({ ...account(), id: "missing" });
+    assert.deepEqual(await memory.listSentRecipients(account().userId), []);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("deleting an account stops its running import", async () => {
   const repository = new InMemoryAccountRepository();
   const mailAccount = account();

@@ -22,6 +22,7 @@ import type {
   ProviderId
 } from "../domain/types.js";
 import type { AccountRepository } from "../workers/AccountRepository.js";
+import { suggestContacts } from "../contacts/suggestContacts.js";
 import type { AiSummarizer } from "../ai/AiSummarizer.js";
 import type { RevokeResult } from "../auth/OAuthTokenRevoker.js";
 import type { SnoozeStore } from "../workers/SnoozeStore.js";
@@ -668,6 +669,15 @@ export async function registerRoutes(
     }));
   });
 
+  // Suggestions come from addresses the user sent to, so keep them local like other mail data.
+  app.get("/contacts/suggest", async (request, reply) => {
+    if (!canReadAttachments(request)) {
+      return reply.code(403).send({ error: "Contact suggestions are only available locally." });
+    }
+    const { q } = z.object({ q: z.string().default("") }).parse(request.query);
+    return suggestContacts(await deps.accounts.listSentRecipients(demoUserId), q);
+  });
+
   // Snooze only hides the message inside DailyPostBox; the mail server is untouched.
   app.post("/accounts/:accountId/messages/:messageId/snooze", async (request, reply) => {
     const params = z.object({
@@ -712,7 +722,15 @@ export async function registerRoutes(
 
     let queued: { id: string; sendAt: Date };
     try {
-      queued = sendQueue.enqueue(account, draft, delaySeconds);
+      queued = sendQueue.enqueue(account, draft, delaySeconds, async (result) => {
+        try {
+          await deps.accounts.recordSentRecipients(account.id, result.accepted, new Date());
+        } catch (error) {
+          // The mail already went out; a failed contact save must not invite a resend.
+          // Log only the error code, never addresses or message content.
+          request.log.warn({ code: (error as NodeJS.ErrnoException).code }, "Failed to save sent recipients");
+        }
+      });
     } catch (error) {
       if (error instanceof SendQueueFullError) {
         return reply.code(429).send({ error: "Too many pending sends" });

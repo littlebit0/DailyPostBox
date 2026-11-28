@@ -2,6 +2,33 @@ import type { MailAccount } from "../domain/types.js";
 import type { PushTarget } from "../notifications/PushNotifier.js";
 import type { IncomingMessageSummary, MessageFlagChange } from "../domain/types.js";
 
+/// An address the user has sent mail to; the only trusted source for recipient suggestions.
+export interface SentRecipient {
+  accountId: string;
+  address: string;
+  count: number;
+  lastSentAt: Date;
+}
+
+export function addSentRecipients(
+  store: Map<string, SentRecipient>,
+  accountId: string,
+  addresses: string[],
+  sentAt: Date
+): void {
+  for (const raw of new Set(addresses.map((item) => item.trim().toLowerCase()))) {
+    if (!raw.includes("@")) continue;
+    const key = `${accountId}:${raw}`;
+    const current = store.get(key);
+    store.set(key, {
+      accountId,
+      address: raw,
+      count: (current?.count ?? 0) + 1,
+      lastSentAt: current && current.lastSentAt > sentAt ? current.lastSentAt : sentAt
+    });
+  }
+}
+
 export interface AccountRepository {
   listActiveAccounts(): Promise<MailAccount[]>;
   getAccount(accountId: string): Promise<MailAccount | undefined>;
@@ -13,6 +40,8 @@ export interface AccountRepository {
   deletePushTarget(target: PushTarget): Promise<void>;
   listInbox(userId: string): Promise<IncomingMessageSummary[]>;
   saveIncomingMessage(message: IncomingMessageSummary): Promise<boolean>;
+  recordSentRecipients(accountId: string, addresses: string[], sentAt: Date): Promise<void>;
+  listSentRecipients(userId: string): Promise<SentRecipient[]>;
   updateMessageFlags(
     accountId: string,
     providerMessageId: string,
@@ -25,6 +54,7 @@ export class InMemoryAccountRepository implements AccountRepository {
   private readonly accounts: MailAccount[] = [];
   private readonly messages = new Map<string, IncomingMessageSummary>();
   private readonly pushTargets: PushTarget[] = [];
+  private readonly sentRecipients = new Map<string, SentRecipient>();
 
   async listActiveAccounts(): Promise<MailAccount[]> {
     return this.accounts;
@@ -56,6 +86,9 @@ export class InMemoryAccountRepository implements AccountRepository {
 
     for (const key of this.messages.keys()) {
       if (key.startsWith(`${accountId}:`)) this.messages.delete(key);
+    }
+    for (const [key, item] of this.sentRecipients) {
+      if (item.accountId === accountId) this.sentRecipients.delete(key);
     }
   }
 
@@ -108,6 +141,19 @@ export class InMemoryAccountRepository implements AccountRepository {
     const isNew = !this.messages.has(key);
     this.messages.set(key, message);
     return isNew;
+  }
+
+  async recordSentRecipients(accountId: string, addresses: string[], sentAt: Date): Promise<void> {
+    // A send finishing after its account was deleted must not keep its recipients.
+    if (!this.accounts.some((account) => account.id === accountId)) return;
+    addSentRecipients(this.sentRecipients, accountId, addresses, sentAt);
+  }
+
+  async listSentRecipients(userId: string): Promise<SentRecipient[]> {
+    const accountIds = new Set(
+      this.accounts.filter((account) => account.userId === userId).map((account) => account.id)
+    );
+    return [...this.sentRecipients.values()].filter((item) => accountIds.has(item.accountId));
   }
 
   async updateMessageFlags(

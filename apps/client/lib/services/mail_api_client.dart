@@ -344,6 +344,16 @@ class MailApiClient {
     );
   }
 
+  Future<List<String>> suggestContacts(String query) async {
+    final response = await _dio.get<List<dynamic>>(
+      '/contacts/suggest',
+      queryParameters: {'q': query},
+    );
+    return (response.data ?? [])
+        .map((item) => (item as Map<String, dynamic>)['address'] as String)
+        .toList();
+  }
+
   Future<void> unsubscribeByMail({
     required String accountId,
     required String messageId,

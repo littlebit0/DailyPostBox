@@ -8,6 +8,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:daily_postbox/core/app_router.dart';
 import 'package:daily_postbox/features/accounts/accounts_page.dart';
 import 'package:daily_postbox/features/message/compose_page.dart';
+import 'package:daily_postbox/features/message/recipient_field.dart';
 import 'package:daily_postbox/main.dart';
 import 'package:daily_postbox/services/mail_api_client.dart';
 
@@ -78,7 +79,9 @@ void main() {
       (WidgetTester tester) async {
     final api = await _openComposer(tester);
     await tester.enterText(
-        find.widgetWithText(TextField, '받는 사람'), 'a@example.com, ');
+        find.descendant(
+            of: find.byType(RecipientField), matching: find.byType(TextField)),
+        'a@example.com, ');
     await tester.enterText(find.widgetWithText(TextField, '제목'), 'Hello');
 
     await tester.tap(find.byTooltip('보내기'));
@@ -118,7 +121,10 @@ void main() {
   testWidgets('asks for a recipient instead of sending an empty list',
       (WidgetTester tester) async {
     final api = await _openComposer(tester);
-    await tester.enterText(find.widgetWithText(TextField, '받는 사람'), ' , ');
+    await tester.enterText(
+        find.descendant(
+            of: find.byType(RecipientField), matching: find.byType(TextField)),
+        ' , ');
     await tester.tap(find.byTooltip('보내기'));
     await tester.pumpAndSettle();
 

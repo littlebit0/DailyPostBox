@@ -131,6 +131,8 @@ class AppStrings {
       _ko ? '수신 거부를 처리하지 못했습니다' : 'Could not unsubscribe';
   String get from => _ko ? '보낸 사람' : 'From';
   String get to => _ko ? '받는 사람' : 'To';
+  String get invalidRecipient =>
+      _ko ? '올바르지 않은 주소가 있습니다' : 'Some addresses are not valid';
   String get recipientRequired =>
       _ko ? '받는 사람을 입력하세요.' : 'Enter at least one recipient.';
   String sendFailed(String reason) =>

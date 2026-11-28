@@ -110,7 +110,8 @@ void main() {
       child: const MaterialApp(home: ComposePage(initialDraft: _draft)),
     ));
     await tester.pump();
-    expect(find.text('x@example.com, y@example.com'), findsOneWidget);
+    expect(find.widgetWithText(InputChip, 'x@example.com'), findsOneWidget);
+    expect(find.widgetWithText(InputChip, 'y@example.com'), findsOneWidget);
     expect(find.text('Hello'), findsOneWidget);
     expect(find.text('Body text'), findsOneWidget);
   });

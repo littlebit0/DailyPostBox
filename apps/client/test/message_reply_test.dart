@@ -65,7 +65,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byType(ComposePage), findsOneWidget);
-    expect(find.widgetWithText(TextField, 'friend@example.com'), findsOneWidget);
+    expect(find.widgetWithText(InputChip, 'friend@example.com'), findsOneWidget);
     expect(find.widgetWithText(TextField, 'Re: Hi'), findsOneWidget);
 
     container.read(appRouterProvider).go('/settings');

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { MailAccount, OutgoingMessageDraft } from "../domain/types.js";
-import type { MailSender } from "./MailSender.js";
+import type { MailSender, SendResult } from "./MailSender.js";
 
 export const undoDelaySeconds = [0, 5, 10, 20, 30] as const;
 export const defaultUndoDelaySeconds = 5;
@@ -79,7 +79,9 @@ export class SendQueue {
   enqueue(
     account: MailAccount,
     draft: OutgoingMessageDraft,
-    delaySeconds: number
+    delaySeconds: number,
+    /** Runs after a successful send; must not throw (the mail is already out). */
+    onSent?: (result: SendResult) => Promise<void>
   ): { id: string; sendAt: Date } {
     if (this.entries.size >= this.limits.maxEntries) throw new SendQueueFullError();
     let pendingForAccount = 0;
@@ -103,8 +105,9 @@ export class SendQueue {
         entry.status = "sending";
         entry.sending = (async () => {
           await this.acquire();
+          let result: SendResult | undefined;
           try {
-            await this.sender.send(account, draft);
+            result = await this.sender.send(account, draft);
             entry.status = "sent";
           } catch (error) {
             entry.status = "failed";
@@ -115,6 +118,7 @@ export class SendQueue {
           }
           entry.settled = true;
           this.expire(id);
+          if (result) await onSent?.(result);
         })();
         return entry.sending;
       }

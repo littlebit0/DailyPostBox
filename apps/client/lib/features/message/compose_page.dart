@@ -9,6 +9,7 @@ import '../../services/mail_api_client.dart';
 import '../../widgets/app_shell.dart';
 import 'failed_sends.dart';
 import 'pending_sends.dart';
+import 'recipient_field.dart';
 import 'reply_draft.dart';
 import '../accounts/accounts_page.dart' show friendlyError;
 
@@ -50,6 +51,7 @@ class ComposePage extends ConsumerStatefulWidget {
 }
 
 class _ComposePageState extends ConsumerState<ComposePage> {
+  final _toAddresses = <String>[];
   final _toController = TextEditingController();
   final _ccController = TextEditingController();
   final _subjectController = TextEditingController();
@@ -67,11 +69,12 @@ class _ComposePageState extends ConsumerState<ComposePage> {
     final reply = widget.reply;
     if (draft != null) {
       _toController.text = draft.to;
+      commitRecipientText(_toAddresses, _toController);
       _ccController.text = draft.cc;
       _subjectController.text = draft.subject;
       _bodyController.text = draft.body;
     } else if (reply != null) {
-      _toController.text = reply.to.join(', ');
+      _toAddresses.addAll(reply.to);
       _ccController.text = reply.cc.join(', ');
       _subjectController.text = reply.subject;
       _bodyController.text = reply.body;
@@ -155,9 +158,12 @@ class _ComposePageState extends ConsumerState<ComposePage> {
                     }),
                   ),
                   const SizedBox(height: 12),
-                  TextField(
+                  RecipientField(
+                    label: strings.to,
+                    errorText: strings.invalidRecipient,
+                    suggest: ref.read(mailApiClientProvider).suggestContacts,
+                    addresses: _toAddresses,
                     controller: _toController,
-                    decoration: InputDecoration(labelText: strings.to),
                   ),
                   if (_ccController.text.isNotEmpty) ...[
                     const SizedBox(height: 12),
@@ -237,9 +243,10 @@ class _ComposePageState extends ConsumerState<ComposePage> {
     void report(String message) =>
         messenger.showSnackBar(SnackBar(content: Text(message)));
 
-    final to = _addresses(_toController.text);
-    if (to.isEmpty) {
-      report(strings.recipientRequired);
+    if (commitRecipientText(_toAddresses, _toController)) setState(() {});
+    final to = List<String>.unmodifiable(_toAddresses);
+    if (to.isEmpty || hasInvalidRecipient(to)) {
+      report(to.isEmpty ? strings.recipientRequired : strings.invalidRecipient);
       return;
     }
 
@@ -280,7 +287,7 @@ class _ComposePageState extends ConsumerState<ComposePage> {
       pendingSends.add(
         PendingSend(
           id: receipt.id,
-          to: _toController.text,
+          to: to.join(', '),
           subject: _subjectController.text,
         ),
         receipt.remaining,
