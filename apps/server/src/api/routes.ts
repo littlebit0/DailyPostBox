@@ -28,6 +28,10 @@ import type { RevokeResult } from "../auth/OAuthTokenRevoker.js";
 import type { SnoozeStore } from "../workers/SnoozeStore.js";
 import { sanitizeHtml } from "../mail/safeHtml.js";
 import { replyFields } from "../mail/replyRecipients.js";
+import {
+  resolveForwardedAttachments,
+  selectForwardedAttachments
+} from "../mail/forwarding.js";
 import { providerRegistry } from "../providers/providerRegistry.js";
 import {
   applySyncFailure,
@@ -54,7 +58,11 @@ const sendSchema = z.object({
     })
     .default(defaultUndoDelaySeconds),
   inReplyTo: z.string().regex(/^<[^<>\s]+>$/).optional(),
-  references: z.array(z.string().regex(/^<[^<>\s]+>$/)).optional()
+  references: z.array(z.string().regex(/^<[^<>\s]+>$/)).optional(),
+  forwardOf: z.object({
+    messageId: z.string().min(1),
+    parts: z.array(z.string().regex(/^\d+(\.\d+)*$/)).min(1).max(50)
+  }).optional()
 });
 
 const pushTokenSchema = z.object({
@@ -525,6 +533,9 @@ export async function registerRoutes(
       security: content.security,
       authenticationFailures: content.authenticationFailures ?? [],
       attachments: content.attachments,
+      // Original recipients for the forward header summary.
+      to: content.thread?.to ?? [],
+      cc: content.thread?.cc ?? [],
       ...replyFields(message, content, account),
       ...safeHtmlFields(content, request.query)
     };
@@ -720,6 +731,36 @@ export async function registerRoutes(
       return reply.code(404).send({ error: "Account not found" });
     }
 
+    let prepare: ((queued: OutgoingMessageDraft) => Promise<OutgoingMessageDraft>) | undefined;
+    if (draft.forwardOf) {
+      // Reads original mail from IMAP, so it shares the attachment gate and account scoping.
+      if (!canReadAttachments(request)) {
+        return reply.code(403).send({ error: "Attachments are only available locally." });
+      }
+      if (account.userId !== demoUserId) {
+        return reply.code(404).send({ error: "Account not found" });
+      }
+      const { messageId, parts } = draft.forwardOf;
+      const original = (await deps.accounts.listInbox(demoUserId)).find(
+        (item) => item.accountId === account.id && item.providerMessageId === messageId
+      ) ?? (account.incomingProtocol === "imap" && canReadUnstoredMail(request)
+        ? await deps.fetchMessageSummary(account, messageId)
+        : null);
+      if (!original) {
+        return reply.code(404).send({ error: "Message not found" });
+      }
+      const content = await deps.fetchMessageContent(account, original);
+      const selected = selectForwardedAttachments(content.attachments, parts);
+      if ("error" in selected) {
+        return reply.code(selected.status).send({ error: selected.error });
+      }
+      draft.forwardOf = { messageId, parts, attachments: selected.attachments };
+      prepare = (queued) => resolveForwardedAttachments(
+        queued,
+        (part) => deps.downloadAttachment(account, original, part)
+      );
+    }
+
     let queued: { id: string; sendAt: Date };
     try {
       queued = sendQueue.enqueue(account, draft, delaySeconds, async (result) => {
@@ -730,7 +771,7 @@ export async function registerRoutes(
           // Log only the error code, never addresses or message content.
           request.log.warn({ code: (error as NodeJS.ErrnoException).code }, "Failed to save sent recipients");
         }
-      });
+      }, prepare);
     } catch (error) {
       if (error instanceof SendQueueFullError) {
         return reply.code(429).send({ error: "Too many pending sends" });

@@ -81,7 +81,9 @@ export class SendQueue {
     draft: OutgoingMessageDraft,
     delaySeconds: number,
     /** Runs after a successful send; must not throw (the mail is already out). */
-    onSent?: (result: SendResult) => Promise<void>
+    onSent?: (result: SendResult) => Promise<void>,
+    /** Builds the mail actually sent (e.g. fetches forwarded attachments); a throw fails the send. */
+    prepare?: (draft: OutgoingMessageDraft) => Promise<OutgoingMessageDraft>
   ): { id: string; sendAt: Date } {
     if (this.entries.size >= this.limits.maxEntries) throw new SendQueueFullError();
     let pendingForAccount = 0;
@@ -107,7 +109,7 @@ export class SendQueue {
           await this.acquire();
           let result: SendResult | undefined;
           try {
-            result = await this.sender.send(account, draft);
+            result = await this.sender.send(account, prepare ? await prepare(draft) : draft);
             entry.status = "sent";
           } catch (error) {
             entry.status = "failed";

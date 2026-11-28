@@ -19,16 +19,7 @@ export class SmtpSender implements MailSender {
 
   async send(account: MailAccount, draft: OutgoingMessageDraft): Promise<SendResult> {
     const transporter = await this.createTransporter(account);
-    const result = await transporter.sendMail({
-      from: account.emailAddress,
-      to: draft.to,
-      cc: draft.cc,
-      bcc: draft.bcc,
-      subject: draft.subject,
-      text: draft.text,
-      html: draft.html,
-      ...threadingHeaders(draft)
-    });
+    const result = await transporter.sendMail(mailOptions(account, draft));
 
     return {
       providerMessageId: result.messageId,
@@ -73,4 +64,23 @@ export function threadingHeaders(
   const references = [...(draft.references ?? [])];
   if (!references.includes(draft.inReplyTo)) references.push(draft.inReplyTo);
   return { inReplyTo: draft.inReplyTo, references };
+}
+
+export function mailOptions(
+  account: Pick<MailAccount, "emailAddress">,
+  draft: OutgoingMessageDraft
+): Record<string, unknown> {
+  return {
+    from: account.emailAddress,
+    to: draft.to,
+    cc: draft.cc,
+    bcc: draft.bcc,
+    subject: draft.subject,
+    text: draft.text,
+    html: draft.html,
+    ...threadingHeaders(draft),
+    ...(draft.forwardedAttachments?.length
+      ? { attachments: draft.forwardedAttachments }
+      : {})
+  };
 }
