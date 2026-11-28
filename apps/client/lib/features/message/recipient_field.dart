@@ -66,9 +66,18 @@ class _RecipientFieldState extends State<RecipientField> {
     setState(() => _addresses.remove(address));
   }
 
-  Future<Iterable<String>> _options(TextEditingValue value) async {
-    final query = value.text.trim();
-    final request = ++_request;
+  String? _lookupText;
+  Future<Iterable<String>>? _lookup;
+
+  // RawAutocomplete also calls this on cursor-only changes but keeps only the
+  // result of the call that changed the text, so reuse that pending lookup.
+  Future<Iterable<String>> _options(TextEditingValue value) {
+    if (value.text == _lookupText && _lookup != null) return _lookup!;
+    _lookupText = value.text;
+    return _lookup = _fetchOptions(value.text.trim(), ++_request);
+  }
+
+  Future<Iterable<String>> _fetchOptions(String query, int request) async {
     if (query.length < 2) {
       _shownQuery = query;
       return const [];

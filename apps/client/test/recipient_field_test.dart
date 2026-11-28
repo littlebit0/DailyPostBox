@@ -118,6 +118,39 @@ void main() {
     expect(addresses, ['alice@example.test']);
   });
 
+  testWidgets('keeps a pending lookup when only the cursor moves',
+      (tester) async {
+    final addresses = <String>[];
+    final controller = TextEditingController();
+    addTearDown(controller.dispose);
+    final pending = Completer<List<String>>();
+    var lookups = 0;
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: RecipientField(
+          label: 'To',
+          errorText: 'bad',
+          suggest: (q) {
+            lookups++;
+            return pending.future;
+          },
+          addresses: addresses,
+          controller: controller,
+        ),
+      ),
+    ));
+
+    await tester.enterText(find.byType(TextField), 'al');
+    await tester.pump();
+    controller.selection = const TextSelection.collapsed(offset: 1);
+    await tester.pump();
+    pending.complete(['alice@example.test']);
+    await tester.pumpAndSettle();
+
+    expect(lookups, 1);
+    expect(find.text('alice@example.test'), findsOneWidget);
+  });
+
   testWidgets('scrolls the keyboard-highlighted suggestion into view',
       (tester) async {
     final suggestions = [for (var i = 0; i < 8; i++) 'user$i@example.test'];
