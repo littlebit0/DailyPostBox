@@ -40,6 +40,7 @@ class _SendingApi extends MailApiClient {
     List<String> cc = const [],
     String? inReplyTo,
     List<String> references = const [],
+    ForwardOf? forwardOf,
   }) {
     sent.add(to);
     return reply.future;

@@ -60,6 +60,7 @@ class _ComposePageState extends ConsumerState<ComposePage> {
   String _signature = '';
   bool _signatureInitialized = false;
   bool _sending = false;
+  ForwardOf? _forwardOf;
 
   @override
   void initState() {
@@ -67,6 +68,7 @@ class _ComposePageState extends ConsumerState<ComposePage> {
     _accountId = widget.initialAccountId;
     final draft = widget.initialDraft;
     final reply = widget.reply;
+    _forwardOf = draft?.forwardOf ?? reply?.forwardOf;
     if (draft != null) {
       _toController.text = draft.to;
       commitRecipientText(_toAddresses, _toController);
@@ -152,10 +154,13 @@ class _ComposePageState extends ConsumerState<ComposePage> {
                           child: Text(account.emailAddress),
                         ),
                     ],
-                    onChanged: (value) => setState(() {
-                      _accountId = value;
-                      _useSignatureOf(items, value);
-                    }),
+                    // Forwarded parts are read from the original account's mailbox.
+                    onChanged: _forwardOf?.attachments.isNotEmpty ?? false
+                        ? null
+                        : (value) => setState(() {
+                              _accountId = value;
+                              _useSignatureOf(items, value);
+                            }),
                   ),
                   const SizedBox(height: 12),
                   RecipientField(
@@ -177,6 +182,36 @@ class _ComposePageState extends ConsumerState<ComposePage> {
                     controller: _subjectController,
                     decoration: InputDecoration(labelText: strings.subject),
                   ),
+                  if (_forwardOf case final forward?
+                      when forward.attachments.isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    Text(strings.forwardedAttachments,
+                        style: Theme.of(context).textTheme.labelLarge),
+                    const SizedBox(height: 4),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        for (final attachment in forward.attachments)
+                          InputChip(
+                            avatar: const Icon(Icons.attach_file, size: 18),
+                            label: Text(
+                                '${attachment.filename} (${formatAttachmentSize(attachment.size)})'),
+                            deleteButtonTooltipMessage:
+                                strings.removeAttachment(attachment.filename),
+                            onDeleted: () => setState(() {
+                              _forwardOf = ForwardOf(
+                                messageId: forward.messageId,
+                                attachments: [
+                                  for (final a in forward.attachments)
+                                    if (a.part != attachment.part) a,
+                                ],
+                              );
+                            }),
+                          ),
+                      ],
+                    ),
+                  ],
                   const SizedBox(height: 12),
                   TextField(
                     controller: _bodyController,
@@ -273,6 +308,7 @@ class _ComposePageState extends ConsumerState<ComposePage> {
         delaySeconds: delay,
         inReplyTo: inReplyTo,
         references: references,
+        forwardOf: _forwardOf,
       );
     } catch (error) {
       // The draft stays on screen so the user can fix it and retry.

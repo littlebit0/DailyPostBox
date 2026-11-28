@@ -35,6 +35,7 @@ class ComposeDraft {
     this.cc = '',
     this.inReplyTo,
     this.references = const [],
+    this.forwardOf,
   });
   final String accountId;
   final String to;
@@ -43,6 +44,14 @@ class ComposeDraft {
   final String body;
   final String? inReplyTo;
   final List<String> references;
+  final ForwardOf? forwardOf;
+}
+
+/// Original attachments to forward; the server fetches the bytes itself.
+class ForwardOf {
+  const ForwardOf({required this.messageId, required this.attachments});
+  final String messageId;
+  final List<MessageAttachment> attachments;
 }
 
 class SendOutcome {
@@ -455,6 +464,7 @@ class MailApiClient {
     List<String> cc = const [],
     String? inReplyTo,
     List<String> references = const [],
+    ForwardOf? forwardOf,
   }) async {
     final elapsed = Stopwatch()..start();
     final response = await _dio.post(
@@ -469,6 +479,11 @@ class MailApiClient {
         if (inReplyTo != null) 'inReplyTo': inReplyTo,
         if (inReplyTo != null && references.isNotEmpty)
           'references': references,
+        if (forwardOf != null && forwardOf.attachments.isNotEmpty)
+          'forwardOf': {
+            'messageId': forwardOf.messageId,
+            'parts': [for (final a in forwardOf.attachments) a.part],
+          },
       },
     );
     final data = response.data as Map<String, dynamic>;
@@ -511,6 +526,7 @@ class MailApiClient {
               inReplyTo: draft['inReplyTo'] as String?,
               references: ((draft['references'] as List?) ?? const [])
                   .cast<String>(),
+              forwardOf: _forwardOf(draft['forwardOf']),
             ),
     );
   }
@@ -646,9 +662,14 @@ class MessageDetail {
     this.replyTo = const [],
     this.replyAllTo = const [],
     this.replyAllCc = const [],
+    this.to = const [],
+    this.cc = const [],
   });
 
   final bool seen;
+  /// Original To/Cc, for the forward header summary.
+  final List<String> to;
+  final List<String> cc;
   final bool flagged;
   final String? accountId;
   final String? messageId;
@@ -718,6 +739,8 @@ class MessageDetail {
       replyTo: _strings(json['replyTo']),
       replyAllTo: _strings(json['replyAllTo']),
       replyAllCc: _strings(json['replyAllCc']),
+      to: _strings(json['to']),
+      cc: _strings(json['cc']),
     );
   }
 }
@@ -823,6 +846,17 @@ String formatAttachmentSize(int bytes) {
     unit += 1;
   }
   return '${value.toStringAsFixed(value < 10 ? 1 : 0)} ${units[unit]}';
+}
+
+ForwardOf? _forwardOf(Object? value) {
+  if (value is! Map<String, dynamic>) return null;
+  return ForwardOf(
+    messageId: value['messageId'] as String? ?? '',
+    attachments: (value['attachments'] as List<dynamic>? ?? const [])
+        .whereType<Map<String, dynamic>>()
+        .map(MessageAttachment.fromJson)
+        .toList(growable: false),
+  );
 }
 
 List<String> _strings(Object? value) =>
