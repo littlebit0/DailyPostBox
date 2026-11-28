@@ -124,13 +124,16 @@ class MailApiClient {
     Map<String, dynamic>? queryParameters,
     bool store = true,
   }) async {
+    final startedAt = cache?.epoch;
     try {
       final response = await _dio.get<T>(
         path,
         queryParameters: queryParameters,
       );
       onCacheState?.call(path, null);
-      if (store) await cache?.write(path, response.data);
+      if (store) {
+        await cache?.write(path, response.data, startedAt: startedAt);
+      }
       return response.data;
     } catch (error) {
       if (!isMailApiConnectionError(error)) rethrow;

@@ -58,6 +58,16 @@ class MailCache {
   // Distinct temp names keep concurrent writes of one path from mixing.
   static var _tempSeq = 0;
 
+  // Bumped by clearAccount; a read started before a clear must not write back.
+  var _epoch = 0;
+  final _clearedAt = <String, int>{};
+
+  /// Pass to [write] as `startedAt` for a response requested at this moment.
+  int get epoch => _epoch;
+
+  bool _clearedSince(String folder, int? startedAt) =>
+      startedAt != null && (_clearedAt[folder] ?? -1) >= startedAt;
+
   static String _folderFor(String path) {
     if (path == '/providers') return _providersFolder;
     final match = _accountPath.firstMatch(path);
@@ -78,7 +88,9 @@ class MailCache {
     return File('${root.path}/${_folderFor(path)}/${_fileName(path)}');
   }
 
-  Future<void> write(String path, Object? data) async {
+  Future<void> write(String path, Object? data, {int? startedAt}) async {
+    final folder = _folderFor(path);
+    if (_clearedSince(folder, startedAt)) return;
     try {
       final file = await _file(path);
       await file.parent.create(recursive: true);
@@ -94,6 +106,10 @@ class MailCache {
           }),
           flush: true,
         );
+        if (_clearedSince(folder, startedAt)) {
+          await temp.delete();
+          return;
+        }
         await temp.rename(file.path);
       } catch (_) {
         if (await temp.exists()) await temp.delete();
@@ -122,6 +138,10 @@ class MailCache {
   /// Removes everything cached for [accountId]. The shared folder also goes
   /// because the merged inbox and account list may contain that account.
   Future<void> clearAccount(String accountId) async {
+    final epoch = _epoch++;
+    for (final folder in ['a_$accountId', _sharedFolder]) {
+      _clearedAt[folder] = epoch;
+    }
     try {
       final root = await _root();
       for (final folder in ['a_$accountId', _sharedFolder]) {

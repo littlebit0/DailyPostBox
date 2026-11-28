@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:dio/dio.dart';
@@ -9,10 +10,12 @@ import 'package:daily_postbox/services/mail_cache.dart';
 
 class _FakeAdapter implements HttpClientAdapter {
   bool offline = false;
+  Completer<void>? gate;
 
   @override
   Future<ResponseBody> fetch(RequestOptions options,
       Stream<List<int>>? requestStream, Future<void>? cancelFuture) async {
+    await gate?.future;
     if (offline) {
       throw DioException.connectionError(
           requestOptions: options, reason: 'down');
@@ -138,6 +141,24 @@ void main() {
       offlineSinceFor(container.read(cachedPathsProvider), [messagePath]),
       isNull,
     );
+  });
+
+  test('a read started before account deletion does not recache it',
+      () async {
+    adapter.gate = Completer<void>();
+    final pending = api.fetchAccountMessages('a1');
+    await Future<void>.delayed(Duration.zero);
+    await cache.clearAccount('a1');
+    adapter.gate!.complete();
+    await pending;
+
+    expect(await cache.read(MailApiClient.accountMessagesPath('a1')), isNull);
+    expect(dir.existsSync() ? dir.listSync() : [], isEmpty);
+
+    // Reads that start after the deletion cache normally again.
+    adapter.gate = null;
+    await api.fetchAccountMessages('a1');
+    expect(await cache.read(MailApiClient.accountMessagesPath('a1')), isNotNull);
   });
 
   test('overwrite replaces the file without leaving temp files', () async {
