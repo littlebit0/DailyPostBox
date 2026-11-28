@@ -42,6 +42,7 @@ class _SendApi extends MailApiClient {
     List<String> cc = const [],
     String? inReplyTo,
     List<String> references = const [],
+    ForwardOf? forwardOf,
   }) async =>
       const SendReceipt('id', Duration(seconds: 5));
 
@@ -368,6 +369,7 @@ class _UndoApi extends _SendApi {
     List<String> cc = const [],
     String? inReplyTo,
     List<String> references = const [],
+    ForwardOf? forwardOf,
   }) async =>
       SendReceipt('s${++sent}', const Duration(seconds: 30));
 

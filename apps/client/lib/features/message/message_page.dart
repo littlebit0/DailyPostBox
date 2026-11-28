@@ -214,6 +214,14 @@ class _MessagePageState extends ConsumerState<MessagePage> {
                 onPressed: () => _reply(context, item, strings, all: true),
                 icon: const Icon(Icons.reply_all),
               ),
+              IconButton(
+                tooltip: strings.forward,
+                onPressed: () => context.go(
+                  '/accounts/${item.accountId ?? accountId}/compose',
+                  extra: ReplyDraft.forward(item, strings),
+                ),
+                icon: const Icon(Icons.forward),
+              ),
             ],
             PopupMenuButton<String>(
               tooltip: strings.snooze,

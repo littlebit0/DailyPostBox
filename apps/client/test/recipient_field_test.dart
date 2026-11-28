@@ -262,6 +262,7 @@ class _SendRecordingApi extends MailApiClient {
     int delaySeconds = 0,
     String? inReplyTo,
     List<String> references = const [],
+    ForwardOf? forwardOf,
   }) async {
     sent.add(to);
     return const SendReceipt('send-1', Duration.zero);

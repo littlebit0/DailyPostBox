@@ -111,6 +111,21 @@ class AppStrings {
       : 'Could not update the message on the server.';
   String get replyAll => _ko ? '전체 답장' : 'Reply all';
   String get cc => _ko ? '참조' : 'Cc';
+  String get forward => _ko ? '전달' : 'Forward';
+  String get forwardedMessage => _ko
+      ? '---------- 전달된 메일 ----------'
+      : '---------- Forwarded message ----------';
+  String get date => _ko ? '날짜' : 'Date';
+  String get forwardedAttachments =>
+      _ko ? '전달할 첨부파일' : 'Forwarded attachments';
+  String originalAttached(String name) => _ko
+      ? '원본 메일은 첨부($name)로 포함했습니다.'
+      : 'The original message is attached ($name).';
+  String includedInOriginal(String name) => _ko
+      ? '원본 메일($name)에 포함됨. 따로 빼려면 $name을 먼저 빼세요.'
+      : 'Included in $name. Remove $name first to drop it.';
+  String removeAttachment(String name) =>
+      _ko ? '$name 첨부 빼기' : 'Remove attachment $name';
 
   /// Absolute local date-time for the reply quote header.
   String quoteDate(DateTime time) => _ko
