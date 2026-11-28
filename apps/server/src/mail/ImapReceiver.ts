@@ -513,7 +513,7 @@ export class ImapReceiver implements MailReceiver {
         maxBytes: ImapReceiver.maxBodyBytes
       });
       const raw = await readBodyStream(download.content);
-      return parseCalendarInvite(raw.toString("utf8")) ?? undefined;
+      return parseCalendarInvite(decodeCalendarText(raw, part.parameters?.charset)) ?? undefined;
     } catch {
       return undefined;
     }
@@ -718,15 +718,27 @@ function selectBodyParts(
   ];
 }
 
-function findCalendarPart(
+// An attached message (forwarded .eml) is opaque: its invite is not this mail's.
+export function findCalendarPart(
   part: MessageStructureObject
 ): MessageStructureObject | null {
-  if (part.type.toLowerCase() === "text/calendar") return part;
+  const type = part.type.toLowerCase();
+  if (type === "text/calendar") return part;
+  if (type === "message/rfc822") return null;
   for (const child of part.childNodes ?? []) {
     const found = findCalendarPart(child);
     if (found) return found;
   }
   return null;
+}
+
+// ImapFlow does not convert text/calendar charsets, so decode the declared one here.
+export function decodeCalendarText(raw: Buffer, charset?: string): string {
+  try {
+    return new TextDecoder(charset?.trim() || "utf-8").decode(raw);
+  } catch {
+    return raw.toString("utf8");
+  }
 }
 
 async function readBodyStream(
