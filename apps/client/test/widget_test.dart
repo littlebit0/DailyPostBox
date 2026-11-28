@@ -1918,6 +1918,65 @@ void main() {
     expect(grouped.map((item) => item.id), ['1', '2', '4']);
   });
 
+  for (final enabled in [false, true]) {
+    testWidgets('summary card visible only when AI is enabled ($enabled)',
+        (WidgetTester tester) async {
+      final api = _FakeSummaryApi();
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            accountsProvider.overrideWith((ref) async => const []),
+            providersProvider.overrideWith((ref) async => const []),
+            mailApiClientProvider.overrideWithValue(api),
+            aiSummaryEnabledProvider.overrideWith((ref) async => enabled),
+            messageProvider.overrideWith(
+              (ref, request) async => const MessageDetail(
+                id: 'm1',
+                sender: 's@example.test',
+                subject: '제목',
+                body: '본문',
+                links: [],
+                receivedAtLabel: 'now',
+                // Already read, so opening it does not call the flag API.
+                seen: true,
+              ),
+            ),
+          ],
+          child: const MaterialApp(
+            home: MessagePage(messageId: 'm1', accountId: 'a1'),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('AI 요약'), enabled ? findsOneWidget : findsNothing);
+      if (enabled) {
+        await tester.tap(find.text('요약'));
+        await tester.pumpAndSettle();
+        expect(find.text('가짜 요약'), findsOneWidget);
+        expect(api.calls, 1);
+      }
+    });
+  }
+
+  test('AI feature discovery retries after a transient failure', () async {
+    final api = _FlakyFeaturesApi();
+    final container = ProviderContainer(
+      overrides: [mailApiClientProvider.overrideWithValue(api)],
+    );
+    addTearDown(container.dispose);
+
+    var sub = container.listen(aiSummaryEnabledProvider, (_, __) {});
+    expect(await container.read(aiSummaryEnabledProvider.future), isFalse);
+    sub.close();
+    await Future<void>.delayed(Duration.zero);
+
+    sub = container.listen(aiSummaryEnabledProvider, (_, __) {});
+    expect(await container.read(aiSummaryEnabledProvider.future), isTrue);
+    sub.close();
+    expect(api.calls, 2);
+  });
+
   testWidgets('does not offer the unimplemented POP3 protocol', (
     WidgetTester tester,
   ) async {
@@ -2080,6 +2139,8 @@ void main() {
             mailApiClientProvider.overrideWithValue(api),
             accountsProvider.overrideWith((ref) async => const []),
             providersProvider.overrideWith((ref) async => const []),
+            // No /features request: _FlagApi has no server behind it.
+            aiSummaryEnabledProvider.overrideWith((ref) async => false),
           ],
           child: MaterialApp.router(routerConfig: router),
         ),
@@ -2360,4 +2421,32 @@ class _SlowMessagesApi extends MailApiClient {
 
   @override
   Future<List<MailSummary>> fetchAccountMessages(String accountId) => fetch();
+}
+
+class _FlakyFeaturesApi extends MailApiClient {
+  _FlakyFeaturesApi() : super(baseUrl: 'http://127.0.0.1:1');
+
+  int calls = 0;
+
+  @override
+  Future<bool> fetchAiSummaryEnabled() async {
+    calls++;
+    if (calls == 1) throw Exception('offline');
+    return true;
+  }
+}
+
+class _FakeSummaryApi extends MailApiClient {
+  _FakeSummaryApi() : super(baseUrl: 'http://127.0.0.1:1');
+
+  int calls = 0;
+
+  @override
+  Future<String> summarizeMessage({
+    required String accountId,
+    required String messageId,
+  }) async {
+    calls++;
+    return '가짜 요약';
+  }
 }

@@ -83,6 +83,13 @@ class AppStrings {
   String get close => _ko ? '닫기' : 'Close';
   String get send => _ko ? '보내기' : 'Send';
   String get message => _ko ? '메일' : 'Message';
+  String get summarize => _ko ? '요약' : 'Summarize';
+  String get summaryTitle => _ko ? 'AI 요약' : 'AI summary';
+  String get summaryNotice => _ko
+      ? '메일 내용이 AI 서비스로 전송됩니다. 요약은 틀릴 수 있으니 원문도 확인하세요.'
+      : 'The message text is sent to an AI service. Summaries can be wrong; check the original.';
+  String get summaryFailed =>
+      _ko ? '요약을 만들지 못했습니다.' : 'Could not create a summary.';
   String get reply => _ko ? '답장' : 'Reply';
   String get snooze => _ko ? '다시 알림' : 'Snooze';
   String get snoozeTonight => _ko ? '오늘 저녁 (오후 6시)' : 'This evening (6 PM)';
