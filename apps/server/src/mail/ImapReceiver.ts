@@ -9,6 +9,7 @@ import { parseAuthenticationFailures } from "./authenticationResults.js";
 import type { OAuthTokenManager } from "../auth/OAuthTokenManager.js";
 import type {
   AttachmentDownload,
+  CalendarInvite,
   IncomingMessageAttachment,
   IncomingMessageContent,
   IncomingMessageLink,
@@ -44,6 +45,7 @@ import {
   rawAttachmentFetch
 } from "./attachments.js";
 import { extractMessageLinks } from "./messageLinks.js";
+import { parseCalendarInvite } from "./calendarInvite.js";
 import { parseListUnsubscribe, readHeader } from "./listUnsubscribe.js";
 import { MAX_HEADER_BYTES, boundMessageId, parseMessageIds } from "./threading.js";
 import { detectImapCapabilities } from "./imapCapabilities.js";
@@ -249,6 +251,11 @@ export class ImapReceiver implements MailReceiver {
       const attachments = extractAttachments(message.bodyStructure);
       const thread = toThreadHeaders(message);
       const bodyParts = selectBodyParts(message.bodyStructure);
+      const invite = await this.fetchInvite(
+        client,
+        providerMessageId,
+        message.bodyStructure
+      );
       let htmlFallback: IncomingMessageContent | null = null;
       let htmlLinks: IncomingMessageLink[] = [];
       let rawHtml: string | undefined;
@@ -277,7 +284,8 @@ export class ImapReceiver implements MailReceiver {
               attachments,
               thread,
               unsubscribe,
-              authenticationFailures
+              authenticationFailures,
+              invite
             };
           }
           continue;
@@ -312,13 +320,14 @@ export class ImapReceiver implements MailReceiver {
             html: rawHtml,
             attachments,
             thread,
-            authenticationFailures
+            authenticationFailures,
+            invite
           };
         }
       }
 
       if (htmlFallback) {
-        return { ...htmlFallback, links: htmlLinks, html: rawHtml, unsubscribe };
+        return { ...htmlFallback, links: htmlLinks, html: rawHtml, unsubscribe, invite };
       }
       // Image-only HTML has no extractable text but still needs html returned.
       if (rawHtml) {
@@ -330,7 +339,8 @@ export class ImapReceiver implements MailReceiver {
           attachments,
           thread,
           unsubscribe,
-          authenticationFailures
+          authenticationFailures,
+          invite
         };
       }
       return {
@@ -340,7 +350,8 @@ export class ImapReceiver implements MailReceiver {
         attachments,
         thread,
         unsubscribe,
-        authenticationFailures
+        authenticationFailures,
+        invite
       };
     } finally {
       await client.logout().catch(() => undefined);
@@ -486,6 +497,26 @@ export class ImapReceiver implements MailReceiver {
       stopped = true;
       await client.logout().catch(() => undefined);
     };
+  }
+
+  // A broken invite part must never hide the message body.
+  private async fetchInvite(
+    client: ImapFlow,
+    uid: string,
+    structure: MessageStructureObject
+  ): Promise<CalendarInvite | undefined> {
+    const part = findCalendarPart(structure);
+    if (!part) return undefined;
+    try {
+      const download = await client.download(uid, part.part ?? "1", {
+        uid: true,
+        maxBytes: ImapReceiver.maxBodyBytes
+      });
+      const raw = await readBodyStream(download.content);
+      return parseCalendarInvite(decodeCalendarText(raw, part.parameters?.charset)) ?? undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   private async createClient(account: MailAccount): Promise<ImapFlow> {
@@ -685,6 +716,29 @@ function selectBodyParts(
     ...candidates.filter((part) => part.type.toLowerCase() === "text/html"),
     ...candidates.filter((part) => part.type.toLowerCase() === "text/plain")
   ];
+}
+
+// An attached message (forwarded .eml) is opaque: its invite is not this mail's.
+export function findCalendarPart(
+  part: MessageStructureObject
+): MessageStructureObject | null {
+  const type = part.type.toLowerCase();
+  if (type === "text/calendar") return part;
+  if (type === "message/rfc822") return null;
+  for (const child of part.childNodes ?? []) {
+    const found = findCalendarPart(child);
+    if (found) return found;
+  }
+  return null;
+}
+
+// ImapFlow does not convert text/calendar charsets, so decode the declared one here.
+export function decodeCalendarText(raw: Buffer, charset?: string): string {
+  try {
+    return new TextDecoder(charset?.trim() || "utf-8").decode(raw);
+  } catch {
+    return raw.toString("utf8");
+  }
 }
 
 async function readBodyStream(

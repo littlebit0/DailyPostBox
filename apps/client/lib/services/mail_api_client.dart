@@ -518,6 +518,7 @@ class MessageDetail {
     required this.body,
     required this.links,
     required this.receivedAtLabel,
+    this.invite,
     this.authenticationFailures = const [],
     this.unsubscribeUrl,
     this.unsubscribeMailto,
@@ -543,6 +544,7 @@ class MessageDetail {
   final List<String> replyTo;
   final List<String> replyAllTo;
   final List<String> replyAllCc;
+  final CalendarInvite? invite;
   final String id;
   final String sender;
   final String subject;
@@ -578,6 +580,9 @@ class MessageDetail {
           .map(MessageLink.fromJson)
           .toList(growable: false),
       receivedAtLabel: _formatReceivedAt(json['receivedAt'] as String?),
+      invite: json['invite'] is Map<String, dynamic>
+          ? CalendarInvite.fromJson(json['invite'] as Map<String, dynamic>)
+          : null,
       authenticationFailures:
           (json['authenticationFailures'] as List<dynamic>? ?? const [])
               .whereType<String>()
@@ -599,6 +604,74 @@ class MessageDetail {
       replyAllCc: _strings(json['replyAllCc']),
     );
   }
+}
+
+class CalendarInvite {
+  const CalendarInvite({
+    required this.summary,
+    required this.start,
+    this.end,
+    this.allDay = false,
+    this.location,
+    this.organizer,
+    this.recurring = false,
+    this.method,
+  });
+
+  final String summary;
+
+  /// ISO 8601 from the server: UTC with "Z", a date for all-day events, or a
+  /// wall-clock time without offset when the sender's zone was unknown.
+  final String start;
+  final String? end;
+  final bool allDay;
+  final String? location;
+  final String? organizer;
+  final bool recurring;
+
+  /// iTIP METHOD (REQUEST, CANCEL, ...), upper-cased by the server.
+  final String? method;
+
+  bool get cancelled => method == 'CANCEL';
+
+  factory CalendarInvite.fromJson(Map<String, dynamic> json) {
+    return CalendarInvite(
+      summary: json['summary'] as String? ?? '',
+      start: json['start'] as String? ?? '',
+      end: json['end'] as String?,
+      allDay: json['allDay'] as bool? ?? false,
+      location: json['location'] as String?,
+      organizer: json['organizer'] as String?,
+      recurring: json['recurring'] as bool? ?? false,
+      method: json['method'] as String?,
+    );
+  }
+
+  /// "2026-12-01 09:00 ~ 10:00", shown in the device time zone when the
+  /// server could resolve the sender's zone.
+  String get timeLabel {
+    final from = _inviteTime(start, allDay);
+    final to = end == null ? null : _inviteTime(_inclusiveEnd(end!), allDay);
+    if (to == null || to == from) return from;
+    final sameDay = !allDay && from.substring(0, 10) == to.substring(0, 10);
+    return '$from ~ ${sameDay ? to.substring(11) : to}';
+  }
+
+  /// All-day DTEND is exclusive (RFC 5545 §3.6.1), so show the day before it.
+  String _inclusiveEnd(String value) {
+    final date = allDay ? DateTime.tryParse(value) : null;
+    if (date == null) return value;
+    return DateTime(date.year, date.month, date.day - 1).toIso8601String();
+  }
+}
+
+String _inviteTime(String value, bool allDay) {
+  final parsed = DateTime.tryParse(value);
+  if (parsed == null) return value;
+  final local = parsed.isUtc ? parsed.toLocal() : parsed;
+  String two(int n) => n.toString().padLeft(2, '0');
+  final date = '${local.year}-${two(local.month)}-${two(local.day)}';
+  return allDay ? date : '$date ${two(local.hour)}:${two(local.minute)}';
 }
 
 class MessageAttachment {

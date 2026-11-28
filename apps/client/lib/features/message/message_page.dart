@@ -263,6 +263,7 @@ class _MessagePageState extends ConsumerState<MessagePage> {
                   ),
                 ],
                 const Divider(height: 32),
+                if (item.invite != null) _InviteCard(invite: item.invite!),
                 if (item.remoteImageCount > 0 && !_showRemoteImages)
                   _RemoteImageBanner(
                     count: item.remoteImageCount,
@@ -443,5 +444,38 @@ Future<void> _unsubscribe(
   }
   if (!ok) {
     messenger?.showSnackBar(SnackBar(content: Text(strings.unsubscribeFailed)));
+  }
+}
+
+class _InviteCard extends ConsumerWidget {
+  const _InviteCard({required this.invite});
+
+  final CalendarInvite invite;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final strings = ref.watch(appStringsProvider);
+    final location = invite.location;
+    final organizer = invite.organizer;
+    return Card(
+      margin: const EdgeInsets.only(bottom: 24),
+      child: ListTile(
+        leading: Icon(invite.cancelled ? Icons.event_busy : Icons.event),
+        title: Text(
+          invite.summary.isEmpty ? strings.calendarInvite : invite.summary,
+          style: invite.cancelled
+              ? const TextStyle(decoration: TextDecoration.lineThrough)
+              : null,
+        ),
+        subtitle: Text([
+          if (invite.cancelled) strings.inviteCancelled,
+          invite.timeLabel,
+          if (invite.recurring) strings.inviteRecurring,
+          if (location != null) location,
+          if (organizer != null) strings.inviteOrganizer(organizer),
+        ].join('\n')),
+        isThreeLine: true,
+      ),
+    );
   }
 }

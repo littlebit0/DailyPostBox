@@ -128,6 +128,7 @@ export interface IncomingMessageContent {
   text: string;
   truncated: boolean;
   links: IncomingMessageLink[];
+  invite?: CalendarInvite;
   authenticationFailures?: AuthenticationFailure[];
   unsubscribe?: ListUnsubscribe | null;
   /** Raw HTML alternative. Must go through sanitizeHtml before leaving the server. */
@@ -159,6 +160,18 @@ export interface MessageThreadHeaders {
   replyTo: string[];
   to: string[];
   cc: string[];
+}
+
+export interface CalendarInvite {
+  method: string | null;
+  summary: string;
+  /** ISO 8601: UTC "Z", date only for all-day, or wall-clock without offset when the zone is unknown. */
+  start: string;
+  end: string | null;
+  allDay: boolean;
+  location: string | null;
+  organizer: string | null;
+  recurring: boolean;
 }
 
 export interface IncomingMessageLink {

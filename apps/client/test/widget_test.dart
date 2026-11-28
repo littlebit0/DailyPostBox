@@ -20,6 +20,108 @@ import 'package:daily_postbox/services/badge_service.dart';
 import 'package:daily_postbox/services/mail_api_client.dart';
 
 void main() {
+  testWidgets('shows a calendar invite card on the message page',
+      (WidgetTester tester) async {
+    await tester.binding.setSurfaceSize(const Size(1200, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          messageProvider.overrideWith(
+            (ref, request) async => const MessageDetail(
+              id: '1',
+              sender: 'a@example.test',
+              subject: 'Invite',
+              body: 'Join us',
+              links: [],
+              receivedAtLabel: 'now',
+              invite: CalendarInvite(
+                summary: 'Design review',
+                start: '2026-12-01T09:00:00',
+                end: '2026-12-01T10:00:00',
+                location: 'Room 1',
+                organizer: 'Kim',
+              ),
+            ),
+          ),
+        ],
+        child: const MaterialApp(home: MessagePage(messageId: '1', accountId: 'a1')),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Design review'), findsOneWidget);
+    expect(find.textContaining('2026-12-01 09:00 ~ 10:00'), findsOneWidget);
+    expect(find.textContaining('Room 1'), findsOneWidget);
+  });
+
+  testWidgets('marks a cancelled calendar invite on the message page',
+      (WidgetTester tester) async {
+    await tester.binding.setSurfaceSize(const Size(1200, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final invite = CalendarInvite.fromJson({
+      'method': 'CANCEL',
+      'summary': 'Design review',
+      'start': '2026-12-01T09:00:00',
+    });
+    expect(invite.cancelled, isTrue);
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          messageProvider.overrideWith(
+            (ref, request) async => MessageDetail(
+              id: '1',
+              sender: 'a@example.test',
+              subject: 'Cancelled',
+              body: '',
+              links: const [],
+              receivedAtLabel: 'now',
+              invite: invite,
+            ),
+          ),
+        ],
+        child: const MaterialApp(home: MessagePage(messageId: '1', accountId: 'a1')),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('취소된 일정'), findsOneWidget);
+    expect(find.byIcon(Icons.event_busy), findsOneWidget);
+  });
+
+  test('formats calendar invite times', () {
+    final invite = CalendarInvite.fromJson({
+      'summary': 'Sync',
+      'start': '2026-12-01T09:00:00',
+      'end': '2026-12-01T10:30:00',
+    });
+    expect(invite.timeLabel, '2026-12-01 09:00 ~ 10:30');
+
+    const allDay = CalendarInvite(
+      summary: 'Holiday',
+      start: '2026-12-25',
+      allDay: true,
+    );
+    expect(allDay.timeLabel, '2026-12-25');
+
+    // All-day DTEND is exclusive (RFC 5545), so a one-day event shows one date.
+    const oneDay = CalendarInvite(
+      summary: 'Holiday',
+      start: '2026-12-25',
+      end: '2026-12-26',
+      allDay: true,
+    );
+    expect(oneDay.timeLabel, '2026-12-25');
+
+    const threeDays = CalendarInvite(
+      summary: 'Trip',
+      start: '2026-12-30',
+      end: '2027-01-02',
+      allDay: true,
+    );
+    expect(threeDays.timeLabel, '2026-12-30 ~ 2027-01-01');
+  });
+
   test(
     'failed attachment download keeps the existing destination file',
     () async {
