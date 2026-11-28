@@ -21,6 +21,19 @@ class AppDelegate: FlutterAppDelegate, UNUserNotificationCenterDelegate {
         self?.requestDeviceToken(result: result)
       }
     }
+    if let controller = mainFlutterWindow?.contentViewController as? FlutterViewController {
+      FlutterMethodChannel(
+        name: "dailypostbox/badge",
+        binaryMessenger: controller.engine.binaryMessenger
+      ).setMethodCallHandler { call, result in
+        guard call.method == "setBadge", let count = call.arguments as? Int else {
+          result(FlutterMethodNotImplemented)
+          return
+        }
+        NSApplication.shared.dockTile.badgeLabel = count > 0 ? String(count) : nil
+        result(nil)
+      }
+    }
     super.applicationDidFinishLaunching(notification)
   }
 
