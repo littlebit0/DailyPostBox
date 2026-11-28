@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:intl/intl.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 enum AppLanguage {
   korean(Locale('ko'), '한국어'),
@@ -11,15 +13,43 @@ enum AppLanguage {
   final String label;
 }
 
+const _languagePreferenceKey = 'app_language';
+
+/// Reads the saved language; Korean when nothing valid is saved or the
+/// store cannot be read.
+Future<AppLanguage> loadSavedLanguage() async {
+  try {
+    final saved = (await SharedPreferences.getInstance())
+        .getString(_languagePreferenceKey);
+    return AppLanguage.values.firstWhere(
+      (language) => language.name == saved,
+      orElse: () => AppLanguage.korean,
+    );
+  } catch (_) {
+    return AppLanguage.korean;
+  }
+}
+
+/// The language loaded before the app starts; main() overrides it.
+final initialLanguageProvider = Provider<AppLanguage>((ref) {
+  return AppLanguage.korean;
+});
+
 final languageControllerProvider =
     NotifierProvider<LanguageController, AppLanguage>(LanguageController.new);
 
 class LanguageController extends Notifier<AppLanguage> {
   @override
-  AppLanguage build() => AppLanguage.korean;
+  AppLanguage build() => ref.read(initialLanguageProvider);
 
-  void setLanguage(AppLanguage language) {
+  Future<void> setLanguage(AppLanguage language) async {
     state = language;
+    try {
+      await (await SharedPreferences.getInstance())
+          .setString(_languagePreferenceKey, language.name);
+    } catch (_) {
+      // The choice still applies for this run if it cannot be saved.
+    }
   }
 }
 
@@ -41,20 +71,84 @@ class AppStrings {
   String get settings => _ko ? '설정' : 'Settings';
   String get compose => _ko ? '메일 쓰기' : 'Compose';
   String get refresh => _ko ? '새로고침' : 'Refresh';
+  String get shortcutHelp => _ko ? '단축키 도움말' : 'Keyboard shortcuts';
+  String get shortcutNextMessage => _ko ? '다음 메일 선택' : 'Select next message';
+  String get shortcutPreviousMessage =>
+      _ko ? '이전 메일 선택' : 'Select previous message';
+  String get shortcutOpenMessage => _ko ? '선택한 메일 열기' : 'Open selected message';
+  String get shortcutFocusSearch => _ko ? '메일 검색' : 'Search mail';
+  String get mailMenu => _ko ? '메일' : 'Mail';
+  String get editMenu => _ko ? '편집' : 'Edit';
+  String get windowMenu => _ko ? '윈도우' : 'Window';
   String get close => _ko ? '닫기' : 'Close';
   String get send => _ko ? '보내기' : 'Send';
   String get message => _ko ? '메일' : 'Message';
+  String get summarize => _ko ? '요약' : 'Summarize';
+  String get summaryTitle => _ko ? 'AI 요약' : 'AI summary';
+  String get summaryNotice => _ko
+      ? '메일 내용이 AI 서비스로 전송됩니다. 요약은 틀릴 수 있으니 원문도 확인하세요.'
+      : 'The message text is sent to an AI service. Summaries can be wrong; check the original.';
+  String get summaryFailed =>
+      _ko ? '요약을 만들지 못했습니다.' : 'Could not create a summary.';
   String get reply => _ko ? '답장' : 'Reply';
-  String get archive => _ko ? '보관' : 'Archive';
+  String get snooze => _ko ? '다시 알림' : 'Snooze';
+  String get snoozeTonight => _ko ? '오늘 저녁 (오후 6시)' : 'This evening (6 PM)';
+  String get snoozeTomorrow =>
+      _ko ? '내일 아침 (오전 9시)' : 'Tomorrow morning (9 AM)';
+  String get snoozeNextWeek =>
+      _ko ? '다음 주 (월요일 오전 9시)' : 'Next week (Mon 9 AM)';
+  String get snoozeCustom => _ko ? '직접 지정...' : 'Pick date and time...';
+  String get snoozeFailed =>
+      _ko ? '다시 알림을 설정하지 못했습니다' : 'Could not set the snooze';
+  String snoozed(String when) =>
+      _ko ? '$when에 다시 알려드립니다' : 'Snoozed until $when';
+  String get markUnread => _ko ? '읽지 않음으로 표시' : 'Mark as unread';
+  String get markRead => _ko ? '읽음으로 표시' : 'Mark as read';
+  String get addStar => _ko ? '별표 표시' : 'Add star';
+  String get removeStar => _ko ? '별표 해제' : 'Remove star';
+  String get flagUpdateFailed => _ko
+      ? '메일 상태를 서버에 반영하지 못했습니다.'
+      : 'Could not update the message on the server.';
+  String get replyAll => _ko ? '전체 답장' : 'Reply all';
+  String get cc => _ko ? '참조' : 'Cc';
+
+  /// Absolute local date-time for the reply quote header.
+  String quoteDate(DateTime time) => _ko
+      ? DateFormat('yyyy-MM-dd (E) HH:mm', 'ko').format(time)
+      : DateFormat("E, MMM d, y 'at' HH:mm", 'en').format(time);
+  String quoteHeader(String date, String sender) =>
+      _ko ? '$date $sender 님이 작성:' : 'On $date, $sender wrote:';
   String get back => _ko ? '뒤로' : 'Back';
+  String get unsubscribe => _ko ? '수신 거부' : 'Unsubscribe';
+  String get unsubscribeConfirmTitle =>
+      _ko ? '수신 거부 메일을 보낼까요?' : 'Send an unsubscribe email?';
+  String unsubscribeConfirmBody(String address) => _ko
+      ? '$address 로 수신 거부 메일을 보냅니다.'
+      : 'An unsubscribe email will be sent to $address.';
+  String get unsubscribeSent =>
+      _ko ? '수신 거부 메일을 보냈습니다' : 'Unsubscribe email sent';
+  String get unsubscribeFailed =>
+      _ko ? '수신 거부를 처리하지 못했습니다' : 'Could not unsubscribe';
   String get from => _ko ? '보낸 사람' : 'From';
   String get to => _ko ? '받는 사람' : 'To';
   String get invalidRecipient =>
       _ko ? '올바르지 않은 주소가 있습니다' : 'Some addresses are not valid';
   String get recipientRequired =>
-      _ko ? '받는 사람을 입력하세요' : 'Enter at least one recipient';
+      _ko ? '받는 사람을 입력하세요.' : 'Enter at least one recipient.';
+  String sendFailed(String reason) =>
+      _ko ? '메일을 보내지 못했습니다: $reason' : 'Could not send the mail: $reason';
   String get subject => _ko ? '제목' : 'Subject';
   String get body => _ko ? '내용' : 'Message';
+  String get unreadState => _ko ? '안 읽음' : 'Unread';
+  String get readState => _ko ? '읽음' : 'Read';
+  String get sidebarLabel => _ko ? '사이드바' : 'Sidebar';
+  String mailRowLabel({
+    required bool unread,
+    required String sender,
+    required String subject,
+    required String receivedAt,
+  }) =>
+      '${unread ? unreadState : readState}, $sender, $subject, $receivedAt';
   String get emptyInboxTitle => _ko ? '받은 메일이 없습니다' : 'No messages yet';
   String get emptyInboxDescription => _ko
       ? '계정을 추가하면 IMAP 실시간 수신 또는 POP3 동기화로 새 메일이 여기에 표시됩니다.'
@@ -123,12 +217,35 @@ class AppStrings {
   String get accountMessages => _ko ? '계정별 메일' : 'Account Mail';
   String get syncNow => _ko ? '동기화' : 'Sync';
   String get validateConnection => _ko ? '연결 테스트' : 'Test connection';
+  String get accountNotifications =>
+      _ko ? '이 계정의 새 메일 알림' : 'New mail notifications for this account';
   String get deleteAccount => _ko ? '삭제' : 'Delete';
   String get more => _ko ? '더보기' : 'More';
   String get serverSettings => _ko ? '서버 설정' : 'Server settings';
+  String get incomingServer =>
+      _ko ? '받는 메일 서버 (IMAP)' : 'Incoming mail server (IMAP)';
+  String get outgoingServer =>
+      _ko ? '보내는 메일 서버 (SMTP)' : 'Outgoing mail server (SMTP)';
+  String get serverHost => _ko ? '서버 주소' : 'Server address';
+  String get serverPort => _ko ? '포트' : 'Port';
+  String get serverUsesSsl => _ko ? 'SSL/TLS 사용' : 'Use SSL/TLS';
+  String get customServerRequired => _ko
+      ? '받는·보내는 서버 주소와 포트(1~65535)를 입력하세요.'
+      : 'Enter both server addresses and ports (1-65535).';
   String get syncRange => _ko ? '동기화 범위' : 'Sync range';
   String get comingSoon => _ko ? '준비 중' : 'Coming soon';
   String get noAccountSelected => _ko ? '계정을 선택하세요' : 'Select an account';
+  String get categoryAll => _ko ? '전체' : 'All';
+  String get categoryPerson => _ko ? '사람' : 'People';
+  String get categoryNotification => _ko ? '알림' : 'Notifications';
+  String get categoryNewsletter => _ko ? '뉴스레터' : 'Newsletters';
+  String get searchMail => _ko ? '메일 검색' : 'Search mail';
+  String get searchHint => _ko
+      ? '검색: 제목·보낸 사람, from: subject: after: before:'
+      : 'Search subject or sender, from: subject: after: before:';
+  String get clearSearch => _ko ? '검색 지우기' : 'Clear search';
+  String get noSearchResults => _ko ? '검색 결과가 없습니다' : 'No messages found';
+  String get searchFailedTitle => _ko ? '검색하지 못했습니다' : 'Search failed';
   String get noMessagesForAccount =>
       _ko ? '이 계정에 표시할 메일이 없습니다' : 'No mail for this account yet';
   String get loadingAccountMail => _ko ? '메일을 가져오는 중입니다' : 'Importing mail';
@@ -140,8 +257,28 @@ class AppStrings {
       : 'The new password is checked before saving. Stored mail and settings are kept.';
   String get reconnectSucceeded =>
       _ko ? '다시 연결했습니다. 메일을 가져오는 중입니다.' : 'Reconnected. Fetching mail now.';
+  String get signedMailStatus => _ko
+      ? '서명된 메일 · 서명 검증은 아직 지원하지 않습니다'
+      : 'Signed message · signature verification is not supported yet';
+  String get encryptedMailStatus => _ko
+      ? '암호화된 메일 · 복호화는 아직 지원하지 않습니다'
+      : 'Encrypted message · decryption is not supported yet';
+  String remoteImagesBlocked(int count) =>
+      _ko ? '원격 이미지 $count개 차단됨' : '$count remote images blocked';
+  String get showImagesOnce => _ko ? '이번만 보기' : 'Show this time';
+  String get attachments => _ko ? '첨부파일' : 'Attachments';
+  String get saveAttachment => _ko ? '저장' : 'Save';
+  String attachmentSaved(String path) =>
+      _ko ? '$path에 저장했습니다' : 'Saved to $path';
+  String get attachmentSaveFailed =>
+      _ko ? '첨부파일을 저장하지 못했습니다' : 'Could not save the attachment';
   String get messageLoadFailedTitle =>
       _ko ? '메일 본문을 불러오지 못했습니다' : 'Could not open this message';
+  String get calendarInvite => _ko ? '일정 초대' : 'Calendar invite';
+  String get inviteRecurring => _ko ? '반복 일정' : 'Recurring event';
+  String get inviteCancelled => _ko ? '취소된 일정' : 'Event cancelled';
+  String inviteOrganizer(String name) =>
+      _ko ? '초대한 사람: $name' : 'Organizer: $name';
   String syncFailure(String? code, String? error) {
     if (code == 'authentication') {
       return _ko
@@ -191,8 +328,17 @@ class AppStrings {
   String get confirmDeleteAccount =>
       _ko ? '이 계정을 삭제할까요?' : 'Delete this account?';
   String get deleteAccountDescription => _ko
-      ? '이 앱에 저장된 계정과 동기화된 메일 목록이 삭제됩니다.'
-      : 'This removes the account and synced mail list from this app.';
+      ? '서버에 저장된 계정 자격 증명과 동기화된 메일 목록이 삭제되고, Google 계정은 앱 접근도 해제합니다.'
+      : 'This removes the stored credentials and synced mail list from the server, and revokes app access for Google accounts.';
+  String get revokeNotCompleted => _ko
+      ? '계정은 삭제했지만 제공자의 앱 접근 해제는 끝내지 못했습니다. 제공자의 보안 설정에서 DailyPostBox 접근을 직접 해제하세요.'
+      : 'The account was deleted, but app access at the provider could not be revoked. Remove DailyPostBox in the provider security settings.';
+  String get signature => _ko ? '서명' : 'Signature';
+  String get signatureHint => _ko
+      ? '새 메일 끝에 자동으로 붙습니다. 비워 두면 서명을 붙이지 않습니다.'
+      : 'Added to the end of new messages. Leave empty for no signature.';
+  String get signatureSaved => _ko ? '서명을 저장했습니다.' : 'Signature saved.';
+  String get save => _ko ? '저장' : 'Save';
   String get cancel => _ko ? '취소' : 'Cancel';
   String get statusIdle => _ko ? '대기' : 'Idle';
   String get statusValidating => _ko ? '검증 중' : 'Validating';
@@ -200,6 +346,11 @@ class AppStrings {
   String get statusError => _ko ? '오류' : 'Error';
   String get lastSynced => _ko ? '마지막 동기화' : 'Last synced';
   String get neverSynced => _ko ? '아직 없음' : 'Never';
+  String get receiveMode => _ko ? '수신 방식' : 'Receive mode';
+  String get receiveRealtime => _ko ? '실시간(IDLE)' : 'Realtime (IDLE)';
+  String get receivePolling => _ko ? '주기 확인' : 'Periodic check';
+  String get receiveUnknown => _ko ? '확인 전' : 'Not checked yet';
+  String get capabilitiesChecked => _ko ? '확인' : 'checked';
   String get protocol => _ko ? '수신 방식' : 'Protocol';
   String get authMode => _ko ? '인증 방식' : 'Auth mode';
   String authModeLabel(String mode) => switch (mode) {
@@ -208,10 +359,36 @@ class AppStrings {
         'password' => _ko ? '비밀번호' : 'Password',
         _ => mode,
       };
-  String get pushNotifications => _ko ? '푸시 알림' : 'Push notifications';
-  String get pushNotificationsDescription => _ko
-      ? '새 IMAP 메일은 서버 푸시를 통해 즉시 전달됩니다.'
-      : 'New IMAP messages are delivered immediately through server push.';
+  String get threadView => _ko ? '대화 보기' : 'Conversation view';
+  String get threadViewDescription => _ko
+      ? '같은 대화의 메일을 한 줄로 묶어 보여줍니다.'
+      : 'Group mail from the same conversation into one row.';
+  String get thread => _ko ? '대화' : 'Conversation';
+  String threadMessageCount(int count) => _ko ? '$count통' : '$count';
+  String get mailSending => _ko ? '메일을 보내는 중입니다.' : 'Sending mail...';
+  String get undoSend => _ko ? '보내기 취소' : 'Undo send';
+  String get sendCancelled =>
+      _ko ? '보내기를 취소했습니다.' : 'Sending was cancelled.';
+  String get sendAlreadySent =>
+      _ko ? '이미 발송되어 취소할 수 없습니다.' : 'Already sent; it cannot be cancelled.';
+  String get sendCancelFailed =>
+      _ko ? '취소하지 못했습니다. 메일이 발송될 수 있습니다.' : 'Could not cancel; the mail may be sent.';
+  String sendDeliveryFailed(String reason) => _ko
+      ? '메일을 보내지 못했습니다: $reason'
+      : 'The mail could not be delivered: $reason';
+  String get sendFailedShort => _ko ? '발송에 실패했습니다.' : 'Sending failed.';
+  String failedSendsCount(int n) => _ko ? '발송 실패 $n건' : '$n failed to send';
+  String pendingSendsCount(int n) => _ko ? '보내기 대기 $n건' : '$n waiting to send';
+  String get viewPendingSends => _ko ? '보기' : 'View';
+  String get viewFailedSends => _ko ? '보기' : 'View';
+  String get deleteFailedSend => _ko ? '삭제' : 'Delete';
+  String get rewriteMail => _ko ? '다시 작성' : 'Rewrite';
+  String get undoSendSetting => _ko ? '보내기 취소 시간' : 'Undo send delay';
+  String get undoSendSettingDescription => _ko
+      ? '보낸 메일을 이 시간 동안 서버가 보관하며 취소할 수 있습니다.'
+      : 'The server holds sent mail for this long so you can cancel it.';
+  String secondsLabel(int seconds) =>
+      seconds == 0 ? (_ko ? '끔' : 'Off') : (_ko ? '$seconds초' : '${seconds}s');
   String get registerThisDevice => _ko ? '이 기기 등록' : 'Register this device';
   String get registerThisDeviceDescription => _ko
       ? '플랫폼 푸시 토큰을 메일 서버에 등록합니다.'
@@ -233,4 +410,10 @@ class AppStrings {
       : 'Choose the display language for the app.';
   String failedToLoadInbox(Object error) =>
       _ko ? '받은편지함을 불러오지 못했습니다: $error' : 'Failed to load inbox: $error';
+  String authFailureWarning(List<String> failures) {
+    final names = failures.map((name) => name.toUpperCase()).join(', ');
+    return _ko
+        ? '발신자 인증 실패($names): 보낸 사람을 사칭한 메일일 수 있습니다. 링크와 첨부를 열지 마세요.'
+        : 'Sender authentication failed ($names): this message may be spoofed. Do not open links or attachments.';
+  }
 }

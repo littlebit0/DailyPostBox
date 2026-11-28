@@ -25,7 +25,10 @@ const envSchema = z.object({
   GOOGLE_OAUTH_CLIENT_ID: z.string().optional(),
   GOOGLE_OAUTH_CLIENT_SECRET: z.string().optional(),
   OUTLOOK_OAUTH_CLIENT_ID: z.string().optional(),
-  OUTLOOK_OAUTH_CLIENT_SECRET: z.string().optional()
+  OUTLOOK_OAUTH_CLIENT_SECRET: z.string().optional(),
+  AI_SUMMARY_ENABLED: z.enum(["true", "false"]).default("false"),
+  ANTHROPIC_API_KEY: z.string().optional(),
+  AI_MODEL: z.string().default("claude-haiku-5-5")
 });
 
 export const env = envSchema.parse(process.env);

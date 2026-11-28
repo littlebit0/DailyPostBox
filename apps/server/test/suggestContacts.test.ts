@@ -3,6 +3,7 @@ import test from "node:test";
 import Fastify from "fastify";
 import type { IncomingMessageSummary, MailAccount } from "../src/domain/types.js";
 import { suggestContacts } from "../src/contacts/suggestContacts.js";
+import { SendQueue } from "../src/mail/SendQueue.js";
 import { InMemoryAccountRepository, type SentRecipient } from "../src/workers/AccountRepository.js";
 
 process.env.GOOGLE_OAUTH_CLIENT_ID ??= "test-client";
@@ -70,17 +71,20 @@ test("suggests only sent recipients, never inbound senders", async () => {
   };
   await accounts.saveIncomingMessage(inbound);
 
+  const sender = {
+    testConnection: async () => {},
+    send: async (_account: MailAccount, draft: { to: string[] }) => ({ accepted: draft.to, rejected: [] })
+  };
+  const sendQueue = new SendQueue(sender as never);
   const app = Fastify();
   await registerRoutes(app, {
     accounts,
+    sendQueue,
     validateAccount: async () => {},
     startAccountSync: async () => {},
     resumeAccountSync: async () => {},
     stopAccountSync: async () => {},
-    sender: {
-      testConnection: async () => {},
-      send: async (_account, draft) => ({ accepted: draft.to, rejected: [] })
-    },
+    sender,
     fetchMessageContent: async () => {
       throw new Error("unused");
     }
@@ -93,9 +97,10 @@ test("suggests only sent recipients, never inbound senders", async () => {
   const send = await app.inject({
     method: "POST",
     url: "/mail/send",
-    payload: { accountId: account.id, to: ["Alice@company.test"], subject: "hi", text: "hi" }
+    payload: { accountId: account.id, to: ["Alice@company.test"], subject: "hi", text: "hi", delaySeconds: 0 }
   });
   assert.equal(send.statusCode, 202);
+  await sendQueue.flush();
   assert.deepEqual((await suggest()).map((item) => item.address), ["alice@company.test"]);
 
   await accounts.deleteAccount(account.id);
@@ -103,6 +108,7 @@ test("suggests only sent recipients, never inbound senders", async () => {
 });
 
 test("send still returns 202 when saving sent recipients fails", async () => {
+  const logs: string[] = [];
   const now = new Date();
   const accounts = new InMemoryAccountRepository();
   await accounts.addAccount({
@@ -121,17 +127,20 @@ test("send still returns 202 when saving sent recipients fails", async () => {
     throw Object.assign(new Error("ENOSPC: no space left on device"), { code: "ENOSPC" });
   };
 
-  const app = Fastify();
+  const sender = {
+    testConnection: async () => {},
+    send: async (_account: MailAccount, draft: { to: string[] }) => ({ accepted: draft.to, rejected: [] })
+  };
+  const sendQueue = new SendQueue(sender as never);
+  const app = Fastify({ logger: { level: "warn", stream: { write: (line: string) => logs.push(line) } } });
   await registerRoutes(app, {
     accounts,
+    sendQueue,
     validateAccount: async () => {},
     startAccountSync: async () => {},
     resumeAccountSync: async () => {},
     stopAccountSync: async () => {},
-    sender: {
-      testConnection: async () => {},
-      send: async (_account, draft) => ({ accepted: draft.to, rejected: [] })
-    },
+    sender,
     fetchMessageContent: async () => {
       throw new Error("unused");
     }
@@ -140,8 +149,21 @@ test("send still returns 202 when saving sent recipients fails", async () => {
   const send = await app.inject({
     method: "POST",
     url: "/mail/send",
-    payload: { accountId: "account-1", to: ["bob@example.test"], subject: "hi", text: "hi" }
+    payload: { accountId: "account-1", to: ["bob@example.test"], subject: "hi", text: "hi", delaySeconds: 0 }
   });
   assert.equal(send.statusCode, 202);
-  assert.deepEqual(send.json(), { accepted: ["bob@example.test"], rejected: [] });
+  await sendQueue.flush();
+  assert.equal(sendQueue.status(send.json().id)?.status, "sent");
+  const warning = logs.find((line) => line.includes("Failed to save sent recipients"));
+  assert.ok(warning?.includes("ENOSPC"));
+  assert.ok(!logs.some((line) => line.includes("bob@example.test")));
+});
+
+test("contact suggestions are blocked for remote requests", async () => {
+  const app = Fastify();
+  await registerRoutes(app, { accounts: new InMemoryAccountRepository() } as never);
+  const remote = await app.inject({ method: "GET", url: "/contacts/suggest?q=a", remoteAddress: "203.0.113.5" });
+  assert.equal(remote.statusCode, 403);
+  const browser = await app.inject({ method: "GET", url: "/contacts/suggest?q=a", headers: { origin: "http://evil.test" } });
+  assert.equal(browser.statusCode, 403);
 });

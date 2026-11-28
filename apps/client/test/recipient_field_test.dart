@@ -194,6 +194,8 @@ void main() {
     expect(api.sent, [
       ['bob@example.test']
     ]);
+    // Let the post-send outcome poll finish so no timer is left pending.
+    await tester.pump(const Duration(seconds: 3));
   });
 }
 
@@ -218,12 +220,21 @@ class _SendRecordingApi extends MailApiClient {
   Future<List<String>> suggestContacts(String query) async => const [];
 
   @override
-  Future<void> sendMail({
+  Future<SendReceipt> sendMail({
     required String accountId,
     required List<String> to,
     required String subject,
     required String body,
+    List<String> cc = const [],
+    int delaySeconds = 0,
+    String? inReplyTo,
+    List<String> references = const [],
   }) async {
     sent.add(to);
+    return const SendReceipt('send-1', Duration.zero);
   }
+
+  @override
+  Future<SendOutcome> fetchSendOutcome(String id) async =>
+      const SendOutcome(status: 'sent');
 }
