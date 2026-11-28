@@ -582,10 +582,13 @@ export async function registerRoutes(
       return reply.code(404).send({ error: "Account not found" });
     }
     const messages = await deps.accounts.listInbox(demoUserId);
+    // Search-only results are read from IMAP like the detail route, never imported.
     const message = messages.find(
       (item) => item.accountId === params.accountId &&
         item.providerMessageId === params.messageId
-    );
+    ) ?? (account.incomingProtocol === "imap" && canReadUnstoredMail(request)
+      ? await deps.fetchMessageSummary(account, params.messageId)
+      : null);
     if (!message) {
       return reply.code(404).send({ error: "Message not found" });
     }

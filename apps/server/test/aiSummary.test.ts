@@ -14,7 +14,10 @@ function mockFetch(status = 200, body: unknown = { content: [{ type: "text", tex
   return { fn, calls };
 }
 
-async function build(summarizer: ReturnType<typeof createAiSummarizer>) {
+async function build(
+  summarizer: ReturnType<typeof createAiSummarizer>,
+  fetchMessageSummary: (account: unknown, id: string) => Promise<unknown> = async () => null
+) {
   const now = new Date();
   const accounts = new InMemoryAccountRepository();
   await accounts.addAccount({
@@ -31,6 +34,7 @@ async function build(summarizer: ReturnType<typeof createAiSummarizer>) {
     accounts, summarizer, sender: {} as never,
     validateAccount: async () => undefined,
     fetchMessageContent: async () => ({ text: "본문 내용", truncated: false, links: [] }),
+    fetchMessageSummary: fetchMessageSummary as never,
     startAccountSync: async () => undefined,
     resumeAccountSync: async () => undefined,
     stopAccountSync: async () => undefined
@@ -95,4 +99,25 @@ test("remote callers get 403 and mail is not sent to the AI service", async () =
   });
   assert.equal(res.statusCode, 403);
   assert.equal(calls.length, 0);
+});
+
+test("summarizes a search-only message via IMAP without importing it", async () => {
+  const { fn, calls } = mockFetch();
+  const lookups: string[] = [];
+  const app = await build(
+    createAiSummarizer({ enabled: true, apiKey: "k", model: "m" }, fn),
+    async (_account, id) => {
+      lookups.push(id);
+      return {
+        accountId: "a1", providerMessageId: id, mailbox: "INBOX", from: "s@example.test",
+        subject: "검색 결과", receivedAt: new Date(), hasAttachments: false
+      };
+    }
+  );
+  const res = await app.inject({ method: "POST", url: "/accounts/a1/messages/m9/summary" });
+  assert.equal(res.statusCode, 200);
+  assert.equal(calls.length, 1);
+  // Not imported: a second request still has to look it up on the server.
+  await app.inject({ method: "POST", url: "/accounts/a1/messages/m9/summary" });
+  assert.deepEqual(lookups, ["m9", "m9"]);
 });
